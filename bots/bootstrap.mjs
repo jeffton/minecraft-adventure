@@ -5,7 +5,6 @@ import { readFileSync } from 'node:fs';
 import { BOT_ROLES } from './blueprint.mjs';
 import { viewerAllowed } from './viewer-policy.mjs';
 import { readyScript, patchViewerClient } from './viewer-readiness.mjs';
-import { patchViewerServer, viewerState } from './viewer-stream.mjs';
 import { createObserver, atomicJson, getHome, OBS } from './runtime.mjs';
 import { join } from 'node:path';
 
@@ -28,7 +27,8 @@ registerHooks({
       source += `\nimport { registerAdventure } from ${JSON.stringify(extensionUrl)};\nregisterAdventure(actionsList);\n`;
 
     } else if (url.endsWith('/node_modules/prismarine-viewer/lib/mineflayer.js')) {
-      source = patchViewerServer(source, viewerState.toString());
+      source = replaceExactly(source, 'http.listen(port, () => {', "http.listen(port, '127.0.0.1', () => {", url);
+      source = replaceExactly(source, "bot.on('move', botPosition)", "bot.on('move', botPosition)\n    botPosition()", url);
       source = replaceExactly(source, "io.on('connection', (socket) => {", `io.on('connection', (socket) => {\n    const isPublic = socket.handshake.headers['x-roycraft-public-viewer'] === '1';\n    socket.data.roycraftPublic = isPublic;\n    if (!(${viewerAllowed.toString()})(isPublic, sockets.map(s => s.data.roycraftPublic))) { socket.disconnect(true); return }`, url);
     } else if (url.endsWith('/node_modules/prismarine-viewer/lib/common.js')) {
       const index = '/opt/minecraft-mindcraft/node_modules/prismarine-viewer/public/index.html';
@@ -183,9 +183,8 @@ Agent.prototype.startEvents = function (...args) {
     this.adventure.emit('gather', `Mined ${material} at ${position}.`);
     return result;
   };
-  this.bot.adventureAction = () => this.actions.currentActionLabel || (this.adventureThinking ? 'planning' : 'idle');
-  viewer.mineflayer(this.bot, { port: 8931 + Object.keys(BOT_ROLES).indexOf(this.name), viewDistance: 5, firstPerson: true });
   if (this.name === 'Roy') {
+    viewer.mineflayer(this.bot, { port: 8931, viewDistance: 3, firstPerson: true });
     const timer = setInterval(() => {
       try { sceneSnapshot(this); } catch (error) { this.adventure.recordError(error); }
     }, 30000);
