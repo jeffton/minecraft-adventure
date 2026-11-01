@@ -37,8 +37,10 @@ function render(data, journal = data) {
   document.querySelector('#version').textContent = data.serverVersion;
   document.querySelector('#crew').replaceChildren(...data.bots.map(bot => {
     const card = node('article', '', 'bot');
+    card.dataset.name = bot.name;
     card.append(node('div', bot.name[0], 'bot-icon'), node('h3', bot.name),
-      node('p', bot.status === 'online' ? bot.role : `${bot.role} · ${bot.status}`, 'role'), node('p', bot.task, 'task'));
+      node('p', bot.status === 'online' ? bot.role : `${bot.role} · ${bot.status}`, 'role'),
+      node('p', bot.name === cameraBot ? liveTask : bot.task, 'task'));
     const vitals = node('div', '', 'vitals');
     vitals.append(node('span', `Health ${vital(bot.health)}/20`),
       node('span', `Food ${vital(bot.food)}/20`));
@@ -108,12 +110,21 @@ function reportError(error) {
 const cameraBot = 'Roy';
 let liveMonitor;
 let inventorySignature;
+let liveTask = 'Waiting for live observations';
+
+function setLiveTask(task) {
+  liveTask = task;
+  for (const card of document.querySelectorAll('#crew .bot')) {
+    if (card.dataset.name === cameraBot) card.querySelector('.task').textContent = task;
+  }
+}
 
 function stopCamera(message) {
   document.querySelector('#live-feed')?.remove();
   clearInterval(liveMonitor);
   clearInventory(message);
   inventorySignature = undefined;
+  setLiveTask('Waiting for live observations');
 }
 
 function startCamera() {
@@ -137,11 +148,14 @@ function startCamera() {
       : connectedBefore ? 'CAMERA DISCONNECTED' : 'CONNECTING CAMERA…';
     if (!connected) {
       const status = state?.name === cameraBot && state.status === 'offline' ? 'offline' : 'waiting';
-      document.querySelector('#camera-state').textContent = `${cameraBot} · ${status === 'offline' ? 'Offline' : 'Waiting for live observations'}`;
+      const task = status === 'offline' ? 'Offline' : 'Waiting for live observations';
+      document.querySelector('#camera-state').textContent = `${cameraBot} · ${task}`;
+      setLiveTask(task);
       clearInventory('Live inventory unavailable');
       inventorySignature = undefined;
       return;
     }
+    setLiveTask(state.action);
     const p = state.position;
     document.querySelector('#camera-state').textContent = `${state.name} · ${state.digging ? `Mining ${state.digging.replaceAll('_', ' ')}` : state.moving ? 'Moving' : 'Stationary'} · ${state.action.replaceAll('action:', '')} · ${Math.round(p.x)}, ${Math.round(p.y)}, ${Math.round(p.z)}`;
     const signature = JSON.stringify([state.health, state.food, state.held, state.offhand, state.inventory]);
