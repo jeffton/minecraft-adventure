@@ -1,0 +1,13 @@
+#roycraft-map-connection {
+  position: fixed;
+  left: .65rem;
+  bottom: .65rem;
+  z-index: 20;
+  max-width: calc(100% - 4.5rem);
+  padding: .35rem .55rem;
+  border-radius: .35rem;
+  background: #13251fe8;
+  color: #e8f4ed;
+  font: 12px/1.4 system-ui, sans-serif;
+  pointer-events: none;
+}

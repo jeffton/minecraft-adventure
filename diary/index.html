@@ -6,6 +6,7 @@
   <meta name="theme-color" content="#152a25">
   <title>Roycraft · A shared adventure</title>
   <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="map.css">
 </head>
 <body>
   <header><a class="brand" href="https://roybot.se/">ROYBOT <span>/ ROYCRAFT</span></a><a class="join" href="#server">Join the world <span>↗</span></a></header>
@@ -18,6 +19,11 @@
       <div id="camera-kit" class="camera-kit"></div>
       <details><summary>Inventory <span id="inventory-count"></span></summary><div id="camera-inventory" class="camera-inventory"></div></details>
       <p class="camera-note">First-person view · Equipment is listed below; the renderer does not draw held items or armour on models. Fog marks the edge of the loaded world.</p>
+    </section>
+    <section class="world-map-section" aria-label="Explored world map">
+      <div class="section-heading"><h2>The explored world</h2><a class="map-open" href="/map/" target="_blank" rel="noopener">Open full map ↗</a></div>
+      <div class="map-panel"><iframe src="/map/" title="Isometric map and live player positions" loading="lazy" allow="fullscreen" referrerpolicy="same-origin"></iframe></div>
+      <p class="map-note">Drag to explore · Scroll or pinch to zoom · Select a player to follow. Only visited chunks are mapped; terrain updates after the world saves. Player positions are live. Choose a dimension from the map menu; unvisited dimensions are empty.</p>
     </section>
     <section class="mission"><div><p class="eyebrow">THE NEXT MOVE</p><h2 id="objective">A shared home. A long adventure.</h2></div><div><p class="eyebrow">THE BIG PICTURE</p><p id="long-term">Survive together, build beautifully, and prepare for the End.</p></div></section>
     <section class="crew-section"><div class="section-heading"><h2>The crew</h2><span>Different roles. Shared resources.</span></div><div class="crew" id="crew"></div></section>

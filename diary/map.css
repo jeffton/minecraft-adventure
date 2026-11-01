@@ -1,0 +1,9 @@
+.world-map-section { margin: 4rem 0; }
+.world-map-section .section-heading { gap: 1rem; flex-wrap: wrap; }
+.map-open { color: inherit; font-size: .85rem; white-space: nowrap; }
+.map-panel { overflow: hidden; border: 1px solid #52746655; border-radius: 1rem; background: #13251f; }
+.map-panel iframe { display: block; width: 100%; height: min(72vh, 640px); min-height: 420px; border: 0; }
+.map-note { color: var(--muted, #8d9b92); font-size: .85rem; line-height: 1.6; margin: .8rem 0 0; }
+@media (max-width: 600px) {
+  .map-panel iframe { min-height: 420px; height: 65vh; }
+}
