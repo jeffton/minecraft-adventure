@@ -26,6 +26,11 @@ h1,h2,h3 { font-family:'Space Grotesk',sans-serif; }
 .camera-controls { padding:12px 0; display:grid; gap:8px; font-size:12px; }
 .camera-topline { display:flex; flex-wrap:wrap; align-items:center; gap:4px 16px; }
 #camera-state { flex:1; min-width:180px; color:var(--muted); font-size:11px; line-height:1.4; }
+.world-clock { display:flex; align-items:center; gap:7px; flex-shrink:0; padding:6px 10px; border:1px solid var(--line); border-radius:20px; color:var(--muted); font-size:11px; line-height:1; }
+.world-clock-orb { width:12px; height:12px; border-radius:50%; background:#c5cabe; }
+.world-clock[data-phase="day"] .world-clock-orb { background:#dca339; box-shadow:0 0 0 3px #dca33920; }
+.world-clock[data-phase="night"] .world-clock-orb { background:transparent; box-shadow:inset -4px -2px 0 0 #66778d; }
+.world-clock-time { font-family:'Space Grotesk',sans-serif; font-variant-numeric:tabular-nums; color:var(--ink); min-width:3.2em; text-align:right; }
 .camera-loadout { display:flex; align-items:flex-start; gap:10px; min-width:0; }
 .camera-bag { flex:1; min-width:0; }
 .inventory-label { color:var(--muted); font-size:10px; margin-bottom:3px; }

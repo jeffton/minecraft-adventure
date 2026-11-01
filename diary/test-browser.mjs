@@ -27,7 +27,7 @@ try {
         return route.fulfill({ json: { entries: [{ ...data.entries[0], summary: 'My old expedition.', image: 'item-assets/coal.png' }] } });
       }
       if (name === 'live/') {
-        return route.fulfill({ contentType: 'text/html', body: `<script>window.roycraftConnected=true;window.roycraftState=${JSON.stringify({ name: 'Roy', status: 'online', at: Date.now(), health: 20, food: 18, position: { x: 1, y: 80, z: 3 }, action: skillName, moving: false, digging: null, held: { name: 'stone_sword', count: 1 }, offhand: { name: 'shield', count: 1 }, inventory: [{ name: 'oak_log', count: 7 }] })};</script>` });
+        return route.fulfill({ contentType: 'text/html', body: `<script>window.roycraftConnected=true;window.roycraftState=${JSON.stringify({ name: 'Roy', status: 'online', at: Date.now(), health: 20, food: 18, time: { timeOfDay: 6000, isDay: true }, dimension: 'overworld', position: { x: 1, y: 80, z: 3 }, action: skillName, moving: false, digging: null, held: { name: 'stone_sword', count: 1 }, offhand: { name: 'shield', count: 1 }, inventory: [{ name: 'oak_log', count: 7 }] })};</script>` });
       }
       if (name.startsWith('map/')) return route.fulfill({ contentType: 'text/html', body: '<p>Map fixture</p>' });
       const types = { html: 'text/html', js: 'text/javascript', css: 'text/css', json: 'application/json', png: 'image/png' };
@@ -49,6 +49,14 @@ try {
     const task = page.locator('.bot[data-name="Roy"] .task');
     await task.getByText(skillName, { exact: true }).waitFor();
     assert.ok((await page.locator('#camera-state').textContent()).includes(skillName));
+    const clock = page.locator('#world-clock');
+    await clock.getByText('12:00', { exact: true }).waitFor();
+    for (const [ticks, isDay, label, time] of [[12999, true, 'Day', '18:59'], [13000, false, 'Night', '19:00'], [17999, false, 'Night', '23:59'], [18000, false, 'Night', '00:00'], [23000, true, 'Day', '05:00']]) {
+      await frame.evaluate(({ ticks, isDay }) => Object.assign(window.roycraftState, { at: Date.now(), time: { timeOfDay: ticks, isDay } }), { ticks, isDay });
+      await clock.getByText(time, { exact: true }).waitFor();
+      assert.equal(await clock.locator('.world-clock-label').textContent(), label);
+      assert.equal(await clock.getAttribute('data-phase'), label.toLowerCase());
+    }
     assert.equal((await page.locator('body').textContent()).includes(oldActionId), false);
     for (const action of ['planning', 'observing', 'idle', '<img src=x onerror="window.skillInjected=true">']) {
       await frame.evaluate(action => Object.assign(window.roycraftState, { action, at: Date.now() }), action);
@@ -62,10 +70,13 @@ try {
     await frame.evaluate(() => { window.roycraftState.status = 'offline'; });
     await page.getByText('Roy · Offline', { exact: true }).waitFor();
     assert.equal(await task.textContent(), 'Offline');
+    await clock.getByText('—', { exact: true }).waitFor();
+    assert.equal(await clock.getAttribute('data-phase'), 'unavailable');
     assert.equal(await page.locator('#camera-kit').textContent(), '');
     await frame.evaluate(() => { window.roycraftState.status = 'online'; window.roycraftState.at = 0; });
     await page.getByText('Roy · Waiting for live observations', { exact: true }).waitFor();
     assert.equal(await task.textContent(), 'Waiting for live observations');
+    assert.equal(await clock.locator('.world-clock-time').textContent(), '—');
     await frame.evaluate(() => {
       Object.assign(window.roycraftState, { at: Date.now(), health: 7, food: 0, held: null, offhand: null, inventory: [] });
     });

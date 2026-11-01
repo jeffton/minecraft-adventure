@@ -1,4 +1,5 @@
 import { clearInventory, renderInventory } from './inventory.js';
+import { renderWorldClock } from './world-clock.js';
 
 let itemAssets;
 try {
@@ -122,6 +123,7 @@ function setLiveTask(task) {
 function stopCamera(message) {
   document.querySelector('#live-feed')?.remove();
   clearInterval(liveMonitor);
+  renderWorldClock(document.querySelector('#world-clock'), null);
   clearInventory(message);
   inventorySignature = undefined;
   setLiveTask('Waiting for live observations');
@@ -143,6 +145,7 @@ function startCamera() {
     const state = live?.roycraftState;
     const connected = live?.roycraftConnected === true && state?.status === 'online' && state.name === cameraBot && Date.now() - state.at < 5000;
     connectedBefore ||= connected;
+    renderWorldClock(document.querySelector('#world-clock'), connected ? state : null);
     document.querySelector('#camera-label').textContent = connected
       ? 'LIVE BOT CAMERA'
       : connectedBefore ? 'CAMERA DISCONNECTED' : 'CONNECTING CAMERA…';

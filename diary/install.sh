@@ -14,7 +14,7 @@ install -d -o minecraft-diary -g minecraft-diary -m 0755 /var/www/roybot.se/mine
 python3 "$source_dir/build-item-assets.py" \
     /opt/minecraft-mindcraft/node_modules/minecraft-assets/minecraft-assets/data/26.1 \
     /var/www/roybot.se/minecraft/item-assets
-for file in index.html style.css app.js map.css map.js inventory.css inventory.js; do
+for file in index.html style.css app.js map.css map.js inventory.css inventory.js world-clock.js; do
     install -m 0644 "$source_dir/$file" /var/www/roybot.se/minecraft/
 done
 test -r /etc/letsencrypt/live/minecraft.roybot.se/fullchain.pem
