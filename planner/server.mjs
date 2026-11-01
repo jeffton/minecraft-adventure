@@ -80,12 +80,15 @@ export async function startPlanner({
           { role: 'system', content: MISSION_INSTRUCTIONS },
           { role: 'user', content: JSON.stringify({ observed: pending.observed, previousMission: pending.previousMission }) },
         ], 'mission-' + pending.id, { role: 'mission' });
-        // A recovered cached answer is not relabeled as a current observation.
-        validateObservation(pending.observed);
+        // Inference can outlive the input freshness window. Require a live world
+        // at publication, while retaining the actual input timestamp on the mission.
+        const latest = await readFile(observedFile, 'utf8');
+        if (Buffer.byteLength(latest) > BODY_LIMIT) throw new Error('Observed game state exceeds 128 KiB');
+        validateObservation(JSON.parse(latest));
         return result;
       });
       const plan = validatePlan(JSON.parse(answer.text));
-      mission = { id: pending.id, generatedAt: new Date().toISOString(), ...plan };
+      mission = { id: pending.id, observedAt: pending.observed.updatedAt, generatedAt: new Date().toISOString(), ...plan };
       await writeJson(missionFile, mission);
       await writeJson(pendingFile, null);
       status.lastMissionError = null;

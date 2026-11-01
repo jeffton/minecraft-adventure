@@ -32,6 +32,83 @@ test('stale persisted mission without current observations is never sent to the 
   await assert.rejects(readFile(missionFile), { code: 'ENOENT' });
 });
 
+const plan = {
+  phase: 'recovery', objective: 'Prepare tools before building.', home: null,
+  bots: Object.fromEntries(['Roy', 'Spruce', 'Flint', 'Moss'].map(name => [name, {
+    task: 'Prepare a pickaxe.', program: [{ action: 'ensure_item', item: 'wooden_pickaxe', count: 1 }],
+  }])),
+};
+
+for (const world of ['fresh', 'stale', 'offline']) {
+  test(`long inference with ${world} current observations ${world === 'fresh' ? 'publishes with original observedAt' : 'does not replace the mission'}`, async t => {
+    const stateDir = await mkdtemp(path.join(tmpdir(), 'minecraft-publication-freshness-'));
+    const observedFile = path.join(stateDir, 'state.json');
+    const missionFile = path.join(stateDir, 'mission.json');
+    let now = Date.now();
+    t.mock.method(Date, 'now', () => now);
+    const input = observed();
+    await writeFile(observedFile, JSON.stringify(input));
+    await writeFile(missionFile, JSON.stringify({ ...plan, id: 'previous' }));
+    let calls = 0;
+    const planner = await startPlanner({
+      engine: {
+        complete: async messages => {
+          calls++;
+          assert.equal(JSON.parse(messages[1].content).observed.updatedAt, input.updatedAt);
+          now += 75000; // Admission plus Sol generation exceeds the input freshness window.
+          const latest = world === 'stale' ? input : observed();
+          if (world === 'offline') latest.bots[0].status = 'offline';
+          await writeFile(observedFile, JSON.stringify(latest));
+          return { text: JSON.stringify(plan), finishReason: 'stop' };
+        },
+        close: async () => {},
+      },
+      token: 'test-relay-private-token-value', stateDir, observedFile, missionFile,
+      port: 0, queue: new ModelQueue({ intervalMs: 0 }), pollMs: 1000000,
+    });
+    await planner.close();
+    assert.equal(calls, 1);
+    const mission = JSON.parse(await readFile(missionFile, 'utf8'));
+    const status = JSON.parse(await readFile(path.join(stateDir, 'status.json'), 'utf8'));
+    if (world === 'fresh') {
+      assert.notEqual(mission.id, 'previous');
+      assert.equal(mission.observedAt, input.updatedAt);
+      assert.notEqual(mission.observedAt, JSON.parse(await readFile(observedFile, 'utf8')).updatedAt);
+      assert.equal(status.lastMissionError, null);
+    } else {
+      assert.equal(mission.id, 'previous');
+      assert.match(status.lastMissionError, world === 'stale' ? /stale/ : /online/);
+    }
+  });
+}
+
+test('hour-old recovered mission gets a new request id and fresh input rather than a cached plan', async () => {
+  const stateDir = await mkdtemp(path.join(tmpdir(), 'minecraft-recovered-input-'));
+  const observedFile = path.join(stateDir, 'state.json');
+  const missionFile = path.join(stateDir, 'mission.json');
+  const current = observed();
+  await writeFile(observedFile, JSON.stringify(current));
+  await writeFile(path.join(stateDir, 'pending-mission.json'), JSON.stringify({ id: 'hour-old', observed: observed(3600000), previousMission: null }));
+  let calls = 0;
+  const planner = await startPlanner({
+    engine: {
+      complete: async (messages, requestId) => {
+        calls++;
+        assert.notEqual(requestId, 'mission-hour-old');
+        assert.equal(JSON.parse(messages[1].content).observed.updatedAt, current.updatedAt);
+        return { text: JSON.stringify(plan), finishReason: 'stop' };
+      }, close: async () => {},
+    },
+    token: 'test-relay-private-token-value', stateDir, observedFile, missionFile,
+    port: 0, queue: new ModelQueue({ intervalMs: 0 }), pollMs: 1000000,
+  });
+  await planner.close();
+  assert.equal(calls, 1);
+  const mission = JSON.parse(await readFile(missionFile, 'utf8'));
+  assert.notEqual(mission.id, 'hour-old');
+  assert.equal(mission.observedAt, current.updatedAt);
+});
+
 test('provider dispatch rejects stale persisted mission content even outside the HTTP queue', async () => {
   const stateDir = await mkdtemp(path.join(tmpdir(), 'minecraft-stale-dispatch-'));
   const models = createModels();
