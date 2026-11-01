@@ -2,12 +2,14 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright-core';
 
 if (process.getuid() === 0) throw new Error('Run the game-camera verification as minecraft-diary');
-const browser = await chromium.launch({
-  executablePath: '/opt/google/chrome/chrome',
-  args: ['--no-sandbox', '--disable-dev-shm-usage', '--enable-unsafe-swiftshader'],
-});
-try {
-  for (const width of [1440, 390]) {
+const widths = process.env.CAMERA_TEST_WIDTHS ? process.env.CAMERA_TEST_WIDTHS.split(',').map(Number) : [1440, 390];
+for (const width of widths) {
+  // Release SwiftShader/GPU contexts between desktop and mobile runs.
+  const browser = await chromium.launch({
+    executablePath: '/opt/google/chrome/chrome',
+    args: ['--no-sandbox', '--disable-dev-shm-usage', '--enable-unsafe-swiftshader'],
+  });
+  try {
     const page = await browser.newPage({ viewport: { width, height: 1000 } });
     const errors = [];
     const activeSockets = new Set();
@@ -55,7 +57,7 @@ try {
     assert.deepEqual(errors, []);
     assert.ok(new Set(Object.values(positions).map(p => JSON.stringify(p))).size > 1, 'Feeds must be genuine distinct bot positions');
     await page.close();
+  } finally {
+    await browser.close();
   }
-} finally {
-  await browser.close();
 }
