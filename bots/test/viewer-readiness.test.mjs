@@ -12,7 +12,17 @@ test('camera and completed terrain meshes are both required before a snapshot', 
   }
   class WebGLRenderingContext { drawElements() {} }
   const window = { WebSocket, WebGLRenderingContext };
-  vm.runInNewContext(readyScript.replace('<script>', '').replace('</script>', ''), { window, Date, setInterval() {} });
+  class HTMLCanvasElement {}
+  vm.runInNewContext(readyScript.replace('<script>', '').replace('</script>', ''), { window, Date, HTMLCanvasElement, setInterval() {} });
+  const texture = { image: undefined };
+  const scene = { world: { material: { map: texture } }, scene: { traverse: callback => callback({ material: { map: texture } }) } };
+  assert.equal(window.roycraftTexturesReady(scene), false);
+  texture.image = { complete: false };
+  assert.equal(window.roycraftTexturesReady(scene), false);
+  texture.image.complete = true;
+  assert.equal(window.roycraftTexturesReady(scene), true);
+  texture.image = new HTMLCanvasElement();
+  assert.equal(window.roycraftTexturesReady(scene), true);
   new window.WebSocket();
   socket.listeners.message();
   const gl = new WebGLRenderingContext();

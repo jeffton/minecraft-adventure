@@ -2,7 +2,7 @@ export function patchViewerClient(source, cameraMotionSource) {
   const edits = [
     ['const u=new r(l);', `const u=new r(l);window.roycraftMotion=(${cameraMotionSource})();window.roycraftViewer=u;u.camera.far=64;u.camera.updateProjectionMatrix();u.scene.fog=new THREE.Fog(u.scene.background,32,60);o.on('adventureState',s=>{window.roycraftState=s});o.on('adventureChunks',chunks=>{window.roycraftChunks=chunks});`],
     ['u.setFirstPersonCamera(t,r,o)', '(window.roycraftMotion.receive(u,t,r,o),window.roycraftCameraApplied=true)'],
-    ['u.update(),l.render', 'window.roycraftMotion.frame(u,performance.now()),window.roycraftChunksReady=!!window.roycraftChunks?.length&&window.roycraftChunks.every(k=>u.world.loadedChunks[k])&&u.world.sectionsOutstanding.size===0&&!!u.world.material.map,u.update(),l.render']
+    ['u.update(),l.render', 'window.roycraftMotion.frame(u,performance.now()),window.roycraftChunksReady=!!window.roycraftChunks?.length&&window.roycraftChunks.every(k=>u.world.loadedChunks[k])&&u.world.sectionsOutstanding.size===0&&window.roycraftTexturesReady(u),u.update(),l.render']
   ];
   for (const [before, after] of edits) {
     if (source.split(before).length !== 2) throw new Error('Upstream first-person camera integration changed');
@@ -16,6 +16,18 @@ window.roycraftReady = false;
 window.roycraftConnected = false;
 window.roycraftCameraApplied = false;
 window.roycraftChunksReady = false;
+window.roycraftTexturesReady = viewer => {
+  let ready = true;
+  viewer.scene.traverse(object => {
+    const materials = Array.isArray(object.material) ? object.material : [object.material];
+    for (const material of materials) {
+      if (!material?.map) continue;
+      const image = material.map.image;
+      if (!image || !(image.complete || image instanceof HTMLCanvasElement)) ready = false;
+    }
+  });
+  return ready && !!viewer.world.material.map;
+};
 (() => {
   let draws = 0;
   let lastTraffic = 0;
