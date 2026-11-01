@@ -105,6 +105,14 @@ test('same-goal reviews cannot weaken criteria or disguise switches as continuat
   assert.deepEqual(validateReview(nextAnswer(strategy), strategy, evidence, observed).strategy.goal, strategy.goal);
 });
 
+test('the first strategic review can truthfully identify recovery without inventing a previous goal', () => {
+  const { observed, evidence } = setup();
+  const recovering = review(mission, { basis: 'recovery' });
+  assert.equal(validateReview(recovering, null, evidence, observed).strategy.basis, 'recovery');
+  recovering.strategy.basis = 'completed';
+  assert.throws(() => validateReview(recovering, null, evidence, observed), /completion is not observed/);
+});
+
 test('dependencies require measured completion and newly completed goal is available to its successor', () => {
   const { strategy, evidence, observed } = setup();
   const answer = nextAnswer(strategy, {
@@ -199,6 +207,8 @@ test('completion triggers once, and unrelated monotonic progress cannot mask a s
   const event = trigger(strategy, complete, next);
   assert.equal(event.kind, 'completed');
   assert.equal(trigger(strategy, complete, next, event.fingerprint), null);
+  const acknowledged = validateReview(nextAnswer(strategy), strategy, complete, next).strategy;
+  assert.equal(trigger(acknowledged, complete, next, 'cadence:later'), null, 'a later cadence cannot re-trigger an acknowledged completion');
 });
 
 test('strategy context exposes bounded verified programs without event cursors or placement history', () => {

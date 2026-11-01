@@ -94,9 +94,8 @@ export function validateReview(answer, previous, evidence, observed) {
   }
   if (goal.dependsOn.some(id => !completedGoals.some(entry => entry.id === id))) throw new Error('Goal dependencies have not been observed complete');
   if (previous && (card.decision === 'continue') !== (goal.id === previous.goal.id)) throw new Error('Strategy decision must match goal identity');
-  if (!previous && card.basis !== 'initial') throw new Error('First strategic review requires initial basis');
   if (previous && card.basis === 'initial') throw new Error('Existing strategy requires an evidence-based decision');
-  if (card.basis === 'completed' && previous && !evaluateGoal(previous.goal, evidence, observed).complete) throw new Error('Previous goal completion is not observed');
+  if (card.basis === 'completed' && (!previous || !evaluateGoal(previous.goal, evidence, observed).complete)) throw new Error('Previous goal completion is not observed');
   const success = goal.success.map(criterion => validateCriterion(criterion, evidence));
   if (previous?.goal.id === goal.id && JSON.stringify(previous.goal.success) !== JSON.stringify(success)) throw new Error('Changing goal criteria requires a new goal ID');
   if (!Array.isArray(card.nextGoals) || card.nextGoals.length > 4) throw new Error('Invalid strategy roadmap');
@@ -125,7 +124,7 @@ export function reviewTrigger(state, evidence, observed, now, lastAttempt, inter
   const strategy = state.strategy;
   const complete = evaluateGoal(strategy.goal, evidence, observed).complete;
   const completedFingerprint = `completed:${strategy.goal.id}`;
-  if (complete && state.lastTriggerFingerprint !== completedFingerprint) return { kind: 'completed', fingerprint: completedFingerprint };
+  if (complete && !strategy.baseline.complete && state.lastTriggerFingerprint !== completedFingerprint) return { kind: 'completed', fingerprint: completedFingerprint };
   if (!complete && !goalAdvanced(strategy, evidence, observed)) {
     const blocker = evidence.blockers.find(entry => entry.kind !== 'interrupted' && entry.attemptIds.length >= 3 && entry.count - (strategy.blockerBaseline[entry.key] ?? 0) >= 3);
     if (blocker) {
