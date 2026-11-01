@@ -8,6 +8,7 @@ install -d -m 0755 /opt/minecraft-adventure/diary
 for file in publish.py capture.mjs vision-capture.mjs package.json package-lock.json; do
     install -m 0644 "$source_dir/$file" /opt/minecraft-adventure/diary/
 done
+install -m 0644 "$source_dir/../player/diary-writer.mjs" /opt/minecraft-adventure/player/
 npm ci --ignore-scripts --prefix /opt/minecraft-adventure/diary
 chmod -R a+rX /opt/minecraft-adventure/diary/node_modules
 install -d -o minecraft-diary -g minecraft-diary -m 0755 /var/www/roybot.se/minecraft

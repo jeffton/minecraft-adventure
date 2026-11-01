@@ -31,8 +31,6 @@ function render(data, journal = data) {
   document.querySelector('#updated').textContent = stale
     ? `Stale status · last observed ${dateTime(data.observedAt)}`
     : `Journal updated ${dateTime(data.publishedAt)}`;
-  document.querySelector('#objective').textContent = data.objective;
-  document.querySelector('#long-term').textContent = data.longTerm;
   document.querySelector('#version').textContent = data.serverVersion;
   document.querySelector('#journal').replaceChildren(...journal.entries.map(entry => {
     const article = node('article', '', 'entry');

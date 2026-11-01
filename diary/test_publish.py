@@ -21,7 +21,7 @@ def state(world='player-20261101'):
 
 
 def narrative(world='player-20261101'):
-    return {'worldId': world, 'text': 'I found a foothold, though the night worries me.',
+    return {'worldId': world, 'title': 'A precarious foothold', 'generationId': 'generation-42', 'text': 'I found a foothold, though the night worries me.',
             'model': 'gpt-6.1-terra', 'answerEntryId': 'answer-42'}
 
 
@@ -37,10 +37,60 @@ class PublishTests(unittest.TestCase):
         state_path.write_text(json.dumps(current))
         if previous is not None:
             (output / 'data.json').write_text(json.dumps(previous))
-        with patch('publish.narrate', return_value=response or narrative()) as generate:
+        def generate_entry(context):
+            return response or {**narrative(), 'title': f'A precarious foothold {len(context["usedTitles"])}'}
+        with patch('publish.narrate', side_effect=generate_entry) as generate:
             with patch('publish.subprocess.run', side_effect=capture):
                 publish.publish(state_path, output, root / 'capture.mjs')
         return json.loads((output / 'data.json').read_text()), generate.call_args.args[0]
+
+    def test_writer_failure_surfaces_its_safe_diagnostic_without_stdout(self):
+        result = subprocess.CompletedProcess(['node'], 1, stdout='not a result',
+                                             stderr='Terra repeated a field note title\n')
+        with patch('publish.subprocess.run', return_value=result):
+            with self.assertRaisesRegex(RuntimeError, 'Diary writer failed: Terra repeated a field note title'):
+                publish.narrate({'mode': 'entry'})
+
+    def test_retitle_changes_only_titles_in_index_and_individual_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            entries = [{
+                'worldId': 'fresh', 'at': f'2026-11-01T12:{minute}:00Z',
+                'observedAt': 'unchanged', 'title': 'Finding a foothold',
+                'summary': summary, 'image': f'images/{minute}.webp',
+                'author': 'gpt-6.1-terra', 'answerEntryId': minute,
+            } for minute, summary in [('00', 'I recovered my pickaxe.'), ('15', 'I sealed a small room.')]]
+            data = {'worldId': 'fresh', 'publishedAt': 'unchanged', 'entries': entries}
+            (output / 'data.json').write_text(json.dumps(data))
+            (output / 'entries').mkdir()
+            for index, entry in enumerate(entries):
+                (output / 'entries' / f'{index}.json').write_text(json.dumps(entry))
+            generated = [{'at': entries[0]['at'], 'title': 'Pickaxe Recovered'},
+                         {'at': entries[1]['at'], 'title': 'A Sealed Room'}]
+            with patch('publish.narrate', return_value=generated) as generate:
+                publish.retitle(output)
+            self.assertEqual(generate.call_count, 1)
+            updated = json.loads((output / 'data.json').read_text())
+            self.assertEqual(updated['publishedAt'], 'unchanged')
+            for index, (old, new) in enumerate(zip(entries, updated['entries'])):
+                self.assertEqual({**old, 'title': generated[index]['title']}, new)
+                self.assertEqual(json.loads((output / 'entries' / f'{index}.json').read_text()), new)
+
+    def test_duplicate_generated_title_preserves_history_before_capture(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / 'public'
+            output.mkdir()
+            old = {'worldId': state()['worldId'], 'entries': [{
+                'observedAt': '2026-11-01T12:00:00Z', 'title': narrative()['title'], 'summary': 'Keep me'}]}
+            (output / 'data.json').write_text(json.dumps(old))
+            path = root / 'state.json'
+            path.write_text(json.dumps(state()))
+            with patch('publish.narrate', return_value=narrative()), patch('publish.subprocess.run') as capture:
+                with self.assertRaisesRegex(ValueError, 'repeats'):
+                    publish.publish(path, output, root / 'capture.mjs')
+                capture.assert_not_called()
+            self.assertEqual(json.loads((output / 'data.json').read_text()), old)
 
     def test_new_world_archives_history_and_resets_event_window(self):
         previous = {'worldId': 'previous-world', 'entries': [

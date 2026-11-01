@@ -41,7 +41,9 @@ try {
     for (const text of ['The player', 'The road to the dragon', 'Progress observed in the game. Not wishful thinking.', 'Roy’s diary · Every fifteen minutes', 'Current world']) {
       assert.equal((await page.locator('body').textContent()).includes(text), false);
     }
-    assert.equal(await page.locator('#long-term').textContent(), data.longTerm);
+    assert.equal(await page.locator('#objective, #long-term, .mission').count(), 0);
+    assert.equal((await page.locator('body').textContent()).includes('THE NEXT MOVE'), false);
+    assert.equal((await page.locator('body').textContent()).includes('THE BIG PICTURE'), false);
     assert.equal(await page.locator('[data-camera], #live-toggle, select, details').count(), 0);
     assert.equal(await page.locator('#live-feed').count(), 1);
     assert.equal(await page.evaluate(() => window.injected), undefined);
@@ -92,7 +94,6 @@ try {
     await page.getByRole('link', { name: 'previous-world', exact: true }).click();
     await page.getByText('My old expedition.', { exact: true }).waitFor();
     assert.equal(await page.locator('#journal-title').textContent(), 'Field notes · previous-world');
-    assert.equal(await page.locator('#objective').textContent(), data.objective);
     await page.locator('#camera-state').getByText(skillName, { exact: false }).waitFor();
     assert.equal((await page.locator('body').textContent()).includes(oldActionId), false);
     assert.equal(await page.locator('#journal img').getAttribute('src'), 'item-assets/coal.png');

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Publish observed gameplay and a real bot-camera frame, atomically."""
 import argparse
+import copy
+import fcntl
 import json
 import os
 import re
@@ -8,17 +10,10 @@ from pathlib import Path
 import subprocess
 import sys
 from datetime import datetime, timezone
-from urllib.request import Request, urlopen
 
 from PIL import Image
 
-PHASE_TITLES = {
-    'settling': 'First footsteps', 'survival': 'Finding a foothold',
-    'homestead': 'A place to call home', 'equipment': 'The workshop is busy',
-    'nether': 'Into the Nether', 'stronghold': 'On the trail of the End',
-    'end': 'Facing the dragon', 'completed': 'After the expedition',
-    'recovery': 'Back on track',
-}
+WRITER = Path(__file__).resolve().parent.parent / 'player' / 'diary-writer.mjs'
 
 
 def world_identity(state):
@@ -119,25 +114,21 @@ def diary_context(state, since):
 
 
 def narrate(context):
-    request = Request(
-        'http://127.0.0.1:8766/diary',
-        data=json.dumps(context).encode(),
-        headers={
-            'Authorization': 'Bearer ' + os.environ['PLANNER_RELAY_TOKEN'],
-            'Content-Type': 'application/json',
-        },
-        method='POST',
+    result = subprocess.run(
+        ['node', str(WRITER)], input=json.dumps(context), text=True,
+        capture_output=True, check=False, timeout=150,
     )
-    with urlopen(request, timeout=180) as response:
-        return json.load(response)
+    if result.returncode != 0:
+        raise RuntimeError(f'Diary writer failed: {result.stderr.strip()}')
+    return json.loads(result.stdout)
 
 
 def make_entry(state, now, image, capture_error, narrative):
     return {
         'worldId': world_identity(state), 'at': now, 'observedAt': state['updatedAt'],
-        'title': PHASE_TITLES[state['phase']], 'summary': narrative['text'],
+        'title': narrative['title'], 'summary': narrative['text'],
         'events': [],
-        'author': narrative['model'], 'answerEntryId': narrative['answerEntryId'],
+        'author': narrative['model'], 'generationId': narrative['generationId'],
         'image': image, 'captureError': capture_error,
     }
 
@@ -160,7 +151,11 @@ def publish(state_path, output, capture_script):
     since = entries[0]['observedAt'] if entries else ''
     if state.get('gameplayLedger') is True:
         state['events'] = ledger_events(state_path, state, since)
-    narrative = narrate(diary_context(state, since))
+    context = {**diary_context(state, since), 'mode': 'entry',
+               'usedTitles': [entry['title'] for entry in entries if 'title' in entry]}
+    narrative = narrate(context)
+    if narrative['title'].strip().casefold() in {title.strip().casefold() for title in context['usedTitles']}:
+        raise ValueError('Diary title repeats an existing field note')
     if narrative['worldId'] != world_id:
         raise ValueError('Diary narrative worldId does not match current observations')
     image_path = images / f'{stamp}.webp'
@@ -201,10 +196,51 @@ def publish(state_path, output, capture_script):
     print(f'Published {stamp}: {len(data["bots"])} bots, {image}')
 
 
+def retitle(output):
+    data_path = output / 'data.json'
+    original = data_path.read_text()
+    data = json.loads(original)
+    entries = data['entries']
+    generated = narrate({'mode': 'titles', 'entries': [
+        {'at': entry['at'], 'summary': entry['summary']} for entry in entries
+    ], 'usedTitles': []})
+    if len(generated) != len(entries):
+        raise ValueError('Incomplete title migration')
+    titles = {item['at']: item['title'] for item in generated}
+    if set(titles) != {entry['at'] for entry in entries} or len({title.casefold() for title in titles.values()}) != len(entries):
+        raise ValueError('Title migration identities or uniqueness failed')
+    updates = []
+    for path in sorted((output / 'entries').glob('*.json')):
+        entry = json.loads(path.read_text())
+        if entry.get('worldId') == data['worldId'] and entry['at'] in titles:
+            entry['title'] = titles[entry['at']]
+            updates.append((path, entry))
+    if len(updates) != len(entries):
+        raise ValueError('Entry files do not match the current diary')
+    if data_path.read_text() != original:
+        raise RuntimeError('Diary changed during title generation')
+    before = copy.deepcopy(data)
+    for entry in entries:
+        entry['title'] = titles[entry['at']]
+    for old, new in zip(before['entries'], entries):
+        assert {key: value for key, value in old.items() if key != 'title'} == {key: value for key, value in new.items() if key != 'title'}
+    for path, entry in updates:
+        atomic_json(path, entry)
+    atomic_json(data_path, data)
+    print(f'Retitled {len(entries)} field notes; paragraphs, dates and images preserved')
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--state', type=Path, default=Path('/var/lib/minecraft-adventure/observations/state.json'))
     parser.add_argument('--output', type=Path, default=Path('/var/www/roybot.se/minecraft'))
     parser.add_argument('--capture', type=Path, default=Path(__file__).with_name('capture.mjs'))
+    parser.add_argument('--retitle', action='store_true', help='Generate titles for existing entries only')
     arguments = parser.parse_args()
-    publish(arguments.state, arguments.output, arguments.capture)
+    arguments.output.mkdir(parents=True, exist_ok=True)
+    with (arguments.output / '.publish.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if arguments.retitle:
+            retitle(arguments.output)
+        else:
+            publish(arguments.state, arguments.output, arguments.capture)

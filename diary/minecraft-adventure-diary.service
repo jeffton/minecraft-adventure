@@ -6,6 +6,7 @@ After=network.target minecraft-adventure-bots.service minecraft-planner.service
 Type=oneshot
 User=minecraft-diary
 Group=minecraft-diary
+SupplementaryGroups=minecraft-planner
 WorkingDirectory=/opt/minecraft-adventure/diary
 EnvironmentFile=/etc/minecraft-adventure/planner.env
 ExecStart=/usr/bin/python3 /opt/minecraft-adventure/diary/publish.py

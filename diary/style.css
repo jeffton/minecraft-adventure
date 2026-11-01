@@ -34,9 +34,6 @@ h1,h2,h3 { font-family:'Space Grotesk',sans-serif; }
 .camera-loadout { display:flex; align-items:flex-start; gap:10px; min-width:0; }
 .camera-bag { flex:1; min-width:0; }
 .inventory-label { color:var(--muted); font-size:10px; margin-bottom:3px; }
-.mission { display:grid; grid-template-columns:1.5fr 1fr; gap:56px; padding:48px 0; border-bottom:1px solid var(--line); }
-.mission h2 { font-size:28px; letter-spacing:-.025em; margin:0; line-height:1.25; }
-.mission p:not(.eyebrow) { margin:0; font-size:14px; color:var(--muted); line-height:1.6; }
 .section-heading { display:flex; align-items:baseline; justify-content:space-between; gap:16px; margin-bottom:24px; }
 .section-heading h2 { font-size:26px; font-weight:500; letter-spacing:-.035em; margin:0; }
 .section-heading span { font-size:11px; color:var(--muted); }
@@ -58,5 +55,5 @@ h1,h2,h3 { font-family:'Space Grotesk',sans-serif; }
 footer { padding:24px 56px 40px; display:flex; justify-content:space-between; gap:28px; border-top:1px solid var(--line); font-size:10px; color:var(--muted); }
 footer span { flex-shrink:0; text-transform:uppercase; letter-spacing:.1em; }
 footer p { max-width:480px; line-height:1.6; margin:0; }
-@media(max-width:720px) { header { height:76px; padding:0 24px; } main { padding:0 24px; } .live { font-size:10px; } .hero { aspect-ratio:4/3; } .mission { grid-template-columns:1fr; gap:28px; padding:32px 0; } .mission h2 { font-size:24px; } .eyebrow { margin-bottom:12px; } .section-heading { display:block; } .section-heading h2 { margin-bottom:8px; } .journal-section { padding-top:36px; } .entry { grid-template-columns:1fr; gap:12px; padding:24px 0; } .entry img { width:100%; aspect-ratio:16/9; } .entry time { display:block; } .server { padding:28px; display:block; margin:40px 0; } .server h2 { font-size:24px; } .server code { margin-top:28px; } footer { padding:24px; display:block; } footer p { margin-top:16px; } }
+@media(max-width:720px) { header { height:76px; padding:0 24px; } main { padding:0 24px; } .live { font-size:10px; } .hero { aspect-ratio:4/3; } .eyebrow { margin-bottom:12px; } .section-heading { display:block; } .section-heading h2 { margin-bottom:8px; } .journal-section { padding-top:36px; } .entry { grid-template-columns:1fr; gap:12px; padding:24px 0; } .entry img { width:100%; aspect-ratio:16/9; } .entry time { display:block; } .server { padding:28px; display:block; margin:40px 0; } .server h2 { font-size:24px; } .server code { margin-top:28px; } footer { padding:24px; display:block; } footer p { margin-top:16px; } }
 @media(prefers-reduced-motion:no-preference) { .join { transition:background .15s; } .join:hover { background:#35654d; } }
