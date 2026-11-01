@@ -36,7 +36,7 @@ test('real upstream viewer refreshes travelling chunks and equipment, then relea
   vm.runInNewContext(patchViewerServer(source, viewerState.toString()), sandbox);
   const bot = new EventEmitter();
   Object.assign(bot, {
-    version: '1.21.4', username: 'Flint', health: 20, food: 19,
+    version: '1.21.4', username: 'Flint', _client: { state: 'play' }, health: 20, food: 19,
     entity: { position: { x: 1, y: 70, z: 3 }, velocity: { x: 0, y: -0.0784, z: 0 }, yaw: 0, pitch: 0, onGround: true },
     adventureAction: () => 'idle', inventory: Object.assign(new EventEmitter(), { slots: {}, items: () => [] })
   });

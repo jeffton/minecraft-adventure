@@ -108,13 +108,13 @@ function startCamera() {
   liveMonitor = setInterval(() => {
     const live = feed.contentWindow;
     const state = live?.roycraftState;
-    const connected = live?.roycraftConnected === true && state && state.name === cameraBot.value && Date.now() - state.at < 5000;
+    const connected = live?.roycraftConnected === true && state?.status === 'online' && state.name === cameraBot.value && Date.now() - state.at < 5000;
     connectedBefore ||= connected;
     document.querySelector('#camera-label').textContent = connected
       ? 'LIVE BOT CAMERA'
       : connectedBefore ? 'CAMERA DISCONNECTED' : 'CONNECTING CAMERA…';
     if (!connected) {
-      document.querySelector('#camera-state').textContent = `${cameraBot.value} · Waiting for live observations`;
+      document.querySelector('#camera-state').textContent = `${cameraBot.value} · ${state?.status === 'offline' ? 'Offline' : 'Waiting for live observations'}`;
       document.querySelector('#camera-kit').replaceChildren();
       document.querySelector('#camera-inventory').replaceChildren();
       document.querySelector('#inventory-count').textContent = '';

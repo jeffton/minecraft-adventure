@@ -3,6 +3,7 @@ export function viewerState(bot, action) {
   const item = stack => stack ? { name: stack.name, count: stack.count } : null;
   return {
     name: bot.username, at: Date.now(), health: bot.health, food: bot.food,
+    status: bot._client.ended ? 'offline' : bot._client.state === 'play' ? 'online' : bot._client.state,
     position: { x: bot.entity.position.x, y: bot.entity.position.y, z: bot.entity.position.z },
     action, held: item(bot.heldItem), offhand: item(bot.inventory.slots[45]),
     inventory: bot.inventory.items().map(item),

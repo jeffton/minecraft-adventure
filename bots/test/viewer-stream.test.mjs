@@ -30,7 +30,7 @@ test('continuous packets move camera monotonically; wrapped look takes short arc
 
 test('telemetry reflects actual held slot changes and inventory without private bot fields', () => {
   const bot = {
-    username: 'Roy', health: 19, food: 18, heldItem: { name: 'stone_sword', count: 1, nbt: 'private' },
+    username: 'Roy', _client: { state: 'play' }, health: 19, food: 18, heldItem: { name: 'stone_sword', count: 1, nbt: 'private' },
     inventory: { slots: { 45: { name: 'shield', count: 1 } }, items: () => [{ name: 'oak_log', count: 8 }] },
     entity: { position: { x: 1, y: 70, z: 3 }, velocity: { x: 0, y: -0.0784, z: 0 }, onGround: true },
     targetDigBlock: null, secret: 'must not leave server'
@@ -42,6 +42,8 @@ test('telemetry reflects actual held slot changes and inventory without private 
   assert.ok(!JSON.stringify(viewerState(bot, 'idle')).includes('private'));
   assert.ok(!JSON.stringify(viewerState(bot, 'idle')).includes('secret'));
   assert.equal(viewerState(bot, 'idle').moving, false);
+  bot._client.ended = true; // minecraft-protocol retains state='play' when its transport ends.
+  assert.equal(viewerState(bot, 'idle').status, 'offline');
 });
 
 test('upstream server patch rejects changed integration anchors', () => {

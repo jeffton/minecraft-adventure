@@ -22,7 +22,7 @@ try {
       if (name.startsWith('live/')) {
         const nameParts = name.split('/');
         const bot = nameParts[1] || 'Roy';
-        return route.fulfill({ contentType: 'text/html', body: `<canvas></canvas><script>window.roycraftConnected=true;window.roycraftState=${JSON.stringify({ name: bot, at: Date.now(), health: 20, food: 18, position: { x: 1, y: 80, z: 3 }, action: 'idle', moving: false, digging: null, held: { name: bot === 'Roy' ? 'stone_sword' : 'iron_pickaxe', count: 1 }, offhand: null, inventory: [{ name: bot === 'Roy' ? 'oak_log' : 'coal', count: 7 }] })};</script>` });
+        return route.fulfill({ contentType: 'text/html', body: `<canvas></canvas><script>window.roycraftConnected=true;window.roycraftState=${JSON.stringify({ name: bot, status: 'online', at: Date.now(), health: 20, food: 18, position: { x: 1, y: 80, z: 3 }, action: 'idle', moving: false, digging: null, held: { name: bot === 'Roy' ? 'stone_sword' : 'iron_pickaxe', count: 1 }, offhand: null, inventory: [{ name: bot === 'Roy' ? 'oak_log' : 'coal', count: 7 }] })};</script>` });
       }
       const types = { 'index.html': 'text/html', 'app.js': 'text/javascript', 'style.css': 'text/css' };
       await route.fulfill({ contentType: types[name], body: await readFile(new URL(name, import.meta.url)) });
@@ -44,7 +44,10 @@ try {
     assert.equal(await page.locator('#camera-inventory').textContent(), 'coal ×7');
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     const liveFrame = await (await page.locator('#live-feed').elementHandle()).contentFrame();
-    await liveFrame.evaluate(() => { window.roycraftState.at = 0; });
+    await liveFrame.evaluate(() => { window.roycraftState.status = 'offline'; });
+    await page.getByText('Moss · Offline', { exact: true }).waitFor();
+    assert.equal(await page.locator('#camera-kit').textContent(), '');
+    await liveFrame.evaluate(() => { window.roycraftState.status = 'online'; window.roycraftState.at = 0; });
     await page.getByText('Moss · Waiting for live observations', { exact: true }).waitFor();
     assert.equal(await page.locator('#camera-kit').textContent(), '');
     await page.getByRole('button', { name: 'Show latest snapshot' }).click();
