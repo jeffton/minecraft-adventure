@@ -7,10 +7,30 @@ export const BOT_ROLES = Object.freeze({
 
 export const INITIAL_TASKS = Object.freeze({
   Roy: 'Gather 12 logs. Craft planks, a crafting table, sticks and a wooden pickaxe. Choose a safe shared home with !chooseHome. Build the lodge gradually with !buildLodge; ask Spruce for wood and Flint for cobblestone. Do not harvest the lodge.',
-  Spruce: 'Gather nearby logs, replant saplings where possible. Craft a wooden axe and later stone axe. Supply Roy with logs and oak planks using !givePlayer. Keep at least 8 logs for your own tools. Work outside the marked home footprint.',
+  Spruce: 'Gather nearby logs, replant saplings where possible. Craft a wooden axe and later stone axe. Supply Roy with locally available logs and planks using !givePlayer. Keep at least 8 logs for your own tools. Work outside the marked home footprint.',
   Flint: 'Gather enough wood for a crafting table, sticks and wooden pickaxe. Mine stone, craft stone tools and a furnace, then gather accessible coal and iron. Smelt iron, make shields and equipment for all four. Share resources, avoid digging below the home.',
   Moss: 'Gather wood for basic tools and a crafting table. Secure food: hunt cows, pigs or sheep, cook meat in a furnace and share cooked food with the others. Collect wool for four beds. Establish a renewable wheat farm beside home after food is secure.'
 });
+
+const WOOD_FAMILIES = ['oak', 'spruce', 'birch', 'jungle', 'acacia', 'dark_oak', 'mangrove', 'cherry', 'pale_oak', 'bamboo', 'crimson', 'warped'];
+const TIMBER_BLOCKS = new Set(WOOD_FAMILIES.flatMap(wood => {
+  const forms = wood === 'bamboo' ? ['block'] : ['crimson', 'warped'].includes(wood) ? ['stem', 'hyphae'] : ['log', 'wood'];
+  return forms.flatMap(form => [`${wood}_${form}`, `stripped_${wood}_${form}`]);
+}));
+
+// Oak names describe blueprint roles, not a required tree species.
+export function matchesLodgeMaterial(actual, material) {
+  if (actual === material) return true;
+  if (material === 'oak_log') return TIMBER_BLOCKS.has(actual);
+  if (material === 'oak_planks') return WOOD_FAMILIES.some(wood => actual === `${wood}_planks`);
+  if (material === 'oak_door') return WOOD_FAMILIES.some(wood => actual === `${wood}_door`);
+  return false;
+}
+
+export function lodgeMaterialItem(items, material) {
+  return items.find(item => item.name === material && item.count > 0) ??
+    items.find(item => item.count > 0 && matchesLodgeMaterial(item.name, material));
+}
 
 // Relative block positions. A compact timber lodge: raised stone skirt, plank floor,
 // exposed corner posts, recessed windows, steep gable, porch and warm lighting.

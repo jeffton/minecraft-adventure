@@ -1,7 +1,7 @@
 import { createRequire } from 'node:module';
 import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { lodgeBlueprint, validHome } from './blueprint.mjs';
+import { lodgeBlueprint, validHome, matchesLodgeMaterial as matching, lodgeMaterialItem } from './blueprint.mjs';
 import { CONTROL, CONTROLLER_REVISION, atomicJson, getHome, getMission } from './runtime.mjs';
 import * as skills from '/opt/minecraft-mindcraft/src/agent/library/skills.js';
 import { registerProgression } from './progression.mjs';
@@ -48,17 +48,14 @@ async function chooseHome(agent) {
   return `Shared home chosen: ${JSON.stringify(home)}. Footprint x0..6,z0..8 relative to this corner. Ask teammates for materials; !buildLodge builds a small earned batch.`;
 }
 
-function matching(actual, material) {
-  return actual === material || (material === 'oak_log' && actual === 'oak_wood');
-}
-
 async function buildLodge(agent) {
   const bot = agent.bot;
   const home = getHome();
-  if (!validHome(home)) return 'First choose the shared site with !chooseHome.';
-  if (agent.name !== 'Roy') return 'Roy owns the shared blueprint to prevent conflicting builders. Supply materials to Roy.';
-  if (home.dimension !== bot.game.dimension) return 'The lodge is in another dimension.';
-  if (bot.entity.position.distanceTo(new Vec3(home.x, home.y, home.z)) > 96) return 'Return within 96 blocks of the shared home before building.';
+  const blocked = message => ({ message, placed: 0, complete: false });
+  if (!validHome(home)) return blocked('First choose the shared site with !chooseHome.');
+  if (agent.name !== 'Roy') return blocked('Roy owns the shared blueprint to prevent conflicting builders. Supply materials to Roy.');
+  if (home.dimension !== bot.game.dimension) return blocked('The lodge is in another dimension.');
+  if (bot.entity.position.distanceTo(new Vec3(home.x, home.y, home.z)) > 96) return blocked('Return within 96 blocks of the shared home before building.');
   const missing = {};
   let placed = 0;
   let remaining = 0;
@@ -71,17 +68,16 @@ async function buildLodge(agent) {
       if (!current) { remaining++; continue; }
       if (matching(current.name, step.material)) continue;
       remaining++;
-      if (step.material === 'oak_door' && current.name === 'oak_door') continue;
-      const item = bot.inventory.items().find(item => item.name === step.material);
+      const item = lodgeMaterialItem(bot.inventory.items(), step.material);
       if (!item) { missing[step.material] = (missing[step.material] ?? 0) + 1; continue; }
       // Do not remove foreign utility blocks or another player's construction.
       if (current.boundingBox !== 'empty' && !['dirt', 'grass_block', 'stone', 'sand'].includes(current.name)) {
-        if (step.y >= 0) return `Blueprint blocked by ${current.name} at ${p}; inspect it rather than destroying it.`;
+        if (step.y >= 0) return { message: `Blueprint blocked by ${current.name} at ${p}; inspect it rather than destroying it.`, placed, complete: false };
       }
-      const ok = await skills.placeBlock(bot, step.material, p.x, p.y, p.z, 'bottom', true);
+      const ok = await skills.placeBlock(bot, item.name, p.x, p.y, p.z, 'bottom', true);
       if (ok && matching(bot.blockAt(p)?.name, step.material)) {
         placed++;
-        agent.adventure?.emit('build', `Placed ${step.material} at ${p}.`, { scope: 'lodge', verified: true, material: step.material, position: { x: p.x, y: p.y, z: p.z } });
+        agent.adventure?.emit('build', `Placed ${item.name} at ${p}.`, { scope: 'lodge', verified: true, material: item.name, position: { x: p.x, y: p.y, z: p.z } });
       }
       if (placed >= 8) break;
     }
@@ -90,7 +86,10 @@ async function buildLodge(agent) {
       atomicJson(join(CONTROL, 'lodge-complete.json'), { at: new Date().toISOString(), home });
       agent.adventure?.emit('milestone', 'Finished the observed timber lodge blueprint.');
     }
-    return `Lodge batch: ${placed} blocks placed. ${complete ? 'All blueprint blocks verified.' : `Still incomplete. Missing materials encountered: ${JSON.stringify(missing)}.`} Gather/craft missing materials, share supplies, then continue !buildLodge.`;
+    return {
+      placed, complete,
+      message: `Lodge batch: ${placed} blocks placed. ${complete ? 'All blueprint blocks verified.' : `Still incomplete. Missing materials encountered: ${JSON.stringify(missing)}.`} Gather/craft missing materials, share supplies, then continue !buildLodge.`
+    };
   } finally { agent.adventureBuilding = false; }
 }
 
@@ -100,7 +99,7 @@ export function registerAdventure(actions) {
     perform: async agent => {
       let result;
       const action = await agent.actions.runAction('adventure:buildLodge', async () => { result = await buildLodge(agent); }, { timeout: 2 });
-      return action.interrupted || !action.success ? action.message : result;
+      return action.interrupted || !action.success ? action.message : result.message;
     }
   });
   registerProgression(actions, skills);
@@ -111,10 +110,7 @@ export function registerAdventure(actions) {
     emit: (agent, type, message, data) => agent.adventure?.emit(type, message, data),
     buildLodge: async (bot, home, agent) => {
       if (!getHome()) await chooseHome(agent);
-      return {
-        message: await buildLodge(agent),
-        complete: existsSync(join(CONTROL, 'lodge-complete.json'))
-      };
+      return buildLodge(agent);
     }
   });
 }
