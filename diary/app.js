@@ -7,9 +7,7 @@ try {
   itemAssets = await response.json();
 } catch (error) {
   console.error(error);
-  const button = document.querySelector('#live-toggle');
-  button.disabled = true;
-  button.textContent = 'Item artwork could not load';
+  document.querySelector('#image-empty').textContent = 'Item artwork could not load';
   for (const camera of document.querySelectorAll('[data-camera]')) camera.disabled = true;
   document.querySelector('#camera-state').textContent = 'Item artwork could not load';
   clearInventory('Item artwork could not load');
@@ -38,14 +36,6 @@ function render(data) {
   document.querySelector('#objective').textContent = data.objective;
   document.querySelector('#long-term').textContent = data.longTerm;
   document.querySelector('#version').textContent = data.serverVersion;
-  const latestImage = data.entries.find(entry => entry.image !== null);
-  const hero = document.querySelector('#hero-image');
-  if (latestImage) {
-    hero.src = latestImage.image;
-    hero.hidden = false;
-    document.querySelector('#image-empty').hidden = true;
-    document.querySelector('#image-time').textContent = dateTime(latestImage.at);
-  }
   document.querySelector('#crew').replaceChildren(...data.bots.map(bot => {
     const card = node('article', '', 'bot');
     card.append(node('div', bot.name[0], 'bot-icon'), node('h3', bot.name),
@@ -98,7 +88,6 @@ function reportError(error) {
   document.querySelector('.live').classList.add('stale');
 }
 
-const liveToggle = document.querySelector('#live-toggle');
 const cameraButtons = [...document.querySelectorAll('[data-camera]')];
 let cameraBot = 'Roy';
 let liveMonitor;
@@ -130,9 +119,6 @@ function startCamera() {
   feed.src = cameraBot === 'Roy' ? 'live/' : `live/${cameraBot}/`;
   feed.allow = 'fullscreen';
   document.querySelector('.hero').append(feed);
-  document.querySelector('#image-time').hidden = true;
-  liveToggle.textContent = 'Show latest snapshot';
-  liveToggle.setAttribute('aria-pressed', 'true');
   document.querySelector('#camera-label').textContent = 'CONNECTING CAMERA…';
   let connectedBefore = false;
   liveMonitor = setInterval(() => {
@@ -169,20 +155,6 @@ for (const button of cameraButtons) {
     startCamera();
   });
 }
-liveToggle.addEventListener('click', () => {
-  if (document.querySelector('#live-feed')) {
-    stopCamera('Live inventory paused');
-    cameraStatus('paused');
-    document.querySelector('#camera-state').textContent = `${cameraBot} · Snapshot view`;
-    document.querySelector('#image-time').hidden = false;
-    liveToggle.textContent = 'Watch live ↗';
-    liveToggle.setAttribute('aria-pressed', 'false');
-    document.querySelector('#camera-label').textContent = 'BOT CAMERA';
-    return;
-  }
-  startCamera();
-});
-
 refresh().catch(reportError);
 setInterval(() => refresh().catch(reportError), 60_000);
 if (itemAssets) startCamera();

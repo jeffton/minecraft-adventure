@@ -6,11 +6,11 @@ const screenshotDirectory = process.env.SCREENSHOT_DIR || '/tmp';
 const now = new Date().toISOString();
 const data = {
   publishedAt: now, observedAt: now,
-  objective: 'Saml træ til fælleshuset', longTerm: 'Et smukt hjem og en fælles ekspedition til End.',
+  objective: 'Gather wood for the lodge', longTerm: 'A beautiful home and a shared expedition to the End.',
   serverVersion: 'Java 26.3',
-  bots: ['Roy', 'Spruce', 'Flint', 'Moss'].map(name => ({ name, role: 'Ekspeditionsholdet', status: 'online', health: 20, food: 18, task: 'Samler ressourcer' })),
-  milestones: [{ label: 'Et fælles hjem', completed: false }, { label: 'Jern og proviant', completed: false }, { label: 'Gennem Nether', completed: false }, { label: 'Ender-dragen', completed: false }],
-  entries: [{ at: now, observedAt: now, title: 'Den første dag', summary: '<img src=x onerror="window.injected=true">', events: ['Roy: Fandt træ'], image: null, captureError: null }],
+  bots: ['Roy', 'Spruce', 'Flint', 'Moss'].map(name => ({ name, role: 'Expedition crew', status: 'online', health: 20, food: 18, task: 'Gathering resources' })),
+  milestones: [{ label: 'A shared home', completed: false }, { label: 'Iron and provisions', completed: false }, { label: 'Through the Nether', completed: false }, { label: 'The Ender Dragon', completed: false }],
+  entries: [{ at: now, observedAt: now, title: 'The first day', summary: '<img src=x onerror="window.injected=true">', events: ['Roy: Found wood'], image: null, captureError: null }],
 };
 const browser = await chromium.launch({ executablePath: '/opt/google/chrome/chrome', args: ['--no-sandbox'] });
 try {
@@ -43,8 +43,7 @@ try {
     assert.equal(await page.locator('[data-camera]').count(), 4);
     assert.equal(await page.getByText('Four bots.', { exact: true }).count(), 0);
     await page.locator('#live-feed').waitFor();
-    assert.equal(await page.locator('#live-toggle').getAttribute('aria-pressed'), 'true');
-    assert.equal(await page.locator('#image-time').isVisible(), false);
+    assert.equal(await page.locator('#live-toggle, #image-time, #hero-image').count(), 0);
     await page.getByRole('img', { name: 'Main hand: stone sword ×1', exact: true }).waitFor();
     await page.getByRole('img', { name: 'Health 20/20', exact: true }).waitFor();
     assert.equal(await page.locator('#camera-vitals .mc-meter-cell').count(), 20);
@@ -116,11 +115,8 @@ try {
     await liveFrame.evaluate(() => { window.roycraftState.name = 'Roy'; });
     await page.getByText('Moss · Waiting for live observations', { exact: true }).waitFor();
     assert.equal(await page.locator('#camera-kit').textContent(), '');
-    await page.getByRole('button', { name: 'Show latest snapshot' }).click();
-    assert.equal(await page.locator('#live-feed').count(), 0);
-    assert.equal(await page.locator('#camera-controls').isVisible(), true);
-    await page.getByText('Live inventory paused', { exact: true }).waitFor();
-    assert.equal(await page.locator('#image-time').getAttribute('hidden'), null);
+    await page.locator('[data-camera="Roy"]').click();
+    await page.getByRole('img', { name: 'Main hand: stone sword ×1', exact: true }).waitFor();
     await page.locator('[data-camera="Moss"]').click();
     await page.getByRole('img', { name: 'Main hand: iron pickaxe ×1', exact: true }).waitFor();
     assert.equal(await page.locator('#live-feed').count(), 1);
@@ -129,6 +125,12 @@ try {
     await page.getByText(/Stale status/).waitFor();
     assert.equal(await page.locator('.live.stale').count(), 1);
     data.observedAt = now;
+    data.entries[0].image = 'item-assets/coal.png';
+    await page.reload();
+    await page.locator('#journal .entry img').waitFor();
+    assert.equal(await page.locator('.hero > img').count(), 0);
+    assert.equal(await page.locator('[data-camera]').count(), 4);
+    data.entries[0].image = null;
     await page.close();
   }
   console.log('Diary mobile/desktop, stale-state and text-injection browser checks passed.');

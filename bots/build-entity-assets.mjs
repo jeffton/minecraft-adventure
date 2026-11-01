@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, chmod, rename } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
@@ -31,10 +31,18 @@ async function download(path, checksum) {
   return buffer;
 }
 
+async function writeAsset(path, data) {
+  const temporary = `${path}.tmp`;
+  await writeFile(temporary, data);
+  await chmod(temporary, 0o644);
+  await rename(temporary, path);
+}
+
 // Downloads and generated buffers are proprietary Minecraft assets, not source
 // code. Default output is gitignored. TGA conversion requires Python Pillow.
 export async function buildEntityAssets(directory) {
   await mkdir(directory, { recursive: true });
+  await chmod(directory, 0o755);
   const models = {};
   const manifest = {
     revision,
@@ -49,14 +57,17 @@ export async function buildEntityAssets(directory) {
     const texturePath = `resource_pack/textures/entity/${source.texture}`;
     const geometry = await download(geometryPath, source.geometry);
     const texture = await download(texturePath, source.sha256);
-    await writeFile(join(directory, `${name}.geo.json`), geometry);
+    await writeAsset(join(directory, `${name}.geo.json`), geometry);
     const textureFile = join(directory, `${name}.png`);
     if (source.texture.endsWith('.tga')) {
       const tgaFile = join(directory, `${name}.tga`);
-      await writeFile(tgaFile, texture);
-      execFileSync('python3', ['-c', 'from PIL import Image; import sys; Image.open(sys.argv[1]).save(sys.argv[2])', tgaFile, textureFile]);
+      await writeAsset(tgaFile, texture);
+      const temporary = `${textureFile}.tmp`;
+      execFileSync('python3', ['-c', 'from PIL import Image; import sys; Image.open(sys.argv[1]).save(sys.argv[2], format="PNG")', tgaFile, temporary]);
+      await chmod(temporary, 0o644);
+      await rename(temporary, textureFile);
     } else {
-      await writeFile(textureFile, texture);
+      await writeAsset(textureFile, texture);
     }
     const model = bakeModernGeometry(JSON.parse(geometry), { hiddenBones: source.hiddenBones });
     const png = await readFile(textureFile);
@@ -68,8 +79,8 @@ export async function buildEntityAssets(directory) {
       textureUrl: base + texturePath, textureSha256: source.sha256,
       pngSha256: createHash('sha256').update(png).digest('hex') });
   }
-  await writeFile(join(directory, 'models.json'), JSON.stringify(models));
-  await writeFile(join(directory, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
+  await writeAsset(join(directory, 'models.json'), JSON.stringify(models));
+  await writeAsset(join(directory, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
   return models;
 }
 

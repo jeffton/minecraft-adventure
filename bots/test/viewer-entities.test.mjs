@@ -51,24 +51,25 @@ test('base skins and modern wooden boats resolve to real installed textures', ()
 
 test('patched real bundle compiles and its injected selector instantiates a textured llama mesh', () => {
   const bundle = fs.readFileSync(`${viewer}/public/index.js`, 'utf8');
-  new vm.Script(patchViewerEntities(bundle, viewerEntityModel.toString()));
+  const patched = patchViewerEntities(bundle, viewerEntityModel.toString());
+  new vm.Script(patched);
   assert.throws(() => patchViewerEntities('changed upstream'), /integration changed/);
-  const start = bundle.indexOf('const r=n[e];if(!r)throw new Error(`Unknown entity ${e}`);');
-  const patchedSelector = patchViewerEntities(bundle.slice(start, start + 'const r=n[e];if(!r)throw new Error(`Unknown entity ${e}`);'.length) + ';function texture(t,h){t.wrapT=THREE.RepeatWrapping,h.map=t}', viewerEntityModel.toString());
-  const sandbox = { n: models, e: 'trader_llama' };
-  vm.runInNewContext(`${patchedSelector};this.selected=r`, sandbox);
-  const entitySource = fs.readFileSync(`${viewer}/viewer/lib/entity/Entity.js`, 'utf8');
+  const marker = '823:(t,e,i)=>{';
+  const start = patched.indexOf(marker);
+  const end = patched.indexOf(',1644:', start);
+  assert.ok(start > 0 && end > start);
+  const entitySource = `(${patched.slice(start + 4, end)})`;
   const textures = [];
   const context = {
-    THREE: require('three'), module: { exports: {} },
-    require(name) {
-      if (name === './entities.json') return { trader_llama: sandbox.selected };
-      if (name === '../utils') return { loadTexture(path, apply) { textures.push(path); apply({}); } };
-      throw new Error(`Unexpected require ${name}`);
-    }
+    THREE: require('three'),
   };
-  vm.runInNewContext(entitySource, context);
-  const entity = new context.module.exports('1.16.4', 'trader_llama', {});
+  const module = { exports: {} };
+  vm.runInNewContext(entitySource, context)(module, {}, id => {
+    if (id === 628) return models;
+    if (id === 2281) return { loadTexture(path, apply) { textures.push(path); apply({}); } };
+    throw new Error(`Unexpected module ${id}`);
+  });
+  const entity = new module.exports('1.16.4', 'trader_llama', {});
   assert.equal(entity.mesh.children.length, 2);
   for (const mesh of entity.mesh.children) {
     assert.ok(mesh.geometry.attributes.position.count > 0);
@@ -76,4 +77,6 @@ test('patched real bundle compiles and its injected selector instantiates a text
   }
   assert.equal(textures.length, 2);
   assert.match(textures[1], /decor\/trader_llama.png$/);
+  const witch = new module.exports('1.16.4', 'witch', {});
+  assert.ok(witch.mesh.children.length > 0, 'The actual witch model must not throw and become a purple box');
 });

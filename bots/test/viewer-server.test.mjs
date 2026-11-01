@@ -36,7 +36,7 @@ test('real upstream viewer refreshes travelling chunks and equipment, then relea
   vm.runInNewContext(patchViewerServer(source, viewerState.toString()), sandbox);
   const bot = new EventEmitter();
   Object.assign(bot, {
-    version: '1.21.4', username: 'Flint', _client: { state: 'play' }, health: 20, food: 19,
+    registry: { supportFeature: () => 8 }, entities: {}, version: '1.21.4', username: 'Flint', _client: { state: 'play' }, health: 20, food: 19,
     entity: { position: { x: 1, y: 70, z: 3 }, velocity: { x: 0, y: -0.0784, z: 0 }, yaw: 0, pitch: 0, onGround: true },
     adventureAction: () => 'idle', inventory: Object.assign(new EventEmitter(), { slots: {}, items: () => [] })
   });
@@ -52,6 +52,21 @@ test('real upstream viewer refreshes travelling chunks and equipment, then relea
   bot.heldItem = { name: 'iron_pickaxe', count: 1 };
   bot.emit('heldItemChanged');
   assert.equal(sent.at(-1)[1].held.name, 'iron_pickaxe');
+  let stack = null;
+  const dropped = { id: 42, name: 'item', metadata: [], position: { x: 4, y: 70, z: 6 }, width: 0.25, height: 0.25, getDroppedItem: () => stack };
+  bot.entities[42] = dropped;
+  socket.emit('entity', { id: 42, name: 'item', pos: dropped.position });
+  assert.equal(sent.at(-1)[1].item, null, 'An item arriving before its metadata is not invented');
+  stack = { name: 'coal', count: 3, nbt: 'not public' };
+  dropped.metadata[8] = {};
+  bot.emit('entityUpdate', dropped);
+  assert.equal(sent.at(-1)[1].item.name, 'coal');
+  assert.equal(sent.at(-1)[1].item.count, 3);
+  assert.equal(JSON.stringify(sent.at(-1)[1]).includes('not public'), false);
+  stack = { name: 'coal', count: 7 };
+  dropped.position.x = 5;
+  socket.emit('entity', { id: 42, pos: dropped.position });
+  assert.equal(sent.at(-1)[1].item.count, 7, 'Movement also carries authoritative stack updates');
   world.travelled = true;
   bot.emit('move');
   await new Promise(resolve => setImmediate(resolve));
@@ -61,5 +76,6 @@ test('real upstream viewer refreshes travelling chunks and equipment, then relea
   assert.equal(intervals.size, 0);
   assert.equal(bot.listenerCount('move'), 0);
   assert.equal(bot.listenerCount('heldItemChanged'), 0);
+  assert.equal(bot.listenerCount('entityUpdate'), 0);
   assert.equal(bot.inventory.listenerCount('updateSlot'), 0);
 });

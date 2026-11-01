@@ -12,6 +12,7 @@ for file in "$source_dir"/*.mjs "$source_dir"/package.json; do
   install -o root -g root -m0644 "$file" "$target/"
 done
 /opt/node-minecraft22/bin/node "$target/build-viewer.mjs"
+/opt/node-minecraft22/bin/node "$target/build-entity-assets.mjs"
 install -d -o minecraft-bots -g minecraft-bots -m0750 /var/lib/minecraft-adventure/bots
 install -d -o root -g root -m0700 /etc/minecraft-adventure
 python3 - <<'PY'

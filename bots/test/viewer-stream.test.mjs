@@ -47,7 +47,7 @@ test('telemetry reflects actual held slot changes and inventory without private 
 });
 
 test('upstream server patch rejects changed integration anchors', () => {
-  const fixture = "http.listen(port, () => {\nworldView.init(bot.entity.position)\nworldView.updatePosition(bot.entity.position)\nbot.on('move', botPosition)\nbot.removeListener('move', botPosition)";
+  const fixture = "socket.emit('version', bot.version)\nhttp.listen(port, () => {\nworldView.init(bot.entity.position)\nworldView.updatePosition(bot.entity.position)\nbot.on('move', botPosition)\nbot.removeListener('move', botPosition)";
   const result = patchViewerServer(fixture, viewerState.toString());
   assert.match(result, /clearInterval\(stateTimer\)/);
   assert.match(result, /removeListener\('heldItemChanged', sendState\)/);

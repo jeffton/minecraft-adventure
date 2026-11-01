@@ -1,3 +1,5 @@
+import { buildViewerEntity, disposeViewerEntity } from './viewer-entity-mesh.mjs';
+
 // Installed 1.21.4 model rotations extend at most 0.42388 blocks outside a cell.
 export function visibleSectionsReady(viewer, THREE, padding, fogRadius) {
   // Meshing samples adjacent block data; complete visible coverage also needs
@@ -49,6 +51,8 @@ window.roycraftConnected = false;
 window.roycraftCameraApplied = false;
 window.roycraftChunksReady = false;
 window.roycraftCapture = null;
+window.roycraftBuildEntity = (${buildViewerEntity.toString()});
+window.roycraftDisposeEntity = (${disposeViewerEntity.toString()});
 window.roycraftVisibleSectionsReady = (${visibleSectionsReady.toString()});
 window.roycraftRadialFogVertex = (${radialFogVertex.toString()});
 window.roycraftTexturesReady = viewer => {

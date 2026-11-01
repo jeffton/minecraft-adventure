@@ -12,8 +12,34 @@ export function viewerState(bot, action) {
   };
 }
 
+export function viewerDroppedItem(entity, metadataIndex) {
+  // Entity spawn precedes its stack metadata; the protocol decoder cannot read
+  // the stack until that metadata packet arrives.
+  const item = entity.metadata[metadataIndex] === undefined ? null : entity.getDroppedItem();
+  return {
+    id: entity.id, name: entity.name, pos: entity.position,
+    width: entity.width, height: entity.height,
+    item: item ? { name: item.name, count: item.count } : null
+  };
+}
+
 export function patchViewerServer(source, stateFunction) {
   const replacements = [
+    ["socket.emit('version', bot.version)", `const originalEmit = socket.emit.bind(socket)
+    const metadataIndex = bot.registry.supportFeature('metadataIxOfItem')
+    const droppedItem = entity => (${viewerDroppedItem.toString()})(entity, metadataIndex)
+    socket.emit = (event, payload, ...args) => {
+      if (event === 'entity' && !payload.delete) {
+        const entity = bot.entities[payload.id]
+        if (entity?.name === 'item') payload = droppedItem(entity)
+      }
+      return originalEmit(event, payload, ...args)
+    }
+    const updateDroppedItem = entity => {
+      if (entity.name === 'item') originalEmit('entity', droppedItem(entity))
+    }
+    bot.on('entityUpdate', updateDroppedItem)
+    socket.emit('version', bot.version)`],
     ['http.listen(port, () => {', "http.listen(port, '127.0.0.1', () => {"],
     ['worldView.init(bot.entity.position)', `let initialChunksComplete = false
     let previousManifest = ''
@@ -34,6 +60,7 @@ export function patchViewerServer(source, stateFunction) {
     bot.inventory.on('updateSlot', sendState)`],
     ["bot.removeListener('move', botPosition)", `bot.removeListener('move', botPosition)
       clearInterval(stateTimer)
+      bot.removeListener('entityUpdate', updateDroppedItem)
       bot.removeListener('heldItemChanged', sendState)
       bot.inventory.removeListener('updateSlot', sendState)`]
   ];

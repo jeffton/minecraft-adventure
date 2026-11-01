@@ -28,10 +28,19 @@ for (const width of widths) {
       await frame.waitForFunction(name => window.roycraftReady === true && window.roycraftState?.name === name, name, { timeout: 60000 });
       await page.getByText('LIVE BOT CAMERA', { exact: true }).waitFor();
       await page.waitForFunction(() => document.querySelector('#camera-kit').textContent.includes('Main hand:'));
-      const actual = await frame.evaluate(() => ({ state: window.roycraftState, chunks: Object.keys(window.roycraftViewer.world.loadedChunks).length, pending: window.roycraftViewer.world.sectionsOutstanding.size, far: window.roycraftViewer.camera.far }));
+      const actual = await frame.evaluate(() => {
+        const meshes = Object.values(window.roycraftViewer.entities.entities);
+        return {
+          state: window.roycraftState, chunks: Object.keys(window.roycraftViewer.world.loadedChunks).length,
+          pending: window.roycraftViewer.world.sectionsOutstanding.size, far: window.roycraftViewer.camera.far,
+          purple: meshes.filter(mesh => mesh.material?.color?.getHex() === 0xff00ff).length,
+          custom: meshes.filter(mesh => mesh.userData.roycraftCustom).map(mesh => ({ kind: mesh.userData.roycraftKind, item: mesh.userData.itemKey })),
+        };
+      });
       assert.equal(actual.state.name, name);
       assert.ok(Array.isArray(actual.state.inventory));
       assert.equal(actual.far, 48);
+      assert.equal(actual.purple, 0, `Purple placeholder meshes remain for ${name}`);
       assert.ok(actual.chunks > 25, `Loaded terrain for ${name}: ${actual.chunks}`);
       assert.ok((await page.locator('#camera-kit').textContent()).includes(actual.state.held ? actual.state.held.name.replaceAll('_', ' ') : 'Empty'));
       assert.equal(await page.locator('#live-feed').count(), 1);
@@ -46,13 +55,14 @@ for (const width of widths) {
     await page.locator('[data-camera="Spruce"]').click();
     const finalFrame = await (await page.locator('#live-feed').elementHandle()).contentFrame();
     await finalFrame.waitForFunction(() => window.roycraftState?.name === 'Spruce', undefined, { timeout: 45000 });
-    await page.getByRole('button', { name: 'Show latest snapshot' }).click();
-    assert.equal(await page.locator('#live-feed').count(), 0);
-    assert.equal(await page.locator('#camera-controls').isVisible(), true);
-    await page.getByText('Live inventory paused', { exact: true }).waitFor();
-    await page.waitForFunction(() => !document.querySelector('#live-feed'));
-    // A new browser round-trip lets transport teardown complete without keeping a renderer alive.
+    assert.equal(await page.locator('#live-feed').count(), 1);
+    assert.equal(await page.locator('#live-toggle, #image-time, #hero-image').count(), 0);
+    assert.equal(await page.locator('[data-camera]').count(), 4);
+    assert.ok(await page.locator('#journal .entry img').count() > 0, 'Automatic diary images remain');
+    // Navigation closes the selected live camera; there is no snapshot mode.
+    const closed = Promise.all([...activeSockets].map(socket => socket.waitForEvent('close', { timeout: 10000 })));
     await page.goto('about:blank');
+    await closed;
     assert.equal(activeSockets.size, 0);
     assert.deepEqual(errors, []);
     assert.ok(new Set(Object.values(positions).map(p => JSON.stringify(p))).size > 1, 'Feeds must be genuine distinct bot positions');
