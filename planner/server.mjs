@@ -8,7 +8,7 @@ import { ModelQueue } from './queue.mjs';
 import { DIARY_INSTRUCTIONS, validateDiaryInput, validateDiaryParagraph } from './diary.mjs';
 import { openEngine } from './engine.mjs';
 import { plannerWorldConfig } from './world-scope.mjs';
-import { captureBuildingView, needsBuildingView, validateVisualSource, visualMetadata, VISION_INSTRUCTIONS } from './vision.mjs';
+import { capturePlanningViews, createPlanningVision, validateVisualSource, visualMetadata, VISION_INSTRUCTIONS } from './vision.mjs';
 import { MEAL_EVIDENCE_VERSION, correctUnverifiedMeals, initialEvidence, observeEvidence, resetSinceReview } from './evidence.mjs';
 import { STRATEGY_INSTRUCTIONS, reviewTrigger, strategyContext, validateReview } from './strategy.mjs';
 
@@ -71,7 +71,7 @@ export async function startPlanner({
   let missionRunning = false;
   let stopping = false;
   let lastEvidenceRecordedAt = Date.now();
-  let lastVisualReviewAt = 0;
+  const planningVision = captureView ? createPlanningVision(captureView) : null;
 
   async function readObserved() {
     const raw = await readFile(observedFile, 'utf8');
@@ -124,43 +124,43 @@ export async function startPlanner({
       status.lastMissionAttempt = Date.now();
       const queuedAt = Date.now();
       await writeJson(statusFile, status);
-      let visualFrame = null;
-      const answer = await queue.run(async () => {
-        if (captureView && needsBuildingView(pending.observed, pending.previousStrategy) && Date.now() - lastVisualReviewAt >= 120000) {
-          visualFrame = await captureView(pending.observed);
-          console.info(JSON.stringify({ event: 'building_view', id: pending.id, ...visualMetadata(visualFrame) }));
-          // Producers publish every ten seconds. Require a post-capture observation,
-          // including that producer's timestamp, to reject reconnects/dimension changes.
-          for (let attempt = 0; attempt < 20; attempt++) {
-            const confirmed = await readObserved();
-            const source = Object.values(confirmed.bots).find(bot => bot.name === visualFrame.bot);
-            if (Date.parse(confirmed.updatedAt) >= Date.parse(visualFrame.capturedAt) && Date.parse(source?.updatedAt) >= Date.parse(visualFrame.capturedAt)) break;
-            await sleep(1000);
-          }
+      // Capture is outside the model queue: Terra repairs continue while Chromium runs.
+      const visual = planningVision ? await planningVision(await readObserved(), pending.previousStrategy) : null;
+      const frames = visual?.frames ?? [];
+      if (visual) {
+        console.info(JSON.stringify({ event: 'planning_views', reused: visual.reused, baseView: visual.baseView, frames: frames.map(visualMetadata) }));
+        for (let attempt = 0; attempt < 20; attempt++) {
+          const confirmed = await readObserved();
+          if (frames.every(frame => {
+            const source = Object.values(confirmed.bots).find(bot => bot.name === frame.bot);
+            return Date.parse(confirmed.updatedAt) >= Date.parse(frame.capturedAt) && Date.parse(source?.updatedAt) >= Date.parse(frame.capturedAt);
+          })) break;
+          await sleep(1000);
         }
+      }
+      const answer = await queue.run(async () => {
         // A queued or crash-persisted request retains its ID/input while fresh.
         // A stale input gets a new identity, never reused for different model input.
         const current = await readObserved();
-        if (visualFrame || Date.now() - Date.parse(pending.observed.updatedAt) > 60000 ||
+        if (frames.length || Date.now() - Date.parse(pending.observed.updatedAt) > 60000 ||
             (pending.dispatchedAt === null && JSON.stringify(current) !== JSON.stringify(pending.observed))) {
           pending = await prepareReview(await engine.getAdventureState(), current, pending.trigger);
         }
         validateObservation(pending.observed);
-        if (visualFrame) validateVisualSource(visualFrame, pending.observed);
+        for (const frame of frames) validateVisualSource(frame, pending.observed);
         pending.dispatchedAt = Date.now();
         await writeJson(pendingFile, pending);
         console.info(JSON.stringify({ event: 'mission_started', id: pending.id, trigger: pending.trigger.kind, queuedMs: pending.dispatchedAt - queuedAt, observedAt: pending.observed.updatedAt }));
         return engine.complete([
           { role: 'system', content: MISSION_INSTRUCTIONS + '\n\n' + STRATEGY_INSTRUCTIONS + '\n\n' + VISION_INSTRUCTIONS },
-          { role: 'user', content: JSON.stringify({ observed: pending.observed, previousMission: pending.previousMission, ...pending.context, visualObservation: visualFrame ? visualMetadata(visualFrame) : null }) },
-        ], 'mission-' + pending.id, { role: 'mission', images: visualFrame ? [visualFrame.image] : [] });
+          { role: 'user', content: JSON.stringify({ observed: pending.observed, previousMission: pending.previousMission, ...pending.context, visualObservations: frames.map(visualMetadata), baseView: visual?.baseView ?? null }) },
+        ], 'mission-' + pending.id, { role: 'mission', images: frames.map(frame => frame.image) });
       }, { priority: 1 });
       const latest = await readObserved();
       const reviewed = validateReview(JSON.parse(answer.text), pending.previousStrategy, pending.evidence, pending.observed);
-      if (visualFrame) {
-        if (!reviewed.strategy.visualAssessment) throw new Error('Building vision response has no visual assessment');
-        lastVisualReviewAt = Date.now();
-        console.info(JSON.stringify({ event: 'building_visual_review', id: pending.id, sha256: visualFrame.sha256, assessment: reviewed.strategy.visualAssessment, answerEntryId: answer.answerEntryId }));
+      if (frames.length) {
+        if (!reviewed.strategy.visualAssessment) throw new Error('Planning vision response has no visual assessment');
+        console.info(JSON.stringify({ event: 'planning_visual_review', id: pending.id, frames: frames.map(visualMetadata), assessment: reviewed.strategy.visualAssessment, answerEntryId: answer.answerEntryId }));
       }
       const proposedMission = {
         id: pending.id, observedAt: pending.observed.updatedAt, generatedAt: new Date().toISOString(),
@@ -280,7 +280,7 @@ if (import.meta.url === 'file://' + process.argv[1]) {
     stateDir: config.stateDir,
     missionFile: config.missionFile,
     observedFile: config.observedFile,
-    captureView: captureBuildingView,
+    captureView: capturePlanningViews,
     port: Number(process.env.PLANNER_PORT ?? 8766),
   });
   let closing = false;

@@ -16,7 +16,7 @@ const home = { x: 0, y: 64, z: 0, dimension: 'overworld' };
 // Header fixture for transport/checksum tests, never sent to a live model.
 const bytes = Buffer.from('RIFF0000WEBPtest');
 function frame() {
-  return { home, capturedAt: new Date().toISOString(), bot: 'Roy', sourceSession: 'roy-session', sourceDimension: 'overworld', sha256: createHash('sha256').update(bytes).digest('hex'), image: { type: 'image', mimeType: 'image/webp', data: bytes.toString('base64') } };
+  return { kind: 'base', home, capturedAt: new Date().toISOString(), bot: 'Roy', sourceSession: 'roy-session', sourceDimension: 'overworld', sha256: createHash('sha256').update(bytes).digest('hex'), image: { type: 'image', mimeType: 'image/webp', data: bytes.toString('base64') } };
 }
 const plan = {
   phase: 'homestead', objective: 'Build a reachable shelter.', home: { x: home.x, y: home.y, z: home.z },
@@ -77,7 +77,7 @@ for (const failure of [false, true]) {
     const engine = fakeEngine({ complete: async (messages, id, options) => {
       calls++;
       assert.equal(options.images[0].data, bytes.toString('base64'));
-      assert.equal(JSON.parse(messages[1].content).visualObservation.sha256, frame().sha256);
+      assert.equal(JSON.parse(messages[1].content).visualObservations[0].sha256, frame().sha256);
       return { text: JSON.stringify(review(plan, { visualAssessment: 'The visible wall has a gap; close it before decoration.' })) };
     } });
     const planner = await startPlanner({ engine, token: 'test-vision-private-token-value', stateDir, observedFile, missionFile, port: 0, pollMs: 1000000,
@@ -88,7 +88,8 @@ for (const failure of [false, true]) {
         const confirmed = observation({ home, objective: 'Build shelter', updatedAt: confirmedAt });
         confirmed.bots[0].updatedAt = confirmedAt;
         await writeFile(observedFile, JSON.stringify(confirmed));
-        return image;
+        image.kind = 'pov';
+        return { frames: [image], baseView: { status: 'not_requested' } };
       },
     });
     await planner.close();

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { selectBaseCamera, startCaptureServer } from './vision-capture.mjs';
+import { selectBaseCamera, selectPovCamera, capturePlanning, startCaptureServer } from './vision-capture.mjs';
 
 const home = { x: 0, y: 64, z: 0, dimension: 'overworld' };
 const state = () => ({ updatedAt: new Date().toISOString(), home, bots: [

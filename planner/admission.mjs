@@ -33,10 +33,12 @@ export function admittedModels(models, { stateDir, intervalMs = 20000 }) {
             const missionInput = envelope.conversation.findLast(message => message.role === 'user');
             const input = JSON.parse(missionInput.content);
             validateObservation(input.observed);
-            if (input.visualObservation) {
-              const images = lastUser.content.filter(item => item.type === 'image');
-              if (images.length !== 1) throw new Error('Building review requires exactly one attached image');
-              validateVisualFrame({ ...input.visualObservation, image: images[0] }, input.observed.home);
+            const images = Array.isArray(lastUser.content) ? lastUser.content.filter(item => item.type === 'image') : [];
+            if (images.length || input.visualObservations?.length) {
+              if (!Array.isArray(input.visualObservations) || images.length !== input.visualObservations.length || images.length > 2) {
+                throw new Error('Planning images require matching current-format actor metadata; legacy image inputs are rejected');
+              }
+              input.visualObservations.forEach((metadata, index) => validateVisualFrame({ ...metadata, image: images[index] }, input.observed.home));
             }
           }
         }

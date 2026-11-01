@@ -21,11 +21,17 @@ export function selectBaseCamera(state, now = Date.now()) {
     const centre = Math.floor(source.position[axis] / 16) * 16 + 8;
     viewpoint[axis] = Math.max(centre - 8, Math.min(centre + 8, home[axis] + 12));
   }
-  return { home, bot: source.name, sourceSession: source.session, sourceDimension: source.dimension, observedAt: state.updatedAt, viewpoint };
+  return { kind: 'base', home, bot: source.name, sourceSession: source.session, sourceDimension: source.dimension, observedAt: state.updatedAt, viewpoint };
 }
 
-export async function captureBase(state) {
-  const selected = selectBaseCamera(state);
+export function selectPovCamera(state) {
+  if (Date.now() - Date.parse(state.updatedAt) > 60000) throw new Error('Planning camera observations are stale');
+  const source = state.bots.find(bot => bot.name === state.povBot && bot.status === 'online');
+  if (!source || !Object.hasOwn(PORTS, source.name)) throw new Error('Requested POV actor is not online');
+  return { kind: 'pov', bot: source.name, sourceSession: source.session, sourceDimension: source.dimension, observedAt: state.updatedAt };
+}
+
+export async function captureOne(selected) {
   const browser = await chromium.launch({
     executablePath: '/opt/google/chrome/chrome', headless: true,
     args: ['--no-sandbox', '--disable-dev-shm-usage', '--enable-unsafe-swiftshader'],
@@ -36,25 +42,35 @@ export async function captureBase(state) {
     page.on('pageerror', error => errors.push(error.message));
     await page.goto(`http://127.0.0.1:${PORTS[selected.bot]}/`, { waitUntil: 'domcontentloaded', timeout: 15000 });
     await page.waitForFunction(() => window.roycraftMotion && window.roycraftViewer, null, { timeout: 15000 });
-    await page.evaluate(({ home, viewpoint }) => {
-      // Move only the renderer's observer camera. Never move or turn the game bot.
-      window.roycraftMotion.receive = () => {};
-      window.roycraftMotion.frame = viewer => {
-        viewer.camera.position.set(viewpoint.x, viewpoint.y, viewpoint.z);
-        viewer.camera.lookAt(home.x, home.y + 2, home.z);
-      };
+    await page.evaluate(({ kind, home, viewpoint }) => {
+      if (kind === 'base') {
+        // Move only the observer renderer. POV captures retain the actual bot camera.
+        window.roycraftMotion.receive = () => {};
+        window.roycraftMotion.frame = viewer => {
+          viewer.camera.position.set(viewpoint.x, viewpoint.y, viewpoint.z);
+          viewer.camera.lookAt(home.x, home.y + 2, home.z);
+        };
+      }
       window.roycraftCapture = null;
+      const exportFrame = window.roycraftFrameRendered;
+      window.roycraftFrameRendered = renderer => {
+        exportFrame(renderer);
+        if (window.roycraftCapture && !window.roycraftCapturedViewpoint) {
+          const camera = window.roycraftViewer.camera;
+          window.roycraftCapturedViewpoint = { x: camera.position.x, y: camera.position.y, z: camera.position.z, yaw: camera.rotation.y, pitch: camera.rotation.x };
+        }
+      };
       window.roycraftCaptureRequested = true;
     }, selected);
     await page.waitForFunction(() => typeof window.roycraftCapture === 'string', null, { timeout: 30000 });
-    const rendered = await page.evaluate(() => ({ data: window.roycraftCapture, state: window.roycraftState }));
+    const rendered = await page.evaluate(() => ({ data: window.roycraftCapture, state: window.roycraftState, viewpoint: window.roycraftCapturedViewpoint }));
     if (errors.length) throw new Error('Building renderer: ' + errors.join('; '));
     if (rendered.state?.name !== selected.bot || Date.now() - rendered.state.at > 10000) throw new Error('Building renderer telemetry is not current');
-    if (Math.hypot(...['x', 'y', 'z'].map(axis => rendered.state.position[axis] - selected.home[axis])) > 24) throw new Error('Camera source left the base vicinity during capture');
+    if (selected.kind === 'base' && Math.hypot(...['x', 'y', 'z'].map(axis => rendered.state.position[axis] - selected.home[axis])) > 24) throw new Error('Camera source left the base vicinity during capture');
     const bytes = Buffer.from(rendered.data.split(',')[1], 'base64');
     if (bytes.length > 1024 * 1024) throw new Error('Building camera exceeds 1 MiB');
     return {
-      ...selected, capturedAt: new Date().toISOString(),
+      ...selected, viewpoint: rendered.viewpoint, capturedAt: new Date().toISOString(),
       sha256: createHash('sha256').update(bytes).digest('hex'),
       image: { type: 'image', mimeType: 'image/webp', data: bytes.toString('base64') },
     };
@@ -63,7 +79,25 @@ export async function captureBase(state) {
   }
 }
 
-export async function startCaptureServer({ capture = captureBase, port = 8935 } = {}) {
+export async function capturePlanning(state, capture = captureOne) {
+  const pov = selectPovCamera(state);
+  let base = null;
+  let baseView = { status: 'not_requested' };
+  if (state.includeBase) {
+    const eligible = state.home && state.bots.some(bot => bot.status === 'online' && bot.dimension === state.home.dimension &&
+      Math.hypot(...['x', 'y', 'z'].map(axis => bot.position[axis] - state.home[axis])) <= 24);
+    if (eligible) {
+      base = selectBaseCamera(state);
+      baseView = { status: 'included' };
+    } else baseView = { status: 'unavailable', reason: 'No online actor has the base in its loaded vicinity.' };
+  }
+  // Each call closes its browser before the next begins: one renderer, never four.
+  const frames = [await capture(pov)];
+  if (base) frames.push(await capture(base));
+  return { frames, baseView };
+}
+
+export async function startCaptureServer({ capture = capturePlanning, port = 8935 } = {}) {
   let busy = false;
   const server = http.createServer(async (request, response) => {
     response.setHeader('Content-Type', 'application/json');
