@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { craftExecutions, recipeIngredients, registerPrograms, validateProgram } from './program.mjs';
 
 function fixture(program, initial = {}, name = 'Roy') {
-    const names = ['oak_log', 'oak_planks', 'stick', 'crafting_table', 'wooden_pickaxe', 'cobblestone', 'stone_pickaxe', 'coal', 'raw_iron', 'iron_ingot', 'furnace', 'diamond', 'torch', 'iron_helmet', 'mutton', 'cooked_mutton', 'acacia_log', 'acacia_planks', 'pale_oak_log', 'pale_oak_planks'];
+    const names = ['oak_log', 'oak_planks', 'stick', 'crafting_table', 'wooden_pickaxe', 'cobblestone', 'stone_pickaxe', 'coal', 'raw_iron', 'iron_ingot', 'furnace', 'diamond', 'torch', 'iron_helmet', 'mutton', 'cooked_mutton', 'acacia_log', 'acacia_planks', 'pale_oak_log', 'pale_oak_planks', 'sand', 'glass', 'glass_pane', 'oak_door'];
     const items = names.map((name, id) => ({ name, id }));
     const registry = { items, itemsByName: Object.fromEntries(items.map(item => [item.name, item])) };
     const inventory = new Map(Object.entries(initial));
@@ -25,6 +25,8 @@ function fixture(program, initial = {}, name = 'Roy') {
     recipe('furnace', 1, { cobblestone: 8 }, true);
     recipe('torch', 4, { coal: 1, stick: 1 });
     recipe('iron_helmet', 1, { iron_ingot: 5 }, true);
+    recipe('glass_pane', 16, { glass: 6 }, true);
+    recipe('oak_door', 3, { oak_planks: 6 }, true);
     let mission = { id: 'revision1', bots: { [name]: { program } } };
     let home = null;
     const events = [], calls = [];
@@ -76,7 +78,7 @@ function fixture(program, initial = {}, name = 'Roy') {
             const fuelCount = Math.ceil(count / (fuel === 'coal' ? 8 : 1.5));
             assert.ok(amount(fuel) >= fuelCount, 'smelting consumes available earned fuel');
             add(input, -count); add(fuel, -fuelCount);
-            add(input === 'raw_iron' ? 'iron_ingot' : input === 'mutton' ? 'cooked_mutton' : 'stone', count);
+            add(input === 'raw_iron' ? 'iron_ingot' : input === 'mutton' ? 'cooked_mutton' : input === 'sand' ? 'glass' : 'stone', count);
             return true;
         },
         equip: async (_, item) => {
@@ -521,6 +523,18 @@ test('verified execution emits one correlated terminal with actual crafting and 
     assert.equal(actual.food, 20);
     assert.equal(actual.health, 20);
     assert.deepEqual(f.events.filter(event => event[1] === 'craft').map(event => event[3]), [{ item: 'oak_planks', count: 4 }, { item: 'stick', count: 4 }]);
+});
+
+test('lodge windows and door resolve through earned sand, furnace fuel and plank recipes', async () => {
+    const f = fixture([ensure('glass_pane', 8), ensure('oak_door', 1)], { oak_planks: 10, sand: 6, crafting_table: 1 });
+    f.resources.set('furnace', f.block('furnace'));
+    await f.run();
+    assert.equal(f.amount('glass_pane'), 16);
+    assert.equal(f.amount('oak_door'), 3);
+    assert.equal(f.amount('sand'), 0);
+    assert.equal(f.amount('oak_planks'), 0);
+    assert.ok(f.calls.some(call => call[0] === 'smelt' && call[1] === 'sand' && call[2] === 6));
+    assert.deepEqual(f.calls.filter(call => call[0] === 'craft').map(call => call[1]), ['glass_pane', 'oak_door']);
 });
 
 test('an optimistic equip result cannot enter verified program memory', async () => {

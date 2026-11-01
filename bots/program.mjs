@@ -4,14 +4,14 @@ import { randomUUID } from 'node:crypto';
 const WOODS = ['oak', 'spruce', 'birch', 'jungle', 'acacia', 'dark_oak', 'mangrove', 'cherry', 'pale_oak'];
 const LOGS = new Set(WOODS.map(wood => `${wood}_log`));
 const PLANKS = new Set(WOODS.map(wood => `${wood}_planks`));
-const CRAFTED = new Set(['stick', 'crafting_table', 'furnace', 'chest', 'torch', 'shield', 'bucket', 'flint_and_steel', ...PLANKS]);
+const CRAFTED = new Set(['stick', 'crafting_table', 'furnace', 'chest', 'torch', 'shield', 'bucket', 'flint_and_steel', 'oak_door', 'glass_pane', ...PLANKS]);
 for (const material of ['wooden', 'stone', 'iron']) {
     for (const tool of ['pickaxe', 'axe', 'shovel', 'hoe', 'sword']) CRAFTED.add(`${material}_${tool}`);
 }
 for (const armour of ['helmet', 'chestplate', 'leggings', 'boots']) CRAFTED.add(`iron_${armour}`);
-const RAW = { cobblestone: ['stone', 'cobblestone'], coal: ['coal_ore', 'deepslate_coal_ore'], raw_iron: ['iron_ore', 'deepslate_iron_ore'] };
+const RAW = { sand: ['sand'], cobblestone: ['stone', 'cobblestone'], coal: ['coal_ore', 'deepslate_coal_ore'], raw_iron: ['iron_ore', 'deepslate_iron_ore'] };
 const MEAT = { beef: 'cow', porkchop: 'pig', mutton: 'sheep', chicken: 'chicken' };
-const SMELTED = { iron_ingot: 'raw_iron', stone: 'cobblestone', cooked_beef: 'beef', cooked_porkchop: 'porkchop', cooked_mutton: 'mutton', cooked_chicken: 'chicken' };
+const SMELTED = { glass: 'sand', iron_ingot: 'raw_iron', stone: 'cobblestone', cooked_beef: 'beef', cooked_porkchop: 'porkchop', cooked_mutton: 'mutton', cooked_chicken: 'chicken' };
 export const ACQUISITION_ITEMS = Object.freeze([...new Set([...LOGS, ...CRAFTED, ...Object.keys(RAW), ...Object.keys(MEAT), ...Object.keys(SMELTED)])].sort());
 
 export class PreconditionError extends Error {
@@ -174,7 +174,7 @@ export async function executeProgram(agent, skills, helpers) {
             return sum + (local ? 1 : 10) * Math.max(0, ingredient.count - inventoryCount(bot, ingredient.name) - held);
         }, 0);
         return recipes.filter(recipe => recipe.result.id === bot.registry.itemsByName[item].id && recipeIngredients(recipe, bot.registry).every(ingredient =>
-            ingredient.name !== item && (inventoryCount(bot, ingredient.name) >= ingredient.count || LOGS.has(ingredient.name) || RAW[ingredient.name] || CRAFTED.has(ingredient.name) || ['iron_ingot', 'stone'].includes(ingredient.name))))
+            ingredient.name !== item && (inventoryCount(bot, ingredient.name) >= ingredient.count || LOGS.has(ingredient.name) || RAW[ingredient.name] || CRAFTED.has(ingredient.name) || Object.hasOwn(SMELTED, ingredient.name))))
             .sort((a, b) => cost(a) - cost(b))[0];
     };
     const acquire = async (item, target, depth) => {

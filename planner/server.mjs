@@ -9,6 +9,7 @@ import { initialEvidence, observeEvidence, resetSinceReview } from './evidence.m
 import { STRATEGY_INSTRUCTIONS, reviewTrigger, strategyContext, validateReview } from './strategy.mjs';
 
 const BODY_LIMIT = 128 * 1024;
+const OBSERVED_LIMIT = 1024 * 1024; // Four bounded producer streams plus the public event projection.
 
 export async function writeJson(file, value) {
   await mkdir(path.dirname(file), { recursive: true, mode: 0o750 });
@@ -65,7 +66,7 @@ export async function startPlanner({
 
   async function readObserved() {
     const raw = await readFile(observedFile, 'utf8');
-    if (Buffer.byteLength(raw) > BODY_LIMIT) throw new Error('Observed game state exceeds 128 KiB');
+    if (Buffer.byteLength(raw) > OBSERVED_LIMIT) throw new Error('Observed game state exceeds 1 MiB');
     return validateObservation(JSON.parse(raw));
   }
 

@@ -41,6 +41,32 @@ const plan = {
   }])),
 };
 
+test('four bounded producer streams are not mistaken for an oversized HTTP request', async () => {
+  const stateDir = await mkdtemp(path.join(tmpdir(), 'minecraft-four-streams-'));
+  const observedFile = path.join(stateDir, 'state.json');
+  const missionFile = path.join(stateDir, 'mission.json');
+  const current = observed();
+  current.bots = ['Roy', 'Spruce', 'Flint', 'Moss'].map(name => ({
+    ...current.bots[0], name, session: name + '-session',
+    events: Array.from({ length: 60 }, (_, index) => ({
+      session: name + '-session', sequence: index + 1, at: current.updatedAt,
+      type: 'error', message: 'Observed controller details. '.repeat(35), data: {},
+    })),
+  }));
+  const body = JSON.stringify(current);
+  assert.ok(Buffer.byteLength(body) > 128 * 1024);
+  await writeFile(observedFile, body);
+  let calls = 0;
+  const planner = await startPlanner({
+    engine: fakeEngine({ complete: async () => { calls++; return { text: JSON.stringify(review(plan)) }; } }),
+    token: 'test-relay-private-token-value', stateDir, observedFile, missionFile,
+    port: 0, queue: new ModelQueue({ intervalMs: 0 }), pollMs: 1000000,
+  });
+  await planner.close();
+  assert.equal(calls, 1);
+  assert.equal(JSON.parse(await readFile(missionFile, 'utf8')).goalId, 'roy-food');
+});
+
 for (const world of ['fresh', 'stale', 'offline']) {
   test(`long inference with ${world} current observations ${world === 'fresh' ? 'publishes with original observedAt' : 'does not replace the mission'}`, async t => {
     const stateDir = await mkdtemp(path.join(tmpdir(), 'minecraft-publication-freshness-'));
