@@ -46,7 +46,7 @@ export function craftExecutions(current, desired, resultCount) {
 function protectedHome(block, home, bot) {
     if (!home || home.dimension !== bot.game.dimension) return false;
     const p = block.position;
-    return p.x >= home.x - 2 && p.x <= home.x + 8 && p.z >= home.z - 3 && p.z <= home.z + 10;
+    return p.x >= home.x - 2 && p.x <= home.x + 8 && p.z >= home.z - 3 && p.z <= home.z + 10 && p.y >= home.y - 2;
 }
 
 function nearestResource(bot, names, home) {
@@ -145,13 +145,13 @@ export async function executeProgram(agent, skills, helpers) {
             ingredient.name !== item && (inventoryCount(bot, ingredient.name) >= ingredient.count || LOGS.has(ingredient.name) || RAW[ingredient.name] || CRAFTED.has(ingredient.name) || ['iron_ingot', 'stone'].includes(ingredient.name))))
             .sort((a, b) => cost(a) - cost(b))[0];
     };
-    const ensure = async (item, target, depth = 0) => {
+    const acquire = async (item, target, depth) => {
         check();
         // Root acquisition includes worn equipment (craftRecipe auto-equips armour).
         // Recipe ingredients must remain in usable inventory, never equipment slots.
         const observedCount = () => depth === 0 ? acquiredCount(bot, item) : inventoryCount(bot, item);
         if (observedCount() >= target) return;
-        if (target > 64 || depth > 4) throw new Error(`Bounded resolver cannot supply ${target} ${item} at recursion depth ${depth}; split the mission into earned preparation stages.`);
+        if (target > 64) throw new Error(`Bounded resolver cannot supply a batch larger than 64 ${item}.`);
         if (LOGS.has(item) || RAW[item]) return gather(item, target, RAW[item] ?? [item], depth);
         if (Object.hasOwn(MEAT, item)) {
             while (inventoryCount(bot, item) < target) {
@@ -213,6 +213,17 @@ export async function executeProgram(agent, skills, helpers) {
         });
         if (observedCount() < target) throw new Error(`Crafting ${item} did not reach observed acquired minimum ${target}.`);
     };
+    const resolving = new Set();
+    const ensure = async (item, target, depth = 0) => {
+        check();
+        const available = depth === 0 ? acquiredCount(bot, item) : inventoryCount(bot, item);
+        if (available >= target) return;
+        if (resolving.has(item)) throw new Error(`Cyclic acquisition prerequisites: ${[...resolving, item].join(' -> ')}.`);
+        resolving.add(item);
+        try {
+            return await acquire(item, target, depth);
+        } finally { resolving.delete(item); }
+    };
     const timer = setTimeout(() => {
         timedOut = true;
         bot.interrupt_code = true;
@@ -239,7 +250,6 @@ export async function executeProgram(agent, skills, helpers) {
                 const home = helpers.getHome();
                 if (!home) throw new Error('Cannot regroup before shared home is chosen.');
                 if (home.dimension !== bot.game.dimension) throw new Error('Shared home is in another dimension; use an authored portal action.');
-                if (bot.entity.position.distanceTo(home) > 96) throw new Error('Regroup is limited to 96 blocks; plan intermediate travel.');
                 if (bot.entity.position.distanceTo(home) > 3) await operation(() => skills.goToPosition(bot, home.x, home.y, home.z, 3));
                 if (bot.entity.position.distanceTo(home) > 4) throw new Error('Regroup did not reach the shared home.');
             }

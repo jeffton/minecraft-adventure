@@ -237,6 +237,28 @@ for (const held of [true, false]) {
     });
 }
 
+test('cooked food from initial resources resolves equipment prerequisites beyond the old depth-four cutoff', async () => {
+    const f = fixture([ensure('cooked_mutton', 2)], {}, 'Moss');
+    f.bot.entities = { 7: { name: 'sheep', position: { x: 5, y: 64, z: 0 } } };
+    f.resources.set('tree', f.block('oak_log'));
+    f.resources.set('rock', f.block('stone'));
+    f.resources.set('coal', f.block('coal_ore'));
+    f.skills.attackNearest = async () => { f.add('mutton', 2); delete f.bot.entities[7]; return true; };
+    await f.run();
+    assert.equal(f.amount('cooked_mutton'), 2);
+    assert.equal(f.amount('wooden_pickaxe'), 1);
+    assert.equal(f.amount('furnace'), 1);
+});
+
+test('cyclic recipe dependencies fail explicitly instead of recursing indefinitely', async () => {
+    const f = fixture([ensure('oak_planks', 4)]);
+    const original = f.bot.recipesAll;
+    f.bot.recipesAll = (id, ...args) => id === f.bot.registry.itemsByName.oak_planks.id
+        ? [{ requiresTable: false, result: { id, count: 4 }, delta: [{ id: f.bot.registry.itemsByName.stick.id, count: -1 }, { id, count: 4 }] }]
+        : original(id, ...args);
+    await assert.rejects(f.run(), /Cyclic acquisition prerequisites/);
+});
+
 test('recursive sticks use earned logs and correct plank/stick yields', async () => {
     const f = fixture([ensure('stick', 8)], { oak_log: 1 });
     await f.run();
