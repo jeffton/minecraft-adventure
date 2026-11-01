@@ -6,6 +6,8 @@ import { patchViewerEntities, viewerEntityModel } from '../bots/viewer-entities.
 import { patchViewerHeightClient } from '../bots/viewer-height.mjs';
 import { patchViewerRevisionClient } from '../bots/viewer-revisions.mjs';
 import { viewerAllowed } from '../bots/viewer-policy.mjs';
+import { installViewerBreaking, patchViewerBreakingServer } from '../bots/viewer-breaking.mjs';
+import { patchViewerBreakingClient, createViewerBreakingClient } from '../bots/viewer-breaking-client.mjs';
 
 // Only the read-only renderer is retained from the previous bot runtime.
 function replace(source, before, after) {
@@ -19,7 +21,7 @@ registerHooks({
     if (!url.includes('/prismarine-viewer/lib/')) return result;
     let source = String(result.source);
     if (url.endsWith('/mineflayer.js')) {
-      source = patchViewerServer(source, viewerState.toString());
+      source = patchViewerServer(patchViewerBreakingServer(source, installViewerBreaking.toString()), viewerState.toString());
       source = replace(source, "io.on('connection', (socket) => {", `io.on('connection', (socket) => {
         const isPublic = socket.handshake.headers['x-roycraft-public-viewer'] === '1';
         socket.data.roycraftPublic = isPublic;
@@ -30,7 +32,7 @@ registerHooks({
         app.use(prefix + '/entity-assets', express.static('/opt/minecraft-adventure/bots/assets/entities'))
         app.use(prefix + '/item-assets', express.static('/var/www/roybot.se/minecraft/item-assets'))
         app.get(prefix + '/', (req, res) => res.type('html').send(require('fs').readFileSync(${JSON.stringify(index)}, 'utf8').replace('<body>', '<body>' + ${JSON.stringify(readyScript)})))
-        app.get(prefix + '/index.js', (req, res) => res.type('js').send((${patchViewerRevisionClient.toString()})((${patchViewerHeightClient.toString()})((${patchViewerClient.toString()})((${patchViewerEntities.toString()})(require('fs').readFileSync(${JSON.stringify(index.replace('index.html', 'index.js'))}, 'utf8'), ${JSON.stringify(viewerEntityModel.toString())}), ${JSON.stringify(createCameraMotion.toString())})))))
+        app.get(prefix + '/index.js', (req, res) => res.type('js').send((${patchViewerBreakingClient.toString()})((${patchViewerRevisionClient.toString()})((${patchViewerHeightClient.toString()})((${patchViewerClient.toString()})((${patchViewerEntities.toString()})(require('fs').readFileSync(${JSON.stringify(index.replace('index.html', 'index.js'))}, 'utf8'), ${JSON.stringify(viewerEntityModel.toString())}), ${JSON.stringify(createCameraMotion.toString())}))), ${JSON.stringify(createViewerBreakingClient.toString())})))
         app.get(prefix + '/worker.js', (req, res) => res.sendFile('/opt/minecraft-adventure/bots/assets/worker.js'))`);
     }
     return { ...result, source };
