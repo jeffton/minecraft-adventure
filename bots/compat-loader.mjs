@@ -1,4 +1,5 @@
 import { registerHooks } from 'node:module';
+import { createInventoryController } from './inventory-controller.mjs';
 
 // Paper 26.3 validates client-tick boundaries. Mineflayer 4.39 supports this
 // packet in its protocol registry but omits it from physics/teleport responses.
@@ -33,13 +34,37 @@ export function patchBotSource(source) {
   return source.slice(0, start) + source.slice(end);
 }
 
+export function patchInventorySource(source) {
+  const setup = '  let stateId = -1';
+  const click = '  async function clickWindow (slot, mouseButton, mode) {';
+  const sync = '  async function syncWindow (window) {';
+  for (const marker of [setup, click, sync]) {
+    if (source.split(marker).length !== 2) throw new Error('Mineflayer inventory integration point changed');
+  }
+  return source.replace(setup, `${setup}\n  const authoritativeInventory = (${createInventoryController.toString()})(bot, Item)`)
+    .replace(click, `${click}\n    if (bot.supportFeature('stateIdUsed')) return authoritativeInventory.click(slot, mouseButton, mode)`)
+    .replace(sync, `${sync}\n    if (bot.supportFeature('stateIdUsed')) {\n      if (window !== (bot.currentWindow || bot.inventory)) throw new Error('Inventory window replaced before synchronization')\n      return authoritativeInventory.click(-999, 2, 5)\n    }`);
+}
+
+export function patchCraftSource(source) {
+  const fabricated = '        const item = new Item(recipe.result.id, recipe.result.count, recipe.result.metadata)\n        window.updateSlot(0, item)';
+  const start = source.indexOf('      async function updateOutShape () {');
+  const end = source.indexOf('      function slot (x, y) {', start);
+  if (source.split(fabricated).length !== 2 || start < 0 || end < start) throw new Error('Mineflayer crafting integration point changed');
+  source = source.slice(0, start) + `      async function updateOutShape () {\n        // Server-authoritative clicks already updated consumed ingredients.\n        // Collect only real remainders; never fabricate predicted slot contents.\n        for (let slot = 1; slot <= w * h; slot++) {\n          if (window.slots[slot]) await bot.putAway(slot)\n        }\n      }\n\n` + source.slice(end);
+  return source.replace(fabricated, `        const item = window.slots[0]\n        if (!item || item.type !== recipe.result.id || item.count < recipe.result.count) throw new Error('Server did not produce the expected crafting result')`);
+}
+
 registerHooks({
   load(url, context, nextLoad) {
     const result = nextLoad(url, context);
     const physics = url.endsWith('/node_modules/mineflayer/lib/plugins/physics.js');
     const bot = url.endsWith('/minecraft-mindcraft/src/utils/mcdata.js');
-    if (!physics && !bot) return result;
+    const inventory = url.endsWith('/node_modules/mineflayer/lib/plugins/inventory.js');
+    const craft = url.endsWith('/node_modules/mineflayer/lib/plugins/craft.js');
+    if (!physics && !bot && !inventory && !craft) return result;
     if (result.source == null) throw new Error('Minecraft compatibility source unavailable');
-    return { ...result, source: physics ? patchPhysics(String(result.source)) : patchBotSource(String(result.source)) };
+    const source = String(result.source);
+    return { ...result, source: physics ? patchPhysics(source) : bot ? patchBotSource(source) : inventory ? patchInventorySource(source) : patchCraftSource(source) };
   }
 });
