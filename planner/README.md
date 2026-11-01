@@ -1,6 +1,6 @@
 # Minecraft Adventure planner
 
-A dedicated Pi Durable 1.4.0 Harness uses Codex Sol (`gpt-6.1-sol`, medium reasoning) for shared missions and Terra (`gpt-5.6-terra`, low reasoning) for individual repair decisions. Mindcraft retains its local gameplay/skill loop.
+A dedicated Pi Durable 1.4.0 Harness uses Codex Sol (`gpt-6.1-sol`, medium reasoning) for shared missions and Terra (`gpt-6.1-terra`, low reasoning) for individual repair decisions. Mindcraft retains its local gameplay/skill loop.
 
 - `POST http://127.0.0.1:8766/v1/chat/completions`: non-streaming OpenAI chat, text messages, `user` equal to Roy/Spruce/Flint/Moss, bearer credential from `PLANNER_RELAY_TOKEN`. Repair model/output budget are fixed server-side at Terra/2048 tokens, low reasoning; client model names cannot change routing. Model tools are not accepted.
 - `GET /mission`: authenticated latest shared mission. The same JSON is published to `/var/lib/minecraft-adventure/control/mission.json`.
@@ -39,7 +39,7 @@ Mission schema:
 
 The planner runs as `minecraft-planner`, with its private group and shared `minecraft-adventure-project` group, **not** the server's private group.
 
-A separate root-owned credential broker has no model Harness, execution API or TCP listener. Its group-restricted Unix socket returns only resolved Codex access auth, never refresh credentials. It calls the same SDK locked canonical credential store as Batty (`/root/github/.batty/auth.json`), so OAuth refresh ownership is shared through the existing file lock rather than duplicated token files. No bot receives provider credentials.
+A separate root-owned broker has no model Harness, execution API or TCP listener. Its group-restricted Unix socket serves resolved Codex access auth at `/auth` and canonical Codex model descriptors at `/models`, never refresh credentials. It calls the same SDK locked canonical credential store as Batty (`/root/github/.batty/auth.json`), so OAuth refresh ownership is shared through the existing file lock rather than duplicated token files. Batty's cached model catalog is mounted read-only into the broker; the planner needs no filesystem access to Batty state. Models absent from the canonical catalog fail explicitly rather than using an older alias. No bot receives provider credentials.
 
 The relay token is a separate random local bearer credential. Bots receive that token as `OPENAI_API_KEY`; only the planner sees short-lived provider access auth. Nothing is exposed through nginx.
 

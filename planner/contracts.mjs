@@ -2,7 +2,7 @@ import itemRegistry from './item-ids.json' with { type: 'json' };
 
 const ITEM_IDS = new Set(itemRegistry.items);
 
-export const MODEL = 'gpt-5.6-terra';
+export const MODEL = 'gpt-6.1-terra';
 export const MODEL_ROLES = {
   mission: { model: 'gpt-6.1-sol', thinkingLevel: 'medium' },
   repair: { model: MODEL, thinkingLevel: 'low' },

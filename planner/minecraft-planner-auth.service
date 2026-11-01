@@ -10,6 +10,8 @@ Group=minecraft-planner
 WorkingDirectory=/opt/minecraft-adventure/planner
 Environment=BATTY_PROVIDER_AUTH_PATH=/root/github/.batty/auth.json
 Environment=PLANNER_AUTH_SOCKET=/run/minecraft-planner-auth/auth.sock
+Environment=BATTY_MODELS_STORE_PATH=/run/minecraft-planner-auth/models-store.json
+BindReadOnlyPaths=/var/lib/batty2/.batty/models-store.json:/run/minecraft-planner-auth/models-store.json
 Environment=NODE_OPTIONS=--max-old-space-size=192
 ExecStart=/usr/bin/node credential-broker.mjs
 RuntimeDirectory=minecraft-planner-auth

@@ -9,14 +9,14 @@ import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite
 import { MODEL_ROLES, MAX_OUTPUT_TOKENS } from './contracts.mjs';
 import { admittedModels } from './admission.mjs';
 
-export function readBrokerAuth(socketPath) {
+async function readBroker(socketPath, endpoint, maxBytes) {
   return new Promise((resolve, reject) => {
-    const request = http.request({ socketPath, path: '/auth', method: 'GET', timeout: 15000 }, response => {
+    const request = http.request({ socketPath, path: endpoint, method: 'GET', timeout: 15000 }, response => {
       let body = '';
       response.setEncoding('utf8');
       response.on('data', chunk => {
         body += chunk;
-        if (body.length > 16384) request.destroy(new Error('Credential broker response too large'));
+        if (Buffer.byteLength(body) > maxBytes) request.destroy(new Error('Credential broker response too large'));
       });
       response.on('error', reject);
       response.on('end', () => {
@@ -30,12 +30,15 @@ export function readBrokerAuth(socketPath) {
   });
 }
 
-export function brokerModels(socketPath) {
+export const readBrokerAuth = socketPath => readBroker(socketPath, '/auth', 16384);
+
+export async function brokerModels(socketPath) {
   const models = createModels({ identity: { attribution: { name: 'Minecraft Adventure' } } });
   const codex = openaiCodexProvider();
+  const catalog = await readBroker(socketPath, '/models', 1024 * 1024);
   const configured = Object.values(MODEL_ROLES).map(role => {
-    const model = codex.getModels().find(model => model.id === role.model);
-    if (!model) throw new Error('Configured model is absent from the SDK registry: ' + role.model);
+    const model = catalog.find(model => model.provider === 'openai-codex' && model.id === role.model);
+    if (!model) throw new Error('Configured model is absent from the canonical catalog: ' + role.model);
     return { ...model, maxTokens: MAX_OUTPUT_TOKENS };
   });
   models.setProvider({
@@ -54,7 +57,8 @@ export function brokerModels(socketPath) {
   return models;
 }
 
-export async function openEngine({ stateDir, socketPath, models = brokerModels(socketPath), timeoutMs = 120000, intervalMs = 20000 }) {
+export async function openEngine({ stateDir, socketPath, models, timeoutMs = 120000, intervalMs = 20000 }) {
+  models ??= await brokerModels(socketPath);
   await mkdir(stateDir, { recursive: true, mode: 0o750 });
   const context = BACKGROUND_CONTEXT;
   const harness = await Harness.open(

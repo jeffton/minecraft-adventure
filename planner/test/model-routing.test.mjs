@@ -84,7 +84,7 @@ test('real relay routes mission to Sol medium and repairs to Terra low without l
     await engine.complete([{ role: 'user', content: 'next-mission-marker' }], 'next-mission', { role: 'mission' });
     assert.deepEqual(calls.map(({ model, reasoning }) => ({ model, reasoning })), [
       { model: 'gpt-6.1-sol', reasoning: 'medium' },
-      { model: 'gpt-5.6-terra', reasoning: 'low' },
+      { model: 'gpt-6.1-terra', reasoning: 'low' },
       { model: 'gpt-6.1-sol', reasoning: 'medium' },
     ]);
     assert.doesNotMatch(JSON.stringify(calls[2].context), /repair-marker/);
@@ -115,7 +115,7 @@ for (const stopReason of ['length', 'error']) {
       assert.equal(response.status, 200);
       assert.equal(JSON.parse(await readFile(missionFile, 'utf8')).id, 'previous');
       assert.ok(JSON.parse(await readFile(path.join(stateDir, 'status.json'), 'utf8')).lastMissionError);
-      assert.deepEqual(calls.map(call => call.model), ['gpt-6.1-sol', 'gpt-5.6-terra']);
+      assert.deepEqual(calls.map(call => call.model), ['gpt-6.1-sol', 'gpt-6.1-terra']);
     } finally { await planner.close(); }
   });
 }
