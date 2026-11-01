@@ -30,11 +30,13 @@ function fixture() {
     async equip(item) { events.push(item.name); },
     async dig() {
       events.push('dig');
+      target.name = 'air';
+      target.type = 0;
       bot.entities = { 7: { id: 7, name: 'item', position: new Vec3(3, 64, 0) } };
     },
     async waitForTicks() {}, stopDigging() {}, clearControlStates() {}, deactivateItem() {},
   };
-  return { bot, events, inventory, rpc: createMinecraftRpc(bot, { Vec3, goals: { GoalNear, GoalLookAtBlock } }) };
+  return { bot, events, inventory, rpc: createMinecraftRpc(bot, { Vec3, goals: { GoalNear, GoalLookAtBlock }, onEvent: event => events.push(event) }) };
 }
 
 test('ordinary navigation preserves shelter/materials and restores permissions after error', async () => {
@@ -62,6 +64,10 @@ test('harvesting equips a tool and verifies collected drops rather than counting
   assert.ok(events.indexOf('wooden_axe') < events.indexOf('dig'));
   assert.deepEqual(result.inventoryDelta, { oak_log: 1 });
   assert.deepEqual(result.remainingDrops, []);
+  assert.equal(result.block, 'oak_log', 'source name survives Mineflayer mutation');
+  const mined = events.find(event => event.type === 'block-mined');
+  assert.equal(mined.block.name, 'oak_log');
+  assert.equal(mined.result.name, 'air');
 });
 
 test('harvesting reports zero inventory gain when no item drops materialize', async () => {

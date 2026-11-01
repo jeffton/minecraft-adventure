@@ -88,6 +88,9 @@ export async function runPlayer(env = process.env) {
   bot.pathfinder.setMovements(movements);
   const rpc = createMinecraftRpc(bot, { Vec3, goals, onEvent: event => {
     emit('minecraft_rpc', event.method ?? event.type, { method: event.method });
+    if (event.type === 'block-mined') {
+      emit('gather', `Mined ${event.block.name} at ${JSON.stringify(event.block.position)}.`, { material: event.block.name, position: event.block.position, verified: true });
+    }
     if (event.method === 'placeBlock' && event.result && !['air', 'cave_air', 'void_air'].includes(event.result.name)) {
       emit('build', `Placed ${event.result.name} at ${JSON.stringify(event.result.position)}.`, { material: event.result.name, position: event.result.position, verified: true });
       progress.placed();
@@ -132,7 +135,6 @@ export async function runPlayer(env = process.env) {
   viewer.mineflayer(bot, { port: 8931, viewDistance: 4, firstPerson: true });
   bot.on('death', () => { life++; progress.died(); void saveProgress(); emit('death', 'Died; inventory and location must be observed again.'); void interrupt('death').catch(fail); });
   bot.on('respawn', () => { wake = true; emit('respawn', 'Respawned in the current world.'); });
-  bot.on('diggingCompleted', block => emit('gather', `Mined ${block.name} at ${block.position}.`, { material: block.name, position: block.position, verified: true }));
   const stopReflexes = installReflexes(bot, {
     acquire: async reason => { reflexOwner = reason; await interrupt(reason); },
     release: () => { reflexOwner = null; wake = true; },

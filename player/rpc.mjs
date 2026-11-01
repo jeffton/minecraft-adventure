@@ -138,6 +138,15 @@ export function createMinecraftRpc(bot, { Vec3, goals, onEvent = () => {} }) {
     return packPosition(bot.entity.position);
   }
 
+  async function mine(p) {
+    const target = block(p);
+    const before = packBlock(target);
+    await bot.dig(target);
+    const after = packBlock(bot.blockAt(vector(p)));
+    if (after && after.type !== before.type) onEvent({ type: 'block-mined', block: before, result: after });
+    return after;
+  }
+
   const methods = {
     observe,
     blockAt: p => packBlock(bot.blockAt(vector(p))),
@@ -193,6 +202,7 @@ export function createMinecraftRpc(bot, { Vec3, goals, onEvent = () => {} }) {
       const started = epoch;
       const active = () => { if (started !== epoch) throw new Error('Harvest was cancelled'); };
       const target = block(p);
+      const source = packBlock(target);
       if (!target.diggable) throw new Error(`Cannot harvest ${target.name}`);
       const before = observe();
       await navigate(new goals.GoalLookAtBlock(target.position, bot.world, { reach: 4 }));
@@ -204,7 +214,7 @@ export function createMinecraftRpc(bot, { Vec3, goals, onEvent = () => {} }) {
         throw new Error(`No suitable harvesting tool for ${current.name}`);
       }
       if (tool) { await bot.equip(tool, 'hand'); active(); }
-      await bot.dig(current);
+      await mine(p);
       active();
       await bot.waitForTicks(8);
       active();
@@ -228,7 +238,7 @@ export function createMinecraftRpc(bot, { Vec3, goals, onEvent = () => {} }) {
       const start = counts(before.inventory);
       const end = counts(after.inventory);
       return {
-        block: target.name, position: packPosition(target.position),
+        block: source.name, position: source.position,
         inventoryDelta: Object.fromEntries([...new Set([...Object.keys(start), ...Object.keys(end)])]
           .map(name => [name, (end[name] ?? 0) - (start[name] ?? 0)]).filter(([, count]) => count)),
         remainingDrops: drops().map(value => ({ id: value.id, position: packPosition(value.position) })),
@@ -243,7 +253,7 @@ export function createMinecraftRpc(bot, { Vec3, goals, onEvent = () => {} }) {
     },
     clearControls() { bot.clearControlStates(); return null; },
     async waitTicks(ticks) { await bot.waitForTicks(integer(ticks, 'ticks', 1, 200)); return observe(); },
-    async dig(p) { await bot.dig(block(p)); return packBlock(bot.blockAt(vector(p))); },
+    dig: mine,
     async placeBlock(p, face) {
       const direction = position(face);
       if (Math.abs(direction.x) + Math.abs(direction.y) + Math.abs(direction.z) !== 1 || !Object.values(direction).every(Number.isInteger)) {

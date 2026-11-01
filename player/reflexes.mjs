@@ -1,5 +1,5 @@
 const HOSTILES = new Set(['zombie', 'husk', 'drowned', 'skeleton', 'stray', 'bogged', 'creeper', 'spider', 'cave_spider', 'witch', 'pillager', 'vindicator', 'ravager', 'silverfish', 'endermite', 'blaze', 'wither_skeleton', 'hoglin', 'zoglin', 'phantom', 'breeze']);
-const RANGED = new Set(['skeleton', 'stray', 'bogged', 'pillager', 'witch', 'blaze', 'drowned']);
+const RANGED = new Set(['skeleton', 'stray', 'bogged', 'pillager', 'witch', 'blaze']);
 
 // Use actual collision shapes, not entity proximity: mobs above a sealed roof
 // or behind a wall must not evict the player from shelter. Sample both upper
@@ -79,7 +79,7 @@ export function createReflexController(bot, { acquire, release, goals, emit, onE
       const danger = threats.find(entity => {
         const range = entity.position.distanceTo(bot.entity.position);
         return (range < 6 && (bot.health <= 8 || threats.length >= 3 || entity.name === 'creeper')) ||
-          (RANGED.has(entity.name) && range >= 3);
+          ((RANGED.has(entity.name) || (entity.name === 'drowned' && entity.heldItem?.name === 'trident')) && range >= 3);
       });
       if (danger) {
         if (mode) relinquish();

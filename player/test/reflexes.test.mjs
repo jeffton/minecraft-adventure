@@ -101,6 +101,43 @@ test('exposed creeper and ranged skeleton trigger non-destructive bounded escape
   }
 });
 
+test('ordinary drowned at range do not interrupt work or trigger recurring escapes', async () => {
+  for (const heldItem of [null, { name: 'nautilus_shell' }]) {
+    const f = fixture({ name: 'drowned', position: new Vec3(5, -1, 0) });
+    f.bot.entities[2].heldItem = heldItem;
+    for (let cycle = 0; cycle < 3; cycle++) {
+      await f.controller.tick();
+      f.advance(6500);
+    }
+    assert.deepEqual(f.calls.acquired, []);
+    assert.deepEqual(f.calls.goals, []);
+    assert.deepEqual(f.calls.errors, []);
+    f.controller.close();
+  }
+});
+
+test('trident-bearing drowned at range trigger escape, but not through a wall', async () => {
+  for (const barriers of [[], [wall]]) {
+    const f = fixture({ name: 'drowned', position: new Vec3(5, -1, 0), barriers });
+    f.bot.entities[2].heldItem = { name: 'trident' };
+    await f.controller.tick();
+    assert.deepEqual(f.calls.acquired, barriers.length ? [] : ['escaping immediate danger']);
+    assert.deepEqual(f.calls.errors, []);
+    f.controller.close();
+  }
+});
+
+test('ordinary drowned still trigger melee defense and low-health escape', async () => {
+  for (const health of [20, 8]) {
+    const f = fixture({ name: 'drowned' });
+    f.bot.health = health;
+    await f.controller.tick();
+    assert.deepEqual(f.calls.acquired, [health === 20 ? 'defending against nearby enemy' : 'escaping immediate danger']);
+    assert.deepEqual(f.calls.attacks, health === 20 ? [2] : []);
+    f.controller.close();
+  }
+});
+
 test('escape ends immediately when a wall provides shelter, restoring prior movement', async () => {
   const barriers = [];
   const f = fixture({ name: 'creeper', barriers });
