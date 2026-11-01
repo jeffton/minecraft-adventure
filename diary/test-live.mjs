@@ -19,7 +19,7 @@ for (const width of widths) {
       socket.on('close', () => activeSockets.delete(socket));
     });
     await page.goto('https://minecraft.roybot.se/', { waitUntil: 'domcontentloaded' });
-    await page.getByRole('heading', { name: 'Roy', exact: true }).waitFor();
+    await page.getByRole('heading', { name: 'Field notes', exact: true }).waitFor();
     const frame = await (await page.locator('#live-feed').elementHandle()).contentFrame();
     await frame.waitForFunction(() => window.roycraftReady === true && window.roycraftState?.name === 'Roy', undefined, { timeout: 60000 });
     await page.getByText('LIVE BOT CAMERA', { exact: true }).waitFor();

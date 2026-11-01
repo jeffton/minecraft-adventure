@@ -35,8 +35,13 @@ try {
       await route.fulfill({ contentType: types[name.split('.').at(-1)], body: await readFile(path) });
     });
     await page.goto('http://diary.test/');
-    await page.getByRole('heading', { name: 'Roy', exact: true }).waitFor();
-    assert.equal(await page.locator('.bot').count(), 1);
+    await page.getByRole('heading', { name: 'Field notes', exact: true }).waitFor();
+    await page.getByText(data.entries[0].summary, { exact: true }).waitFor();
+    assert.equal(await page.locator('#crew, #milestones, .crew-section, .route-section').count(), 0);
+    for (const text of ['The player', 'The road to the dragon', 'Progress observed in the game. Not wishful thinking.', 'Roy’s diary · Every fifteen minutes', 'Current world']) {
+      assert.equal((await page.locator('body').textContent()).includes(text), false);
+    }
+    assert.equal(await page.locator('#long-term').textContent(), data.longTerm);
     assert.equal(await page.locator('[data-camera], #live-toggle, select, details').count(), 0);
     assert.equal(await page.locator('#live-feed').count(), 1);
     assert.equal(await page.evaluate(() => window.injected), undefined);
@@ -46,9 +51,8 @@ try {
     assert.equal(await page.locator('#camera-vitals .mc-meter-cell').count(), 20);
     await page.getByRole('img', { name: 'oak log ×7', exact: true }).waitFor();
     const frame = await (await page.locator('#live-feed').elementHandle()).contentFrame();
-    const task = page.locator('.bot[data-name="Roy"] .task');
-    await task.getByText(skillName, { exact: true }).waitFor();
-    assert.ok((await page.locator('#camera-state').textContent()).includes(skillName));
+    const task = page.locator('#camera-state');
+    await task.getByText(skillName, { exact: false }).waitFor();
     const clock = page.locator('#world-clock');
     await clock.getByText('12:00', { exact: true }).waitFor();
     for (const [ticks, isDay, label, time] of [[12999, true, 'Day', '18:59'], [13000, false, 'Night', '19:00'], [17999, false, 'Night', '23:59'], [18000, false, 'Night', '00:00'], [23000, true, 'Day', '05:00']]) {
@@ -60,29 +64,26 @@ try {
     assert.equal((await page.locator('body').textContent()).includes(oldActionId), false);
     for (const action of ['planning', 'observing', 'idle', '<img src=x onerror="window.skillInjected=true">']) {
       await frame.evaluate(action => Object.assign(window.roycraftState, { action, at: Date.now() }), action);
-      await task.getByText(action, { exact: true }).waitFor();
+      await task.getByText(action, { exact: false }).waitFor();
       assert.ok((await page.locator('#camera-state').textContent()).includes(action));
     }
     assert.equal(await task.locator('img').count(), 0);
     assert.equal(await page.evaluate(() => window.skillInjected), undefined);
     await frame.evaluate(action => Object.assign(window.roycraftState, { action, at: Date.now() }), skillName);
-    await task.getByText(skillName, { exact: true }).waitFor();
+    await task.getByText(skillName, { exact: false }).waitFor();
     await frame.evaluate(() => { window.roycraftState.status = 'offline'; });
     await page.getByText('Roy · Offline', { exact: true }).waitFor();
-    assert.equal(await task.textContent(), 'Offline');
     await clock.getByText('—', { exact: true }).waitFor();
     assert.equal(await clock.getAttribute('data-phase'), 'unavailable');
     assert.equal(await page.locator('#camera-kit').textContent(), '');
     await frame.evaluate(() => { window.roycraftState.status = 'online'; window.roycraftState.at = 0; });
     await page.getByText('Roy · Waiting for live observations', { exact: true }).waitFor();
-    assert.equal(await task.textContent(), 'Waiting for live observations');
     assert.equal(await clock.locator('.world-clock-time').textContent(), '—');
     await frame.evaluate(() => {
       Object.assign(window.roycraftState, { at: Date.now(), health: 7, food: 0, held: null, offhand: null, inventory: [] });
     });
     await page.getByRole('img', { name: 'Health 7/20', exact: true }).waitFor();
-    assert.equal(await task.textContent(), skillName);
-    assert.equal(await page.locator('.bot .vitals').textContent(), 'Health 20/20Food 18/20');
+    assert.ok((await task.textContent()).includes(skillName));
     await page.getByText('Inventory is empty', { exact: true }).waitFor();
     await frame.evaluate(() => { window.roycraftState.name = 'SomeoneElse'; });
     await page.getByText('Roy · Waiting for live observations', { exact: true }).waitFor();
@@ -92,13 +93,19 @@ try {
     await page.getByText('My old expedition.', { exact: true }).waitFor();
     assert.equal(await page.locator('#journal-title').textContent(), 'Field notes · previous-world');
     assert.equal(await page.locator('#objective').textContent(), data.objective);
-    await page.locator('.bot .task').getByText(skillName, { exact: true }).waitFor();
+    await page.locator('#camera-state').getByText(skillName, { exact: false }).waitFor();
     assert.equal((await page.locator('body').textContent()).includes(oldActionId), false);
     assert.equal(await page.locator('#journal img').getAttribute('src'), 'item-assets/coal.png');
     assert.equal(await page.locator('#live-feed').getAttribute('src'), 'live/');
-    await page.getByRole('link', { name: 'Current world', exact: true }).click();
+    await page.goto('http://diary.test/');
     await page.getByText(data.entries[0].summary, { exact: true }).waitFor();
     assert.equal(await page.locator('#journal img').count(), 0);
+    const archives = data.archives;
+    data.archives = [];
+    await page.reload();
+    await page.getByText(data.entries[0].summary, { exact: true }).waitFor();
+    assert.equal(await page.locator('#world-archives').isVisible(), false);
+    data.archives = archives;
     data.observedAt = '2020-01-01T00:00:00Z';
     await page.reload();
     await page.getByText(/Stale status/).waitFor();
