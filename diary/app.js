@@ -1,3 +1,17 @@
+import { clearInventory, renderInventory } from './inventory.js';
+
+let itemAssets;
+try {
+  const response = await fetch('item-assets/manifest.json');
+  if (!response.ok) throw new Error(`Item artwork returned ${response.status}`);
+  itemAssets = await response.json();
+} catch (error) {
+  console.error(error);
+  const button = document.querySelector('#live-toggle');
+  button.disabled = true;
+  button.textContent = 'Item artwork could not load';
+}
+
 const dateTime = value => new Intl.DateTimeFormat('en-GB', {
   day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
   timeZone: 'Europe/Stockholm',
@@ -85,14 +99,13 @@ const liveToggle = document.querySelector('#live-toggle');
 const cameraControls = document.querySelector('#camera-controls');
 const cameraBot = document.querySelector('#camera-bot');
 let liveMonitor;
-const itemLabel = item => item ? `${item.name.replaceAll('_', ' ')} ×${item.count}` : 'Empty';
+let inventorySignature;
 
 function startCamera() {
   document.querySelector('#live-feed')?.remove();
   clearInterval(liveMonitor);
-  document.querySelector('#camera-kit').replaceChildren();
-  document.querySelector('#camera-inventory').replaceChildren();
-  document.querySelector('#inventory-count').textContent = '';
+  clearInventory();
+  inventorySignature = undefined;
   document.querySelector('#camera-state').textContent = `Connecting to ${cameraBot.value}…`;
   const feed = document.createElement('iframe');
   feed.id = 'live-feed';
@@ -116,16 +129,17 @@ function startCamera() {
       : connectedBefore ? 'CAMERA DISCONNECTED' : 'CONNECTING CAMERA…';
     if (!connected) {
       document.querySelector('#camera-state').textContent = `${cameraBot.value} · ${state?.status === 'offline' ? 'Offline' : 'Waiting for live observations'}`;
-      document.querySelector('#camera-kit').replaceChildren();
-      document.querySelector('#camera-inventory').replaceChildren();
-      document.querySelector('#inventory-count').textContent = '';
+      clearInventory();
+      inventorySignature = undefined;
       return;
     }
     const p = state.position;
-    document.querySelector('#camera-state').textContent = `${state.name} · ${state.digging ? `Mining ${state.digging.replaceAll('_', ' ')}` : state.moving ? 'Moving' : 'Stationary'} · ${state.action.replaceAll('action:', '')} · ${Math.round(p.x)}, ${Math.round(p.y)}, ${Math.round(p.z)} · Health ${vital(state.health)}/20 · Food ${vital(state.food)}/20`;
-    document.querySelector('#camera-kit').replaceChildren(node('span', `Main hand: ${itemLabel(state.held)}`), node('span', `Off hand: ${itemLabel(state.offhand)}`));
-    document.querySelector('#inventory-count').textContent = `(${state.inventory.reduce((sum, item) => sum + item.count, 0)} items)`;
-    document.querySelector('#camera-inventory').replaceChildren(...(state.inventory.length ? state.inventory.map(item => node('span', itemLabel(item))) : [node('span', 'Inventory is empty')]));
+    document.querySelector('#camera-state').textContent = `${state.name} · ${state.digging ? `Mining ${state.digging.replaceAll('_', ' ')}` : state.moving ? 'Moving' : 'Stationary'} · ${state.action.replaceAll('action:', '')} · ${Math.round(p.x)}, ${Math.round(p.y)}, ${Math.round(p.z)}`;
+    const signature = JSON.stringify([state.health, state.food, state.held, state.offhand, state.inventory]);
+    if (signature !== inventorySignature) {
+      renderInventory(state, itemAssets);
+      inventorySignature = signature;
+    }
   }, 250);
 }
 
@@ -137,6 +151,8 @@ liveToggle.addEventListener('click', () => {
     cameraControls.hidden = true;
     document.querySelector('#image-time').hidden = false;
     clearInterval(liveMonitor);
+    clearInventory();
+    inventorySignature = undefined;
     liveToggle.textContent = 'Watch live ↗';
     liveToggle.setAttribute('aria-pressed', 'false');
     document.querySelector('#camera-label').textContent = 'BOT CAMERA';

@@ -1,0 +1,20 @@
+.mc-vitals { display:flex; flex-wrap:wrap; gap:12px 20px; width:100%; }
+.mc-meter { display:flex; align-items:center; height:20px; gap:1px; }
+.mc-meter-cell { position:relative; display:block; width:18px; height:18px; }
+.mc-meter-image { position:absolute; inset:0; width:18px; height:18px; image-rendering:pixelated; }
+.camera-kit { display:flex; gap:24px; align-items:center; }
+.mc-hand { display:flex; align-items:center; gap:10px; }
+.camera-kit .mc-hand-label { color:var(--muted); font-size:11px; padding:0; background:none; border-radius:0; }
+.camera-inventory { display:grid; grid-template-columns:repeat(auto-fill,48px); gap:4px; padding:10px; width:min(100%, 488px); background:#c6c6c6; border:2px solid; border-color:#fff #555 #555 #fff; border-radius:0; box-shadow:0 2px 0 #173a3020; }
+.mc-slot { position:relative; display:grid; place-items:center; width:48px; height:48px; background:#8b8b8b; border:2px solid; border-color:#373737 #fff #fff #373737; color:white; }
+.mc-slot:focus-visible { outline:3px solid var(--ink); outline-offset:2px; z-index:5; }
+.mc-slot:hover { background:#a4a4a4; }
+.mc-slot .mc-tooltip { display:none; position:fixed; z-index:20; left:50%; bottom:24px; transform:translateX(-50%); padding:6px 8px; width:max-content; max-width:calc(100vw - 48px); background:#18271f; border:1px solid #c8d4bb; border-radius:2px; color:white; font:12px/1.4 sans-serif; text-shadow:none; pointer-events:none; }
+.mc-slot:is(:hover,:focus-visible) .mc-tooltip { display:block; }
+.mc-item { width:36px; height:36px; object-fit:contain; image-rendering:pixelated; }
+.mc-slot .mc-count { position:absolute; right:2px; bottom:0; padding:0; background:none; border-radius:0; font:bold 15px/1.1 monospace; color:white; text-shadow:2px 2px #292929; }
+.mc-slot-empty::after { content:''; width:16px; height:16px; border:2px dashed #b3b3b3; }
+.mc-slot .mc-unmapped { font-size:8px; line-height:1.1; padding:2px; background:none; color:white; text-align:center; }
+.mc-empty-message { grid-column:1/-1; margin:4px; color:#333; }
+.mc-unknown { color:var(--muted); font-size:11px; }
+@media(max-width:420px) { .camera-kit { gap:16px; } .mc-hand { gap:6px; } .camera-inventory { grid-template-columns:repeat(auto-fill,44px); } .camera-inventory .mc-slot { width:44px; height:44px; } }
