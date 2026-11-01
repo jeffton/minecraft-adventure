@@ -1,4 +1,6 @@
-// Terra supplies data, never executable code. Each run observes inventory afresh.
+import { randomUUID } from 'node:crypto';
+
+// The shared planner supplies data, never executable code.
 const WOODS = ['oak', 'spruce', 'birch', 'jungle', 'acacia', 'dark_oak', 'mangrove', 'cherry', 'pale_oak'];
 const LOGS = new Set(WOODS.map(wood => `${wood}_log`));
 const PLANKS = new Set(WOODS.map(wood => `${wood}_planks`));
@@ -10,7 +12,19 @@ for (const armour of ['helmet', 'chestplate', 'leggings', 'boots']) CRAFTED.add(
 const RAW = { cobblestone: ['stone', 'cobblestone'], coal: ['coal_ore', 'deepslate_coal_ore'], raw_iron: ['iron_ore', 'deepslate_iron_ore'] };
 const MEAT = { beef: 'cow', porkchop: 'pig', mutton: 'sheep', chicken: 'chicken' };
 const SMELTED = { iron_ingot: 'raw_iron', stone: 'cobblestone', cooked_beef: 'beef', cooked_porkchop: 'porkchop', cooked_mutton: 'mutton', cooked_chicken: 'chicken' };
+export const ACQUISITION_ITEMS = Object.freeze([...new Set([...LOGS, ...CRAFTED, ...Object.keys(RAW), ...Object.keys(MEAT), ...Object.keys(SMELTED)])].sort());
+
+export class PreconditionError extends Error {
+    constructor(message) { super(message); this.name = 'PreconditionError'; }
+}
+
 const inventoryCount = (bot, name) => bot.inventory.items().filter(item => item.name === name).reduce((sum, item) => sum + item.count, 0);
+export function observedInventory(bot) {
+    const items = bot.inventory.items();
+    return [...items, ...[5, 6, 7, 8, 45].map(slot => bot.inventory.slots[slot]).filter(item => item && !items.includes(item))]
+        .map(({ name, count }) => ({ name, count }));
+}
+
 const acquiredCount = (bot, name) => {
     if (!/_(helmet|chestplate|leggings|boots)$/.test(name) && name !== 'shield') return inventoryCount(bot, name);
     const usable = bot.inventory.items();
@@ -24,6 +38,7 @@ export function validateProgram(program, bot, name) {
         const keys = { ensure_item: ['action', 'item', 'count'], equip: ['action', 'item'], build_lodge: ['action'], regroup: ['action'] }[step?.action];
         if (!keys || Object.keys(step).some(key => !keys.includes(key))) throw new Error('Unsupported program action or fields; executable code is not accepted.');
         if (['ensure_item', 'equip'].includes(step.action) && (typeof step.item !== 'string' || !Object.hasOwn(bot.registry.itemsByName, step.item))) throw new Error(`Unknown registry item: ${step.item}.`);
+        if (step.action === 'ensure_item' && !ACQUISITION_ITEMS.includes(step.item)) throw new Error(`Acquisition is not implemented for ${step.item}.`);
         if (step.action === 'ensure_item' && (!Number.isInteger(step.count) || step.count < 1 || step.count > 64)) throw new Error('ensure_item count must be an inventory minimum from 1 to 64.');
         if (step.action === 'build_lodge' && name !== 'Roy') throw new Error('Only Roy may execute build_lodge.');
     }
@@ -70,6 +85,23 @@ export async function executeProgram(agent, skills, helpers) {
     requireSurvival(bot);
     const initialDimension = bot.game.dimension;
     const deadline = Date.now() + 120000;
+    const attemptId = randomUUID();
+    let activeStep = { action: 'initialize' };
+    let preconditions;
+    let started = false;
+    const attempt = () => ({ attemptId, missionId: mission.id, controllerRevision: helpers.controllerRevision, preconditions, program });
+    const begin = inventoryConfirmed => {
+        const home = helpers.getHome();
+        preconditions = JSON.stringify({
+            dimension: bot.game.dimension,
+            position: ['x', 'y', 'z'].map(axis => Math.floor(bot.entity.position[axis])),
+            inventoryConfirmed, inventory: observedInventory(bot).map(({ name, count }) => [name, count]).sort(),
+            home: home ? { x: home.x, y: home.y, z: home.z, dimension: home.dimension } : null,
+            resources: agent.adventureSurvey ? agent.adventureSurvey.nearbyResources : null,
+        });
+        started = true;
+        helpers.emit?.(agent, 'attempt_started', inventoryConfirmed ? `Started program ${mission.id}.` : `Program ${mission.id} admission failed before inventory confirmation.`, attempt());
+    };
     let operations = 0;
     let gathered = 0;
     let timedOut = false;
@@ -123,7 +155,7 @@ export async function executeProgram(agent, skills, helpers) {
             check();
             const home = helpers.getHome();
             const block = nearestResource(bot, names, home);
-            if (!block) throw new Error(`No loaded unprotected ${names.join('/')} within 64 blocks for ${item}. Explore or change the program.`);
+            if (!block) throw new PreconditionError(`No loaded unprotected ${names.join('/')} within 64 blocks for ${item}. Explore or change the program.`);
             if (++gathered > 64) throw new Error('Program reached its 64-block gathering budget.');
             const before = inventoryCount(bot, item);
             await operation(() => helpers.gatherResource(agent, names, home));
@@ -158,7 +190,7 @@ export async function executeProgram(agent, skills, helpers) {
                 check();
                 const animal = Object.values(bot.entities).filter(entity => entity.name === MEAT[item] && bot.entity.position.distanceTo(entity.position) <= 96)
                     .sort((a, b) => bot.entity.position.distanceTo(a.position) - bot.entity.position.distanceTo(b.position))[0];
-                if (!animal) throw new Error(`No loaded ${MEAT[item]} within 96 blocks for earned ${item}.`);
+                if (!animal) throw new PreconditionError(`No loaded ${MEAT[item]} within 96 blocks for earned ${item}.`);
                 if (bot.entity.position.distanceTo(animal.position) > 20) await operation(() => helpers.approachAnimal(agent, animal));
                 if (++gathered > 64) throw new Error('Program reached its 64-resource gathering budget.');
                 const before = inventoryCount(bot, item);
@@ -204,6 +236,7 @@ export async function executeProgram(agent, skills, helpers) {
         for (const ingredient of recipeIngredients(ready, bot.registry)) {
             if (inventoryCount(bot, ingredient.name) < ingredient.count * actualExecutions) throw new Error(`Actual recipe lacks ${ingredient.name} for desired ${item}; split the preparation program.`);
         }
+        const beforeCraft = observedCount();
         await operation(async () => {
             try {
                 return await skills.craftRecipe(bot, item, actualExecutions);
@@ -215,6 +248,7 @@ export async function executeProgram(agent, skills, helpers) {
             }
         });
         if (observedCount() < target) throw new Error(`Crafting ${item} did not reach observed acquired minimum ${target}.`);
+        helpers.emit?.(agent, 'craft', `Crafted ${observedCount() - beforeCraft} ${item}.`, { item, count: observedCount() - beforeCraft });
     };
     const resolving = new Set();
     const ensure = async (item, target, depth = 0) => {
@@ -237,13 +271,20 @@ export async function executeProgram(agent, skills, helpers) {
         check();
         await syncInventory();
         check();
+        begin(true);
         for (let index = 0; index < program.length; index++) {
             check();
             const step = program[index];
+            activeStep = step;
             if (step.action === 'ensure_item') await ensure(step.item, step.count);
             else if (step.action === 'equip') {
-                if (!bot.inventory.slots.some(item => item?.name === step.item)) throw new Error(`Cannot equip missing earned ${step.item}.`);
+                if (!bot.inventory.slots.some(item => item?.name === step.item)) throw new PreconditionError(`Cannot equip missing earned ${step.item}.`);
                 await operation(() => skills.equip(bot, step.item));
+                await syncInventory();
+                const slot = step.item.endsWith('_helmet') ? 5 : step.item.endsWith('_chestplate') || step.item === 'elytra' ? 6 :
+                    step.item.endsWith('_leggings') ? 7 : step.item.endsWith('_boots') ? 8 : step.item === 'shield' ? 45 : null;
+                const equipped = slot === null ? bot.heldItem : bot.inventory.slots[slot];
+                if (equipped?.name !== step.item) throw new Error(`Equip ${step.item} did not reach the observed equipment destination.`);
             } else if (step.action === 'build_lodge') {
                 if (!helpers.buildLodge) throw new Error('Direct authored lodge helper is not registered.');
                 const result = await operation(() => helpers.buildLodge(bot, helpers.getHome(), agent));
@@ -259,7 +300,16 @@ export async function executeProgram(agent, skills, helpers) {
             check();
             helpers.emit?.(agent, 'program', `${mission.id}: step ${index + 1}/${program.length} ${step.action} completed.`);
         }
+        helpers.emit?.(agent, 'attempt_completed', `Completed program ${mission.id}.`, {
+            ...attempt(), inventory: observedInventory(bot), food: bot.food, health: bot.health
+        });
         return `Program ${mission.id} completed ${program.length} observed steps; ${operations} gameplay operations. No generated code executed.`;
+    } catch (error) {
+        if (!started) begin(false);
+        const interrupted = bot.interrupt_code || bot.health <= 0 || bot.game.dimension !== initialDimension || helpers.getMission()?.id !== mission.id;
+        const kind = timedOut ? 'execution' : interrupted ? 'interrupted' : error instanceof PreconditionError ? 'precondition' : ['NoPath', 'Timeout'].includes(error.name) ? 'navigation' : 'execution';
+        helpers.emit?.(agent, 'attempt_failed', error.message, { ...attempt(), action: activeStep.action, target: activeStep.item ?? (activeStep.action === 'regroup' ? JSON.stringify(helpers.getHome()) : activeStep.action), kind, reason: error.message });
+        throw error;
     } finally { clearTimeout(timer); }
 }
 

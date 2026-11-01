@@ -183,7 +183,7 @@ Agent.prototype.startEvents = function (...args) {
     const material = block.name;
     const position = block.position.clone();
     const result = await dig(block, ...digArgs);
-    this.adventure.emit('gather', `Mined ${material} at ${position}.`);
+    this.adventure.emit('gather', `Mined ${material} at ${position}.`, { material, position: { x: position.x, y: position.y, z: position.z } });
     return result;
   };
   this.bot.adventureAction = () => this.actions.currentActionLabel || (this.adventureThinking ? 'planning' : 'idle');

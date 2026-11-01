@@ -1,9 +1,11 @@
 import test from 'node:test';
+import { fakeEngine, observation, review } from './helpers/strategy-fixtures.mjs';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { createModels } from '@earendil-works/pi-ai/models';
 import { fauxProvider, fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux';
 import { openEngine, readBrokerAuth } from '../engine.mjs';
@@ -74,10 +76,10 @@ test('global model queue serializes calls and paces starts even after model fail
 test('relay requires auth, validates bot/stream input, and emits OpenAI text contract', async () => {
   const stateDir = await directory();
   let calls = 0;
-  const engine = {
+  const engine = fakeEngine({
     complete: async messages => { calls++; assert.match(JSON.stringify(messages), /game state/); return { text: '!stay()', usage: { input: 10, output: 2, totalTokens: 12 }, finishReason: 'stop' }; },
     close: async () => {},
-  };
+  });
   const planner = await startPlanner({ engine, token, stateDir, missionFile: path.join(stateDir, 'mission.json'), port: 0, queue: new ModelQueue({ intervalMs: 0 }) });
   const url = 'http://127.0.0.1:' + planner.server.address().port;
   const payload = { user: 'Roy', model: 'ignored-model', messages: [{ role: 'system', content: 'game state' }] };
@@ -99,16 +101,18 @@ test('missions use observed state, publish validated shared plan and respect int
   const stateDir = await directory();
   const observedFile = path.join(stateDir, 'state.json');
   const missionFile = path.join(stateDir, 'mission.json');
-  await writeFile(observedFile, JSON.stringify({ updatedAt: new Date().toISOString(), bots: [{ name: 'Roy', status: 'online', updatedAt: new Date().toISOString(), health: 16, inventory: { oak_log: 12 } }] }));
+  const input = observation();
+  input.bots[0].inventory = [{ name: 'oak_log', count: 12 }];
+  await writeFile(observedFile, JSON.stringify(input));
   let calls = 0;
-  const engine = {
+  const engine = fakeEngine({
     complete: async messages => {
       calls++;
       assert.match(JSON.stringify(messages), /oak_log/);
-      return { text: JSON.stringify(plan), finishReason: 'stop' };
+      return { text: JSON.stringify(review(plan)), finishReason: 'stop' };
     },
     close: async () => {},
-  };
+  });
   const options = { engine, token, stateDir, missionFile, observedFile, port: 0, queue: new ModelQueue({ intervalMs: 0 }), pollMs: 1000000 };
   let planner = await startPlanner(options);
   try {
@@ -129,13 +133,54 @@ test('malformed model mission is reported and never replaces a published plan', 
   const stateDir = await directory();
   const observedFile = path.join(stateDir, 'state.json');
   const missionFile = path.join(stateDir, 'mission.json');
-  await writeFile(observedFile, JSON.stringify({ updatedAt: new Date().toISOString(), bots: [{ name: 'Roy', status: 'online', updatedAt: new Date().toISOString(), health: 20 }] }));
+  await writeFile(observedFile, JSON.stringify(observation()));
   await writeFile(missionFile, JSON.stringify({ ...plan, id: 'existing' }));
-  const engine = { complete: async () => ({ text: JSON.stringify({ ...plan, phase: 'shell', command: 'run external code' }) }), close: async () => {} };
+  const engine = fakeEngine({ complete: async () => ({ text: JSON.stringify(review({ ...plan, phase: 'shell', command: 'run external code' })) }), close: async () => {} });
   const planner = await startPlanner({ engine, token, stateDir, missionFile, observedFile, port: 0, queue: new ModelQueue({ intervalMs: 0 }), pollMs: 1000000 });
   await planner.close();
   assert.equal(JSON.parse(await readFile(missionFile, 'utf8')).id, 'existing');
   assert.match(JSON.parse(await readFile(path.join(stateDir, 'status.json'), 'utf8')).lastMissionError, /invalid keys/);
+});
+
+test('polling during inference is serialized and new events belong to the next strategic review', async () => {
+  const stateDir = await directory();
+  const observedFile = path.join(stateDir, 'state.json');
+  const missionFile = path.join(stateDir, 'mission.json');
+  const observed = observation();
+  await writeFile(observedFile, JSON.stringify(observed));
+  let release;
+  let entered;
+  let calls = 0;
+  const gate = new Promise(resolve => { release = resolve; });
+  const started = new Promise(resolve => { entered = resolve; });
+  const engine = fakeEngine({
+    complete: async messages => {
+      calls++;
+      const input = JSON.parse(messages[1].content);
+      assert.equal(input.evidence.totals.crafted, 0);
+      entered();
+      await gate;
+      return { text: JSON.stringify(review(plan)) };
+    },
+  });
+  const planner = await startPlanner({ engine, token, stateDir, missionFile, observedFile, port: 0, pollMs: 1000000 });
+  try {
+    await Promise.race([started, sleep(2000, null, { ref: false }).then(() => assert.fail('mission inference did not start'))]);
+    observed.bots[0].events = [{
+      session: observed.bots[0].session, sequence: 1, at: observed.updatedAt,
+      type: 'craft', data: { count: 4 },
+    }];
+    await writeFile(observedFile, JSON.stringify(observed));
+    await Promise.all([planner.missionTick(), planner.missionTick(), planner.missionTick()]);
+    assert.equal(calls, 1, 'polling cannot overlap the in-flight strategic transaction');
+    release();
+    await planner.close();
+    const committed = await engine.getAdventureState();
+    assert.equal(committed.evidence.totals.crafted, 4);
+    assert.equal(committed.evidence.sinceReview.counters.crafted, 4, 'inference-time events are not erased by review reset');
+    assert.equal(committed.evidence.cursors.Roy.sequence, 1);
+    assert.equal(JSON.parse(await readFile(missionFile, 'utf8')).id, committed.mission.id);
+  } finally { release(); await planner.close(); }
 });
 
 test('credential broker exposes only Codex resolved access auth on a restricted Unix socket', async () => {

@@ -2,9 +2,11 @@ import http from 'node:http';
 import { timingSafeEqual, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { MODEL, MODEL_ROLES, MISSION_INSTRUCTIONS, HttpError, validateChat, validatePlan, validateObservation } from './contracts.mjs';
+import { MODEL, MODEL_ROLES, MISSION_INSTRUCTIONS, HttpError, validateChat, validateObservation } from './contracts.mjs';
 import { ModelQueue } from './queue.mjs';
 import { openEngine } from './engine.mjs';
+import { initialEvidence, observeEvidence, resetSinceReview } from './evidence.mjs';
+import { STRATEGY_INSTRUCTIONS, reviewTrigger, strategyContext, validateReview } from './strategy.mjs';
 
 const BODY_LIMIT = 128 * 1024;
 
@@ -44,60 +46,105 @@ export async function startPlanner({
   queue = new ModelQueue({ intervalMs: 0 }), missionIntervalMs = 300000, pollMs = 30000,
 }) {
   if (!token || token.length < 24) throw new Error('PLANNER_RELAY_TOKEN must contain at least 24 characters');
-  let mission = await optionalJson(missionFile);
+  let adventure = await engine.getAdventureState();
+  if (adventure.evidence === null) {
+    const existingMission = await optionalJson(missionFile);
+    adventure = await engine.commitAdventureState({ expectedRevision: adventure.revision, next: {
+      strategy: null, evidence: initialEvidence(), mission: existingMission,
+      lastReviewAt: 0, lastTriggerFingerprint: null,
+    } });
+  }
+  let mission = adventure.mission;
+  // Pi Durable is authoritative; this file is only the bot-readable projection.
+  await writeJson(missionFile, mission);
   const statusFile = path.join(stateDir, 'status.json');
   const pendingFile = path.join(stateDir, 'pending-mission.json');
   const status = await optionalJson(statusFile) ?? { lastMissionAttempt: 0, lastMissionError: null };
   let missionRunning = false;
   let stopping = false;
 
+  async function readObserved() {
+    const raw = await readFile(observedFile, 'utf8');
+    if (Buffer.byteLength(raw) > BODY_LIMIT) throw new Error('Observed game state exceeds 128 KiB');
+    return validateObservation(JSON.parse(raw));
+  }
+
+  async function prepareReview(state, observed, trigger) {
+    const evidence = observeEvidence(state.evidence, observed);
+    const recorded = await engine.recordEvidence({ expectedRevision: state.revision, evidence, lastTriggerFingerprint: trigger.fingerprint });
+    const pending = {
+      version: 2, id: randomUUID(), stateRevision: recorded.revision, trigger, dispatchedAt: null,
+      observed, evidence, previousMission: recorded.mission, previousStrategy: recorded.strategy,
+      context: strategyContext(recorded, evidence, observed, trigger),
+    };
+    await writeJson(pendingFile, pending);
+    return pending;
+  }
+
   async function missionTick() {
     if (missionRunning || stopping) return;
     missionRunning = true;
     try {
+      adventure = await engine.getAdventureState();
+      mission = adventure.mission;
+      await writeJson(missionFile, mission);
       let pending = await optionalJson(pendingFile);
+      if (pending && adventure.mission?.id === pending.id) {
+        // A crash after the document commit cannot lose or regenerate the mission.
+        await writeJson(pendingFile, null);
+        status.lastMissionError = null;
+        return;
+      }
+      if (pending && pending.version !== 2) throw new Error('Superseded pre-strategy pending mission; dated published mission retained');
       if (!pending) {
-        if (Date.now() - status.lastMissionAttempt < missionIntervalMs) return;
-        const raw = await readFile(observedFile, 'utf8');
-        if (Buffer.byteLength(raw) > BODY_LIMIT) throw new Error('Observed game state exceeds 128 KiB');
-        validateObservation(JSON.parse(raw));
-        pending = { id: randomUUID(), observed: null, previousMission: mission };
-        await writeJson(pendingFile, pending);
+        const observed = await readObserved();
+        const evidence = observeEvidence(adventure.evidence, observed);
+        const trigger = reviewTrigger(adventure, evidence, observed, Date.now(), status.lastMissionAttempt, missionIntervalMs);
+        if (!trigger) {
+          adventure = await engine.recordEvidence({ expectedRevision: adventure.revision, evidence });
+          return;
+        }
+        pending = await prepareReview(adventure, observed, trigger);
       }
       status.lastMissionAttempt = Date.now();
       await writeJson(statusFile, status);
       const answer = await queue.run(async () => {
-        // Reread at dispatch; queued or crash-persisted snapshots may have aged.
-        const raw = await readFile(observedFile, 'utf8');
-        if (Buffer.byteLength(raw) > BODY_LIMIT) throw new Error('Observed game state exceeds 128 KiB');
-        const current = validateObservation(JSON.parse(raw));
-        if (pending.observed === null || Date.now() - Date.parse(pending.observed.updatedAt) > 60000) {
-          pending = { id: randomUUID(), observed: current, previousMission: mission };
-          await writeJson(pendingFile, pending);
+        // A queued or crash-persisted request retains its ID/input while fresh.
+        // A stale input gets a new identity, never reused for different model input.
+        const current = await readObserved();
+        if (Date.now() - Date.parse(pending.observed.updatedAt) > 60000 ||
+            (pending.dispatchedAt === null && JSON.stringify(current) !== JSON.stringify(pending.observed))) {
+          pending = await prepareReview(await engine.getAdventureState(), current, pending.trigger);
         }
         validateObservation(pending.observed);
-        const result = await engine.complete([
-          { role: 'system', content: MISSION_INSTRUCTIONS },
-          { role: 'user', content: JSON.stringify({ observed: pending.observed, previousMission: pending.previousMission }) },
+        pending.dispatchedAt = Date.now();
+        await writeJson(pendingFile, pending);
+        return engine.complete([
+          { role: 'system', content: MISSION_INSTRUCTIONS + '\n\n' + STRATEGY_INSTRUCTIONS },
+          { role: 'user', content: JSON.stringify({ observed: pending.observed, previousMission: pending.previousMission, ...pending.context }) },
         ], 'mission-' + pending.id, { role: 'mission' });
-        // Inference can outlive the input freshness window. Require a live world
-        // at publication, while retaining the actual input timestamp on the mission.
-        const latest = await readFile(observedFile, 'utf8');
-        if (Buffer.byteLength(latest) > BODY_LIMIT) throw new Error('Observed game state exceeds 128 KiB');
-        validateObservation(JSON.parse(latest));
-        return result;
       });
-      const plan = validatePlan(JSON.parse(answer.text));
-      mission = { id: pending.id, observedAt: pending.observed.updatedAt, generatedAt: new Date().toISOString(), ...plan };
+      const latest = await readObserved();
+      const reviewed = validateReview(JSON.parse(answer.text), pending.previousStrategy, pending.evidence, pending.observed);
+      const proposedMission = {
+        id: pending.id, observedAt: pending.observed.updatedAt, generatedAt: new Date().toISOString(),
+        ...reviewed.mission, goalId: reviewed.strategy.goal.id,
+      };
+      // Events during inference belong to the NEXT review, not an unobserved reset.
+      const evidence = observeEvidence(resetSinceReview(pending.evidence), latest);
+      adventure = await engine.commitAdventureState({ expectedRevision: pending.stateRevision, next: {
+        strategy: reviewed.strategy, evidence, mission: proposedMission,
+        lastReviewAt: Date.now(), lastTriggerFingerprint: pending.trigger.fingerprint,
+      } });
+      mission = adventure.mission;
       await writeJson(missionFile, mission);
       await writeJson(pendingFile, null);
       status.lastMissionError = null;
-      console.info(JSON.stringify({ event: 'mission', id: mission.id, phase: mission.phase }));
+      console.info(JSON.stringify({ event: 'mission', id: mission.id, phase: mission.phase, goal: reviewed.strategy.goal.id, decision: reviewed.strategy.decision, trigger: pending.trigger.kind }));
     } catch (error) {
-      // Failed/malformed model answers are explicit. Existing published missions remain dated, never invented.
+      // The durable document remains authoritative even if its file projection fails.
       status.lastMissionError = error.message;
       console.error(JSON.stringify({ event: 'mission_failed', error: error.message }));
-      // An admitted durable model call can be replayed after process death. Terminal failures need a new attempt.
       await writeJson(pendingFile, null);
     } finally {
       await writeJson(statusFile, status);
@@ -115,10 +162,11 @@ export async function startPlanner({
     });
     try {
       if (request.method === 'GET' && request.url === '/healthz') {
-        return send(200, { ok: !stopping, models: MODEL_ROLES, pending: queue.pending, ...status, missionId: mission?.id ?? null });
+        return send(200, { ok: !stopping, models: MODEL_ROLES, pending: queue.pending, ...status, missionId: mission?.id ?? null, adventureRevision: adventure.revision, goalId: adventure.strategy?.goal.id ?? null });
       }
       if (!authorized(request, token)) throw new HttpError(401, 'Unauthorized');
       if (request.method === 'GET' && request.url === '/mission') return send(200, mission);
+      if (request.method === 'GET' && request.url === '/strategy') return send(200, await engine.getAdventureState());
       if (request.method !== 'POST' || request.url !== '/v1/chat/completions') throw new HttpError(404, 'Not found');
       if (stopping) throw new HttpError(503, 'Planner is stopping');
       const body = validateChat(await bodyJson(request));

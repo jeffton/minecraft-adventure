@@ -43,7 +43,7 @@ test('a published program starts locally and rechecks dropped prerequisites afte
   const bot = Object.assign(new EventEmitter(), {
     _client: { state: 'play' }, entity: { position: new Vec3(0, 64, 0), velocity: new Vec3(0, 0, 0), onGround: true },
     pathfinder: { isMoving: () => false, isMining: () => false, isBuilding: () => false }, getControlState: () => false, game: { dimension: 'overworld' }, health: 20, food: 20,
-    inventory: { items: () => [] }, entities: {}, registry: { blocksByName: {}, biomes: { 0: { name: 'plains' } } },
+    inventory: { slots: Array(46), items: () => [] }, entities: {}, registry: { blocksByName: {}, biomes: { 0: { name: 'plains' } } },
     world: { getBiome: () => 0 }, findBlocks: () => [], blockAt: () => null
   });
   const agent = { name: 'Roy', bot, isIdle: () => true, actions: { currentActionLabel: '' },

@@ -4,10 +4,27 @@ import path from 'node:path';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createModels } from '@earendil-works/pi-ai/models';
 import { openaiCodexProvider } from '@earendil-works/pi-ai/providers/openai-codex';
-import { AssistantEntry, Harness, createRegistry } from '@earendil-works/pi-durable';
+import { AssistantEntry, Harness, createRegistry, defineDoc } from '@earendil-works/pi-durable';
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
-import { MODEL_ROLES, MAX_OUTPUT_TOKENS } from './contracts.mjs';
+import { MODEL_ROLES, MODEL_OUTPUT_TOKENS } from './contracts.mjs';
 import { admittedModels } from './admission.mjs';
+
+const initialAdventureState = () => ({
+  revision: 0,
+  strategy: null,
+  evidence: null,
+  mission: null,
+  lastReviewAt: 0,
+  lastTriggerFingerprint: null,
+});
+
+const AdventureState = defineDoc({
+  kind: 'minecraft.adventure-state',
+  version: 1,
+  scope: 'session',
+  initial: initialAdventureState,
+  checkpointWhen: () => true,
+});
 
 async function readBroker(socketPath, endpoint, maxBytes) {
   return new Promise((resolve, reject) => {
@@ -36,10 +53,10 @@ export async function brokerModels(socketPath) {
   const models = createModels({ identity: { attribution: { name: 'Minecraft Adventure' } } });
   const codex = openaiCodexProvider();
   const catalog = await readBroker(socketPath, '/models', 1024 * 1024);
-  const configured = Object.values(MODEL_ROLES).map(role => {
+  const configured = Object.entries(MODEL_ROLES).map(([name, role]) => {
     const model = catalog.find(model => model.provider === 'openai-codex' && model.id === role.model);
     if (!model) throw new Error('Configured model is absent from the canonical catalog: ' + role.model);
-    return { ...model, maxTokens: MAX_OUTPUT_TOKENS };
+    return { ...model, maxTokens: MODEL_OUTPUT_TOKENS[name] };
   });
   models.setProvider({
     ...codex,
@@ -50,7 +67,7 @@ export async function brokerModels(socketPath) {
     getModels: () => configured,
     streamSimple: (model, context, options) => codex.streamSimple(model, context, {
       ...options,
-      maxTokens: MAX_OUTPUT_TOKENS,
+      maxTokens: configured.find(candidate => candidate.id === model.id).maxTokens,
       maxRetries: 0,
     }),
   });
@@ -86,6 +103,38 @@ export async function openEngine({ stateDir, socketPath, models, timeoutMs = 120
   await root.waitForIdle(context);
 
   return {
+    async getAdventureState() {
+      return await harness.snapshot(AdventureState, context) ?? initialAdventureState();
+    },
+    async recordEvidence({ expectedRevision, evidence, lastTriggerFingerprint }) {
+      const observed = structuredClone(evidence);
+      await root.commit(async tx => {
+        const state = await tx.doc(AdventureState);
+        if (state.revision !== expectedRevision) throw new Error('Adventure state revision conflict');
+        state.evidence = observed;
+        if (lastTriggerFingerprint !== undefined) state.lastTriggerFingerprint = lastTriggerFingerprint;
+        state.revision++;
+      }, context);
+      return harness.snapshot(AdventureState, context);
+    },
+    async commitAdventureState({ expectedRevision, next }) {
+      // The server validates these opaque JSON fields; storage owns revision and atomicity.
+      const value = structuredClone({
+        strategy: next.strategy,
+        evidence: next.evidence,
+        mission: next.mission,
+        lastReviewAt: next.lastReviewAt,
+        lastTriggerFingerprint: next.lastTriggerFingerprint,
+      });
+      await root.commit(async tx => {
+        const state = await tx.doc(AdventureState);
+        if (value.mission?.id != null && value.mission.id === state.mission?.id) return;
+        if (state.revision !== expectedRevision) throw new Error('Adventure state revision conflict');
+        Object.assign(state, value);
+        state.revision++;
+      }, context);
+      return harness.snapshot(AdventureState, context);
+    },
     async complete(messages, requestId, { signal, role = 'repair' } = {}) {
       signal?.throwIfAborted();
       if (!Object.hasOwn(MODEL_ROLES, role)) throw new Error('Unknown planner model role: ' + role);
@@ -119,7 +168,7 @@ export async function openEngine({ stateDir, socketPath, models, timeoutMs = 120
         if (!message || message.stopReason !== 'stop') throw new Error('Model response failed or incomplete: ' + message?.stopReason);
         const text = message.content.filter(item => item.type === 'text').map(item => item.text).join('');
         if (!text.trim()) throw new Error('Model returned no textual answer');
-        return { text, usage: message.usage, finishReason: 'stop' };
+        return { text, usage: message.usage, finishReason: 'stop', answerEntryId: settled.answer };
       } finally {
         clearTimeout(deadline);
         signal?.removeEventListener('abort', abort);

@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { fakeEngine, observation, review, pendingReview } from './helpers/strategy-fixtures.mjs';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -10,6 +11,8 @@ import { MODEL, MODEL_ROLES } from '../contracts.mjs';
 import { openEngine } from '../engine.mjs';
 import { startPlanner } from '../server.mjs';
 import { ModelQueue } from '../queue.mjs';
+import { initialEvidence, observeEvidence } from '../evidence.mjs';
+import { validateReview } from '../strategy.mjs';
 
 test('an interrupted actual pi-durable model run resumes from SQLite after reopening', async () => {
   const stateDir = await mkdtemp(path.join(tmpdir(), 'minecraft-planner-recovery-'));
@@ -50,6 +53,36 @@ test('an interrupted actual pi-durable model run resumes from SQLite after reope
   } finally { await engine.close(); }
 });
 
+test('restart repairs a missing mission projection after document commit without regenerating the published mission', async () => {
+  const stateDir = await mkdtemp(path.join(tmpdir(), 'minecraft-committed-projection-'));
+  const observed = observation();
+  const evidence = observeEvidence(initialEvidence(), observed);
+  const mission = {
+    phase: 'survival', objective: 'Recover food before building.', home: null,
+    bots: Object.fromEntries(['Roy', 'Moss', 'Flint', 'Spruce'].map(name => [name, {
+      task: 'Gather food.', program: [{ action: 'ensure_item', item: 'beef', count: 4 }],
+    }])),
+  };
+  const strategy = validateReview(review(mission), null, evidence, observed).strategy;
+  const published = { ...mission, id: 'committed-before-crash', goalId: strategy.goal.id, observedAt: observed.updatedAt, generatedAt: observed.updatedAt };
+  await writeFile(path.join(stateDir, 'pending-mission.json'), JSON.stringify(pendingReview(observed, { id: published.id })));
+  let calls = 0;
+  const engine = fakeEngine({ complete: async () => { calls++; throw new Error('must not regenerate committed mission'); } }, {
+    revision: 7, evidence, strategy, mission: published, lastReviewAt: Date.now(), lastTriggerFingerprint: 'initial',
+  });
+  const missionFile = path.join(stateDir, 'mission.json');
+  const planner = await startPlanner({
+    engine, token: 'test-only-relay-auth-credential', stateDir, missionFile,
+    observedFile: path.join(stateDir, 'absent-observations.json'), port: 0, pollMs: 1000000,
+  });
+  await planner.close();
+  assert.deepEqual(JSON.parse(await readFile(missionFile, 'utf8')), published);
+  assert.equal(JSON.parse(await readFile(path.join(stateDir, 'pending-mission.json'), 'utf8')), null);
+  assert.equal(calls, 0);
+  assert.equal(JSON.parse(await readFile(path.join(stateDir, 'status.json'), 'utf8')).lastMissionError, null, 'committed pending review recovers without touching missing observations');
+  assert.equal((await engine.getAdventureState()).revision, 7, 'projection recovery does not publish another durable revision');
+});
+
 for (const scenario of ['stale', 'offline']) {
   test('mission planner refuses ' + scenario + ' observed state without model inference', async () => {
     const stateDir = await mkdtemp(path.join(tmpdir(), 'minecraft-planner-freshness-'));
@@ -62,7 +95,7 @@ for (const scenario of ['stale', 'offline']) {
     }));
     let calls = 0;
     const planner = await startPlanner({
-      engine: { complete: async () => { calls++; throw new Error('must not run'); }, close: async () => {} },
+      engine: fakeEngine({ complete: async () => { calls++; throw new Error('must not run'); } }),
       token: 'test-only-relay-auth-credential',
       stateDir,
       observedFile,

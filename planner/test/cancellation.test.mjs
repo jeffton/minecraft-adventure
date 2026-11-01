@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { fakeEngine, observation, review } from './helpers/strategy-fixtures.mjs';
 import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -21,10 +22,10 @@ test('disconnected queued HTTP client frees capacity and never starts model infe
   const initialStarted = new Promise(resolve => { started = resolve; });
   const gate = new Promise(resolve => { release = resolve; });
   let calls = 0;
-  const engine = {
+  const engine = fakeEngine({
     complete: async () => { calls++; started(); await gate; return { text: '!stay()', finishReason: 'stop' }; },
     close: async () => {},
-  };
+  });
   const queue = new ModelQueue({ intervalMs: 0 });
   const planner = await startPlanner({ engine, token, stateDir, missionFile: path.join(stateDir, 'mission.json'), queue, port: 0 });
   const url = 'http://127.0.0.1:' + planner.server.address().port + '/v1/chat/completions';
@@ -73,7 +74,7 @@ test('mission dispatch uses a fresh observed snapshot after waiting behind the m
   const missionFile = path.join(stateDir, 'mission.json');
   function observed(marker) {
     const updatedAt = new Date().toISOString();
-    return { marker, updatedAt, bots: [{ name: 'Roy', status: 'online', updatedAt }] };
+    return observation({ marker, updatedAt });
   }
   await writeFile(observedFile, JSON.stringify(observed('before queue')));
   let admit;
@@ -87,14 +88,14 @@ test('mission dispatch uses a fresh observed snapshot after waiting behind the m
       task: 'Prepare logs', program: [{ action: 'ensure_item', item: 'oak_log', count: 12 }],
     }])), home: null,
   };
-  const engine = {
+  const engine = fakeEngine({
     complete: async messages => {
       const input = JSON.parse(messages[1].content);
       assert.equal(input.observed.marker, 'at dispatch');
-      return { text: JSON.stringify(plan) };
+      return { text: JSON.stringify(review(plan)) };
     },
     close: async () => {},
-  };
+  });
   const planner = await startPlanner({ engine, token, stateDir, missionFile, observedFile, queue, port: 0, pollMs: 1000000 });
   await atQueue;
   await writeFile(observedFile, JSON.stringify(observed('at dispatch')));

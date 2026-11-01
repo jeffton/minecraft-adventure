@@ -1,23 +1,28 @@
 # Minecraft Adventure planner
 
-A dedicated Pi Durable 1.4.0 Harness uses Codex Sol (`gpt-6.1-sol`, medium reasoning) for shared missions and Terra (`gpt-6.1-terra`, low reasoning) for individual repair decisions. Mindcraft retains its local gameplay/skill loop.
+A dedicated Pi Durable 1.4.0 Harness uses Codex Sol (`gpt-6.1-sol`, medium reasoning, 4096 output tokens) for strategic reviews and Terra (`gpt-6.1-terra`, low reasoning, 2048 output tokens) for individual repair decisions. Mindcraft retains its local gameplay/skill loop.
 
 - `POST http://127.0.0.1:8766/v1/chat/completions`: non-streaming OpenAI chat, text messages, `user` equal to Roy/Spruce/Flint/Moss, bearer credential from `PLANNER_RELAY_TOKEN`. Repair model/output budget are fixed server-side at Terra/2048 tokens, low reasoning; client model names cannot change routing. Model tools are not accepted.
 - `GET /mission`: authenticated latest shared mission. The same JSON is published to `/var/lib/minecraft-adventure/control/mission.json`.
+- `GET /strategy`: authenticated durable strategy, evidence ledger, verified programs and revision.
 - `GET /healthz`: local status, queue and mission error; `models.mission` and `models.repair` report their model and thinking level. No credentials. This replaces the singular `model` field.
 - Globally one generation at a time, starts at least 20 seconds apart, queue capacity eight, 120-second model deadline and no automatic provider retries.
 - Mindcraft submits full context; each request resets the Harness model view rather than duplicating history. Original turns and idempotent request results remain in SQLite. Optional `X-Request-ID` reuses a persisted result after restart.
-- Every five minutes Sol rewrites each bot’s bounded declarative program from fresh world state, previous progress and controller failures. The same serialized Harness switches model configuration between requests and resets its model view; both roles share SQLite, the credential broker and admission pacing. Incomplete or failed generations are rejected without replacing the mission. Local skills handle combat and survival reflexes without model calls. Mission programs and coordinates are validated before atomic publication; stale/offline observations do not trigger inference.
+- Sol reviews persistent objectives every five minutes, after observed completion, or after three distinct failures in the same controller/precondition context without active-goal progress. Reviews carry measurable criteria, completed dependencies, intervention outcomes, hunger/equipment changes and bounded verified program examples. Sol explicitly continues or changes strategy; code evaluates completion. Model-view resets preserve the strategic document in the same Pi Durable SQLite store.
+- Structured producer sessions/sequences deduplicate evidence; gaps are visible. Historical achievements do not imply current readiness, offline inventory is unknown, and one verified lodge placement is not a completed building. Program examples enter memory only after real controller postconditions pass.
+- Incomplete or failed generations leave the dated mission intact. Local skills handle combat and survival reflexes without model calls. Mission programs, supported acquisition items and coordinates are validated before publication; stale/offline observations do not trigger inference.
 
 ## State and permissions
 
-`/var/lib/minecraft-planner/planner.sqlite` stores the durable transcript. `status.json` stores cadence/errors; a pending mission is replayed after restart. Observations come from `/var/lib/minecraft-adventure/observations/state.json`, containing `updatedAt` and `bots` with per-bot `status`/`updatedAt`. Both aggregate state and an online bot must be at most 60 seconds old.
+`/var/lib/minecraft-planner/planner.sqlite` stores the durable transcript and authoritative `minecraft.adventure-state` document. Strategy, evidence and mission commit atomically with revision checks. `mission.json` is a repairable projection, reconstructed at startup and each poll. `status.json` stores cadence/errors; an admitted pending mission retains its input/request ID after restart while fresh. Existing dated missions are imported into the document before the first strategic review. Observations come from `/var/lib/minecraft-adventure/observations/state.json`, containing `updatedAt` and `bots` with per-bot `status`/`updatedAt`. Both aggregate state and an online bot must be at most 60 seconds old.
 
 Mission schema:
 
 ```json
 {
   "id": "uuid",
+  "goalId": "stable-objective-id",
+  "observedAt": "ISO timestamp",
   "generatedAt": "ISO timestamp",
   "phase": "homestead",
   "objective": "Shared milestone and immediate goal",
@@ -31,7 +36,7 @@ Mission schema:
 }
 ```
 
-`program` is required: 1–6 exact-schema steps, limited to `ensure_item`, `equip`, Roy-only `build_lodge`, and argument-free `regroup`. Item IDs are checked against the pinned Minecraft 1.21.4 registry in `item-ids.json`; inventory minima are integers 1–64. Programs contain no JavaScript, shell or arbitrary action names. Controllers check desired state before each step and reread the mission `id` revision at operation boundaries, rather than replaying completed work.
+`program` is required: 1–6 exact-schema steps, limited to `ensure_item`, `equip`, Roy-only `build_lodge`, and argument-free `regroup`. Item IDs are checked against the pinned Minecraft 1.21.4 registry in `item-ids.json`; inventory minima are integers 1–64. Programs contain no JavaScript, shell or arbitrary action names. Controllers check desired state before each step and reread the mission `id` revision at operation boundaries, rather than replaying completed work. Each admitted execution emits one attempt identity and exactly one completed/failed terminal event, with actual end inventory/health/food or a classified blocker. The action API does not implement supply transfer, portals or dragon combat; roadmaps must distinguish those capability gaps from executable missions.
 
 `home` becomes observed `{x,y,z}` coordinates when known. Phases: survival, homestead, equipment, nether, stronghold, end, completed, recovery.
 
@@ -45,7 +50,7 @@ The relay token is a separate random local bearer credential. Bots receive that 
 
 ## Installation
 
-Run `bash install.sh` as root after review. It installs root-owned code/dependencies under `/opt/minecraft-adventure/planner`, the dedicated account, unit files and a root-only `/etc/minecraft-adventure/planner.env`. It does not start services. Set the bots' `OPENAI_API_KEY` to the relay token through their root-managed environment file without printing it.
+Deploy matching planner and bot code together: the planner imports the bot controller's supported acquisition list. Run `bash install.sh` as root after review. It installs root-owned code/dependencies under `/opt/minecraft-adventure/planner`, the dedicated account, unit files and a root-only `/etc/minecraft-adventure/planner.env`. It does not start services. Set the bots' `OPENAI_API_KEY` to the relay token through their root-managed environment file without printing it.
 
 Start/enable `minecraft-planner-auth.service` and `minecraft-planner.service`. They use the existing `minecraft-adventure.slice`; planner memory is capped at 512 MiB and broker at 256 MiB. Shutdown waits for admitted model work; interrupted turns resume from SQLite.
 

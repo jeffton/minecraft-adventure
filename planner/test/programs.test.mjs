@@ -81,6 +81,15 @@ test('item IDs must exist in Minecraft 1.21.4 and counts express bounded invento
   assert.throws(() => validateProgram([{ action: 'build_lodge' }], 'Spruce'), /Only Roy/);
 });
 
+test('real items with no acquisition implementation cannot become executable mission promises', () => {
+  for (const item of ['ender_pearl', 'blaze_rod', 'elytra']) {
+    const plan = mission();
+    plan.bots.Flint.program = [{ action: 'ensure_item', item, count: 1 }];
+    assert.throws(() => validatePlan(plan), /Acquisition is not implemented/);
+  }
+  assert.deepEqual(validateProgram([{ action: 'equip', item: 'elytra' }], 'Flint'), [{ action: 'equip', item: 'elytra' }], 'an already-owned item does not require an acquisition skill');
+});
+
 test('arbitrary code fields are forbidden at every executable mission schema boundary', () => {
   const mutations = [
     plan => { plan.code = 'execute'; },

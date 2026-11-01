@@ -79,9 +79,16 @@ function fixture(program, initial = {}, name = 'Roy') {
             add(input === 'raw_iron' ? 'iron_ingot' : input === 'mutton' ? 'cooked_mutton' : 'stone', count);
             return true;
         },
-        equip: async (_, item) => { calls.push(['equip', item]); return true; }
+        equip: async (_, item) => {
+            calls.push(['equip', item]);
+            const owned = bot.inventory.items().find(entry => entry.name === item);
+            const slot = item.endsWith('_helmet') ? 5 : item.endsWith('_chestplate') ? 6 : item.endsWith('_leggings') ? 7 : item.endsWith('_boots') ? 8 : item === 'shield' ? 45 : null;
+            if (slot === null) bot.heldItem = owned;
+            else { equipment.set(slot, owned); add(item, -1); }
+            return true;
+        }
     };
-    const helpers = { getMission: () => mission, getHome: () => home, emit: (agent, type, message) => events.push([agent.name, type, message]),
+    const helpers = { controllerRevision: 'test-controller', getMission: () => mission, getHome: () => home, emit: (agent, type, message, data) => events.push([agent.name, type, message, data]),
         gatherResource: async (agent, names) => {
             const source = [...resources.values()].find(block => names.includes(block.name));
             return skills.collectBlock(bot, source.name, 1, []);
@@ -299,7 +306,7 @@ test('auto-equipped crafted armour satisfies acquisition without consuming it as
 
 test('unsupported missing item fails explicitly instead of inventing a resource', async () => {
     const f = fixture([ensure('diamond', 1)]);
-    await assert.rejects(f.run(), /Unsupported ensure_item acquisition for diamond/);
+    await assert.rejects(f.run(), /Acquisition is not implemented for diamond/);
     assert.ok(f.events.some(event => event[1] === 'error' && event[2].includes('diamond')));
 });
 
@@ -494,6 +501,61 @@ test('survival reflex interruption prevents the following operation', async () =
     f.skills.craftRecipe = async (...args) => { await craft(...args); f.bot.interrupt_code = true; };
     await assert.rejects(f.run(), /interrupted/);
     assert.ok(!f.calls.some(call => call[0] === 'equip'));
+});
+
+test('verified execution emits one correlated terminal with actual crafting and worn equipment', async () => {
+    const f = fixture([ensure('stick', 4)], { oak_log: 1 });
+    f.equipment.set(5, { name: 'iron_helmet', count: 1 });
+    await f.run();
+    const starts = f.events.filter(event => event[1] === 'attempt_started');
+    const terminals = f.events.filter(event => ['attempt_completed', 'attempt_failed'].includes(event[1]));
+    assert.equal(starts.length, 1);
+    assert.equal(terminals.length, 1);
+    assert.equal(terminals[0][1], 'attempt_completed');
+    const actual = terminals[0][3];
+    assert.equal(actual.attemptId, starts[0][3].attemptId);
+    assert.equal(actual.controllerRevision, 'test-controller');
+    assert.equal(actual.missionId, 'revision1');
+    assert.deepEqual(actual.inventory.find(item => item.name === 'iron_helmet'), { name: 'iron_helmet', count: 1 });
+    assert.equal(actual.inventory.find(item => item.name === 'stick').count, 4);
+    assert.equal(actual.food, 20);
+    assert.equal(actual.health, 20);
+    assert.deepEqual(f.events.filter(event => event[1] === 'craft').map(event => event[3]), [{ item: 'oak_planks', count: 4 }, { item: 'stick', count: 4 }]);
+});
+
+test('an optimistic equip result cannot enter verified program memory', async () => {
+    const f = fixture([{ action: 'equip', item: 'wooden_pickaxe' }], { wooden_pickaxe: 1 });
+    f.skills.equip = async () => true;
+    await assert.rejects(f.run(), /observed equipment destination/);
+    assert.equal(f.events.filter(event => event[1] === 'attempt_completed').length, 0);
+    assert.equal(f.events.filter(event => event[1] === 'attempt_failed').length, 1);
+});
+
+test('reusable context uses confirmed inventory and the actual shared home', async () => {
+    const f = fixture([ensure('stick', 4)], { stick: 4 });
+    f.setHome({ x: 4, y: 64, z: 7, dimension: 'overworld' });
+    f.bot._syncWindow = async () => { f.add('stick', -4); };
+    await assert.rejects(f.run(), /No loaded unprotected/);
+    const start = f.events.find(event => event[1] === 'attempt_started')[3];
+    const context = JSON.parse(start.preconditions);
+    assert.deepEqual(context.inventory, []);
+    assert.equal(context.inventoryConfirmed, true);
+    assert.deepEqual(context.home, { x: 4, y: 64, z: 7, dimension: 'overworld' });
+});
+
+test('precondition failures and survival interruptions have one distinct correlated terminal each', async () => {
+    for (const interrupted of [false, true]) {
+        const f = fixture([ensure('oak_log', 1)]);
+        f.bot.interrupt_code = interrupted;
+        await assert.rejects(f.run());
+        const terminals = f.events.filter(event => ['attempt_completed', 'attempt_failed'].includes(event[1]));
+        assert.equal(terminals.length, 1);
+        assert.equal(terminals[0][1], 'attempt_failed');
+        const failure = terminals[0][3];
+        assert.equal(failure.kind, interrupted ? 'interrupted' : 'precondition');
+        assert.equal(typeof failure.target, 'string');
+        assert.equal(failure.attemptId, f.events.find(event => event[1] === 'attempt_started')[3].attemptId);
+    }
 });
 
 test('creative and cheat modes are rejected before gameplay', async () => {

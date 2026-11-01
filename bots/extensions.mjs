@@ -2,7 +2,7 @@ import { createRequire } from 'node:module';
 import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { lodgeBlueprint, validHome } from './blueprint.mjs';
-import { CONTROL, atomicJson, getHome, getMission } from './runtime.mjs';
+import { CONTROL, CONTROLLER_REVISION, atomicJson, getHome, getMission } from './runtime.mjs';
 import * as skills from '/opt/minecraft-mindcraft/src/agent/library/skills.js';
 import { registerProgression } from './progression.mjs';
 import { registerPrograms } from './program.mjs';
@@ -81,7 +81,7 @@ async function buildLodge(agent) {
       const ok = await skills.placeBlock(bot, step.material, p.x, p.y, p.z, 'bottom', true);
       if (ok && matching(bot.blockAt(p)?.name, step.material)) {
         placed++;
-        agent.adventure?.emit('build', `Placed ${step.material} at ${p}.`);
+        agent.adventure?.emit('build', `Placed ${step.material} at ${p}.`, { scope: 'lodge', verified: true, material: step.material, position: { x: p.x, y: p.y, z: p.z } });
       }
       if (placed >= 8) break;
     }
@@ -106,9 +106,9 @@ export function registerAdventure(actions) {
   registerProgression(actions, skills);
   registerScouting(actions, skills);
   registerPrograms(actions, skills, {
-    getMission, getHome, approachAnimal, navigateHome,
+    getMission, getHome, approachAnimal, navigateHome, controllerRevision: CONTROLLER_REVISION,
     gatherResource: (agent, names, home) => gatherResource(agent, names, home, skills),
-    emit: (agent, type, message) => agent.adventure?.emit(type, message),
+    emit: (agent, type, message, data) => agent.adventure?.emit(type, message, data),
     buildLodge: async (bot, home, agent) => {
       if (!getHome()) await chooseHome(agent);
       return {

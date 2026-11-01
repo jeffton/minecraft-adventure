@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { fakeEngine, observation, review, pendingReview } from './helpers/strategy-fixtures.mjs';
 import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -11,25 +12,26 @@ import { startPlanner } from '../server.mjs';
 import { ModelQueue } from '../queue.mjs';
 
 function observed(age = 0) {
-  const updatedAt = new Date(Date.now() - age).toISOString();
-  return { updatedAt, bots: [{ name: 'Roy', status: 'online', updatedAt }] };
+  const result = observation({ updatedAt: new Date(Date.now() - age).toISOString() });
+  result.bots[0].updatedAt = result.updatedAt;
+  return result;
 }
 
 test('stale persisted mission without current observations is never sent to the model or republished as new', async () => {
   const stateDir = await mkdtemp(path.join(tmpdir(), 'minecraft-stale-pending-'));
-  await writeFile(path.join(stateDir, 'pending-mission.json'), JSON.stringify({ id: 'stale', observed: observed(600000), previousMission: null }));
+  await writeFile(path.join(stateDir, 'pending-mission.json'), JSON.stringify(pendingReview(observed(600000), { id: 'stale' })));
   const observedFile = path.join(stateDir, 'state.json');
   let calls = 0;
   const missionFile = path.join(stateDir, 'mission.json');
   const planner = await startPlanner({
-    engine: { complete: async () => { calls++; throw new Error('must not call'); }, close: async () => {} },
+    engine: fakeEngine({ complete: async () => { calls++; throw new Error('must not call'); } }),
     token: 'test-relay-private-token-value', stateDir, observedFile, missionFile,
     port: 0, queue: new ModelQueue({ intervalMs: 0 }), pollMs: 1000000,
   });
   await planner.close();
   assert.equal(calls, 0);
   assert.match(JSON.parse(await readFile(path.join(stateDir, 'status.json'), 'utf8')).lastMissionError, /ENOENT/);
-  await assert.rejects(readFile(missionFile), { code: 'ENOENT' });
+  assert.equal(JSON.parse(await readFile(missionFile, 'utf8')), null, 'projection of an empty durable mission is null');
 });
 
 const plan = {
@@ -51,7 +53,7 @@ for (const world of ['fresh', 'stale', 'offline']) {
     await writeFile(missionFile, JSON.stringify({ ...plan, id: 'previous' }));
     let calls = 0;
     const planner = await startPlanner({
-      engine: {
+      engine: fakeEngine({
         complete: async messages => {
           calls++;
           assert.equal(JSON.parse(messages[1].content).observed.updatedAt, input.updatedAt);
@@ -59,10 +61,10 @@ for (const world of ['fresh', 'stale', 'offline']) {
           const latest = world === 'stale' ? input : observed();
           if (world === 'offline') latest.bots[0].status = 'offline';
           await writeFile(observedFile, JSON.stringify(latest));
-          return { text: JSON.stringify(plan), finishReason: 'stop' };
+          return { text: JSON.stringify(review(plan)), finishReason: 'stop' };
         },
         close: async () => {},
-      },
+      }),
       token: 'test-relay-private-token-value', stateDir, observedFile, missionFile,
       port: 0, queue: new ModelQueue({ intervalMs: 0 }), pollMs: 1000000,
     });
@@ -88,17 +90,17 @@ test('hour-old recovered mission gets a new request id and fresh input rather th
   const missionFile = path.join(stateDir, 'mission.json');
   const current = observed();
   await writeFile(observedFile, JSON.stringify(current));
-  await writeFile(path.join(stateDir, 'pending-mission.json'), JSON.stringify({ id: 'hour-old', observed: observed(3600000), previousMission: null }));
+  await writeFile(path.join(stateDir, 'pending-mission.json'), JSON.stringify(pendingReview(observed(3600000), { id: 'hour-old' })));
   let calls = 0;
   const planner = await startPlanner({
-    engine: {
+    engine: fakeEngine({
       complete: async (messages, requestId) => {
         calls++;
         assert.notEqual(requestId, 'mission-hour-old');
         assert.equal(JSON.parse(messages[1].content).observed.updatedAt, current.updatedAt);
-        return { text: JSON.stringify(plan), finishReason: 'stop' };
+        return { text: JSON.stringify(review(plan)), finishReason: 'stop' };
       }, close: async () => {},
-    },
+    }),
     token: 'test-relay-private-token-value', stateDir, observedFile, missionFile,
     port: 0, queue: new ModelQueue({ intervalMs: 0 }), pollMs: 1000000,
   });
@@ -108,6 +110,38 @@ test('hour-old recovered mission gets a new request id and fresh input rather th
   assert.notEqual(mission.id, 'hour-old');
   assert.equal(mission.observedAt, current.updatedAt);
 });
+
+for (const admitted of [true, false]) {
+  test(`fresh recovered ${admitted ? 'admitted request replays original identity and input' : 'unsubmitted request refreshes changed input with a new identity'}`, async () => {
+    const stateDir = await mkdtemp(path.join(tmpdir(), 'minecraft-pending-provenance-'));
+    const observedFile = path.join(stateDir, 'state.json');
+    const missionFile = path.join(stateDir, 'mission.json');
+    const original = { ...observed(), marker: 'persisted-input' };
+    const current = { ...structuredClone(original), marker: 'new-world-input' };
+    const pending = pendingReview(original, { dispatchedAt: admitted ? Date.now() : null });
+    await writeFile(observedFile, JSON.stringify(current));
+    await writeFile(path.join(stateDir, 'pending-mission.json'), JSON.stringify(pending));
+    let calls = 0;
+    const planner = await startPlanner({
+      engine: fakeEngine({
+        complete: async (messages, id) => {
+          calls++;
+          assert.equal(id === 'mission-' + pending.id, admitted);
+          assert.equal(JSON.parse(messages[1].content).observed.marker, admitted ? 'persisted-input' : 'new-world-input');
+          const dispatch = JSON.parse(await readFile(path.join(stateDir, 'pending-mission.json'), 'utf8'));
+          assert.equal(typeof dispatch.dispatchedAt, 'number', 'admission is persisted before model invocation');
+          return { text: JSON.stringify(review(plan)) };
+        },
+      }),
+      token: 'test-relay-private-token-value', stateDir, observedFile, missionFile,
+      port: 0, queue: new ModelQueue({ intervalMs: 0 }), pollMs: 1000000,
+    });
+    await planner.close();
+    assert.equal(calls, 1);
+    assert.equal(JSON.parse(await readFile(path.join(stateDir, 'status.json'), 'utf8')).lastMissionError, null);
+    assert.equal(JSON.parse(await readFile(missionFile, 'utf8')).id === pending.id, admitted);
+  });
+}
 
 test('provider dispatch rejects stale persisted mission content even outside the HTTP queue', async () => {
   const stateDir = await mkdtemp(path.join(tmpdir(), 'minecraft-stale-dispatch-'));

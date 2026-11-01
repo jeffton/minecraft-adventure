@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { observation, review } from './helpers/strategy-fixtures.mjs';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -57,12 +58,11 @@ async function waitForMission(stateDir, previousId) {
 
 test('real relay routes mission to Sol medium and repairs to Terra low without leaking the previous view', async () => {
   const { stateDir, engine, calls } = await fixture([
-    fauxAssistantMessage(JSON.stringify(plan)), fauxAssistantMessage('!runProgram()'),
-    fauxAssistantMessage(JSON.stringify(plan)),
+    fauxAssistantMessage(JSON.stringify(review(plan))), fauxAssistantMessage('!runProgram()'),
+    fauxAssistantMessage(JSON.stringify(review(plan))),
   ]);
   const observedFile = path.join(stateDir, 'observed.json');
-  const updatedAt = new Date().toISOString();
-  await writeFile(observedFile, JSON.stringify({ updatedAt, bots: [{ name: 'Roy', status: 'online', updatedAt }] }));
+  await writeFile(observedFile, JSON.stringify(observation()));
   const missionFile = path.join(stateDir, 'mission.json');
   const planner = await startPlanner({
     engine, token, stateDir, observedFile, missionFile, port: 0,
@@ -94,11 +94,10 @@ test('real relay routes mission to Sol medium and repairs to Terra low without l
 for (const stopReason of ['length', 'error']) {
   test(`${stopReason} from Sol never replaces the previous mission or poisons the following Terra request`, async () => {
     const { stateDir, engine, calls } = await fixture([
-      fauxAssistantMessage(JSON.stringify(plan), { stopReason }), fauxAssistantMessage('!runProgram()'),
+      fauxAssistantMessage(JSON.stringify(review(plan)), { stopReason }), fauxAssistantMessage('!runProgram()'),
     ]);
     const observedFile = path.join(stateDir, 'observed.json');
-    const updatedAt = new Date().toISOString();
-    await writeFile(observedFile, JSON.stringify({ updatedAt, bots: [{ name: 'Roy', status: 'online', updatedAt }] }));
+    await writeFile(observedFile, JSON.stringify(observation()));
     const missionFile = path.join(stateDir, 'mission.json');
     await writeFile(missionFile, JSON.stringify({ ...plan, id: 'previous' }));
     const planner = await startPlanner({

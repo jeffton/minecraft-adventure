@@ -1,11 +1,18 @@
 import { readFileSync, writeFileSync, renameSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { createHash, randomUUID } from 'node:crypto';
+import { observedInventory } from './program.mjs';
 import { BOT_ROLES, INITIAL_TASKS, missionPrompt, validateMission } from './blueprint.mjs';
 
 export const ROOT = process.env.ADVENTURE_ROOT ?? '/var/lib/minecraft-adventure';
 export const OBS = join(ROOT, 'observations');
 export const CONTROL = join(ROOT, 'control');
 export const NAMES = Object.keys(BOT_ROLES);
+const controllerHash = createHash('sha256');
+for (const file of ['program.mjs', 'gather.mjs', 'navigation.mjs', 'extensions.mjs', 'compat-loader.mjs', 'inventory-controller.mjs', 'progression.mjs', 'scout.mjs', 'bootstrap.mjs']) {
+  controllerHash.update(readFileSync(new URL(file, import.meta.url)));
+}
+export const CONTROLLER_REVISION = controllerHash.digest('hex');
 
 export function atomicJson(path, value) {
   const temp = `${path}.${process.pid}.tmp`;
@@ -80,6 +87,8 @@ export function surveySurroundings(bot) {
 export function createObserver(agent, controls = {}) {
   mkdirSync(OBS, { recursive: true });
   const events = [];
+  const session = randomUUID();
+  let eventSequence = 0;
   let lastMissionId;
   let lastSurvey = 0;
   let error = null;
@@ -91,9 +100,9 @@ export function createObserver(agent, controls = {}) {
   let programFailed = false;
   let finishedAt = 0;
   let programMessage = '';
-  const emit = (type, message) => {
+  const emit = (type, message, data = {}) => {
     if (type === 'error') { errorCount++; error = String(message); }
-    events.push({ at: new Date().toISOString(), bot: agent.name, type, message: String(message).slice(0, 1200) });
+    events.push({ session, sequence: ++eventSequence, at: new Date().toISOString(), bot: agent.name, type, message: String(message).slice(0, 1200), data });
     if (events.length > 60) events.shift();
   };
   const recordError = e => { error = String(e.message ?? e); emit('error', error); console.error(`[${agent.name}]`, e); };
@@ -104,7 +113,7 @@ export function createObserver(agent, controls = {}) {
   bot.on('forcedMove', () => { serverCorrections++; });
   bot.on('autoeat_finished', item => {
     foodMissing = false;
-    emit('eat', `Ate earned ${item.name}; food ${bot.food}/20, health ${bot.health}/20.`);
+    emit('eat', `Ate earned ${item.name}; food ${bot.food}/20, health ${bot.health}/20.`, { item: item.name, count: 1, food: bot.food, health: bot.health });
   });
   bot.on('autoeat_error', error => {
     if (error.message !== 'No food found.') return recordError(error);
@@ -112,7 +121,7 @@ export function createObserver(agent, controls = {}) {
     if (!foodMissing) emit('food', 'No edible food available; forage or cook owned supplies.');
     foodMissing = true;
   });
-  bot.on('death', () => emit('death', 'Died in survival; items remain in the world.'));
+  bot.on('death', () => emit('death', 'Died in survival; items remain in the world.', { position: { x: bot.entity.position.x, y: bot.entity.position.y, z: bot.entity.position.z } }));
   bot.on('respawn', () => {
     // Completed preparation cannot survive a death: tools and supplies were dropped.
     programId = null;
@@ -130,7 +139,7 @@ export function createObserver(agent, controls = {}) {
   bot.on('kicked', reason => emit('disconnected', JSON.stringify(reason)));
   bot.on('end', reason => {
     emit('disconnected', reason);
-    atomicJson(join(OBS, `${agent.name}.json`), { name: agent.name, status: 'offline', updatedAt: new Date().toISOString(), error: String(reason), events });
+    atomicJson(join(OBS, `${agent.name}.json`), { name: agent.name, session, controllerRevision: CONTROLLER_REVISION, status: 'offline', updatedAt: new Date().toISOString(), error: String(reason), events });
   });
 
   function missionUpdate() {
@@ -188,6 +197,8 @@ export function createObserver(agent, controls = {}) {
       }
       const state = {
         name: agent.name,
+        session,
+        controllerRevision: CONTROLLER_REVISION,
         role: BOT_ROLES[agent.name],
         status: bot._client.state === 'play' ? 'online' : bot._client.state,
         updatedAt: new Date().toISOString(),
@@ -210,7 +221,7 @@ export function createObserver(agent, controls = {}) {
           controls: Object.fromEntries(['forward', 'back', 'jump', 'sneak', 'sprint'].map(key => [key, bot.getControlState(key)])),
           digging: bot.targetDigBlock ? { name: bot.targetDigBlock.name, position: bot.targetDigBlock.position } : null
         },
-        inventory: bot.inventory.items().map(item => ({ name: item.name, count: item.count })),
+        inventory: observedInventory(bot),
         events,
         error
       };

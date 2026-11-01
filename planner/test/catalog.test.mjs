@@ -29,7 +29,7 @@ test('broker loads canonical cached model metadata read-only and serves it to th
     assert.equal(repair.contextWindow, 500000);
     assert.equal(repair.cost.output, 5);
     assert.equal(repair.maxTokens, 2048);
-    assert.ok(models.getModel('openai-codex', 'gpt-6.1-sol'));
+    assert.equal(models.getModel('openai-codex', 'gpt-6.1-sol').maxTokens, 4096);
     assert.equal(models.getModel('openai-codex', 'gpt-5.6-terra'), undefined);
     assert.equal(await readFile(modelsStorePath, 'utf8'), contents);
   } finally { await new Promise(resolve => broker.close(resolve)); }
