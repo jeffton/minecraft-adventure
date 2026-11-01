@@ -55,6 +55,14 @@ export function patchCraftSource(source) {
   return source.replace(fabricated, `        const item = window.slots[0]\n        if (!item || item.type !== recipe.result.id || item.count < recipe.result.count) throw new Error('Server did not produce the expected crafting result')`);
 }
 
+export function patchPathfinderGoals(source) {
+  const before = 'if (node.distanceTo(this.pos.offset(0, this.entityHeight, 0)) > this.reach) return false';
+  if (source.split(before).length !== 2) throw new Error('Pathfinder block-reach integration point changed');
+  // Broad phase must include any reachable block face. Exact face raycasts below
+  // still enforce reach and line of sight; this sphere only rejects distant nodes.
+  return source.replace(before, 'if (node.offset(0.5, this.entityHeight, 0.5).distanceTo(this.pos.offset(0.5, 0.5, 0.5)) > this.reach + Math.sqrt(3) / 2) return false');
+}
+
 registerHooks({
   load(url, context, nextLoad) {
     const result = nextLoad(url, context);
@@ -62,9 +70,10 @@ registerHooks({
     const bot = url.endsWith('/minecraft-mindcraft/src/utils/mcdata.js');
     const inventory = url.endsWith('/node_modules/mineflayer/lib/plugins/inventory.js');
     const craft = url.endsWith('/node_modules/mineflayer/lib/plugins/craft.js');
-    if (!physics && !bot && !inventory && !craft) return result;
+    const goals = url.endsWith('/node_modules/mineflayer-pathfinder/lib/goals.js');
+    if (!physics && !bot && !inventory && !craft && !goals) return result;
     if (result.source == null) throw new Error('Minecraft compatibility source unavailable');
     const source = String(result.source);
-    return { ...result, source: physics ? patchPhysics(source) : bot ? patchBotSource(source) : inventory ? patchInventorySource(source) : patchCraftSource(source) };
+    return { ...result, source: physics ? patchPhysics(source) : bot ? patchBotSource(source) : inventory ? patchInventorySource(source) : craft ? patchCraftSource(source) : patchPathfinderGoals(source) };
   }
 });

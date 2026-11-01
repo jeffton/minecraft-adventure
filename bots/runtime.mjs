@@ -101,6 +101,8 @@ export function createObserver(agent, controls = {}) {
   let serverCorrections = 0;
   bot.on('physicsTick', () => { physicsTicks++; });
   bot.on('forcedMove', () => { serverCorrections++; });
+  bot.on('autoeat_finished', item => emit('eat', `Ate earned ${item.name}; food ${bot.food}/20, health ${bot.health}/20.`));
+  bot.on('autoeat_error', recordError);
   bot.on('death', () => emit('death', 'Died in survival; items remain in the world.'));
   bot.on('respawn', () => {
     // Completed preparation cannot survive a death: tools and supplies were dropped.

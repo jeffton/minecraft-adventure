@@ -1,6 +1,9 @@
 import { createRequire } from 'node:module';
 const require = createRequire('/opt/minecraft-mindcraft/package.json');
 const { Movements, goals } = require('mineflayer-pathfinder');
+const { Vec3 } = require('vec3');
+const faceOffsets = [new Vec3(1, 0, 0), new Vec3(-1, 0, 0), new Vec3(0, 1, 0),
+  new Vec3(0, -1, 0), new Vec3(0, 0, 1), new Vec3(0, 0, -1)];
 
 function protectedSite(position, home, dimension) {
   return home && home.dimension === dimension && position.x >= home.x - 2 && position.x <= home.x + 8 &&
@@ -25,7 +28,13 @@ export async function gatherResource(agent, names, home, skills) {
   const bot = agent.bot;
   if (bot.game.gameMode !== 'survival') throw new Error('Gathering requires survival mode.');
   const ids = names.map(name => bot.registry.blocksByName[name]?.id).filter(id => id !== undefined);
-  const positions = bot.findBlocks({ matching: ids, maxDistance: 64, count: 32 });
+  // Filter before findBlocks truncates: nearby buried ore otherwise crowds out
+  // exposed faces. A visibility goal cannot see through proposed future digging.
+  const positions = bot.findBlocks({
+    matching: ids, maxDistance: 64, count: 32,
+    useExtraInfo: block => !protectedSite(block.position, home, bot.game.dimension) &&
+      faceOffsets.some(offset => bot.blockAt(block.position.plus(offset))?.boundingBox === 'empty')
+  });
   const candidates = positions.map(position => bot.blockAt(position))
     .filter(block => block && !protectedSite(block.position, home, bot.game.dimension));
   const movements = new Movements(bot);
@@ -44,8 +53,9 @@ export async function gatherResource(agent, names, home, skills) {
     if (bot.interrupt_code || bot.health <= 0) throw new Error('Gathering interrupted.');
     const column = `${block.position.x},${block.position.z}`;
     if (columns.has(column)) continue;
+    if (searched === 8) break;
     columns.add(column);
-    if (++searched > 8) break;
+    searched++;
     const goal = new goals.GoalLookAtBlock(block.position, bot.world, { reach: 4.2 });
     const search = bot.pathfinder.getPathFromTo(movements, bot.entity.position, goal, { timeout: 600, tickTimeout: 30 });
     for (const { result } of search) {

@@ -176,8 +176,8 @@ export async function executeProgram(agent, skills, helpers) {
             // available even when the cooking preparation cannot yet be completed.
             await ensure(input, missing, depth + 1);
             if (!bot.findBlock({ matching: block => block.name === 'furnace', maxDistance: 16 })) await ensure('furnace', 1, depth + 1);
-            // Coal is explicit so smelting never consumes reserved construction wood.
-            await ensure('coal', Math.ceil(missing / 8), depth + 1);
+            // The authored furnace skill selects real coal, charcoal or wood from
+            // inventory. Cooking food must not require a separate coal expedition.
             const before = inventoryCount(bot, item);
             await operation(() => skills.smeltItem(bot, input, missing));
             if (inventoryCount(bot, item) < target) throw new Error(`Smelting produced ${inventoryCount(bot, item) - before} ${item}; desired inventory minimum ${target} not reached.`);

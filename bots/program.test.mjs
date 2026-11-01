@@ -72,7 +72,10 @@ function fixture(program, initial = {}, name = 'Roy') {
         },
         smeltItem: async (_, input, count) => {
             calls.push(['smelt', input, count]);
-            add(input, -count); add('coal', -Math.ceil(count / 8));
+            const fuel = amount('coal') > 0 ? 'coal' : 'oak_planks';
+            const fuelCount = Math.ceil(count / (fuel === 'coal' ? 8 : 1.5));
+            assert.ok(amount(fuel) >= fuelCount, 'smelting consumes available earned fuel');
+            add(input, -count); add(fuel, -fuelCount);
             add(input === 'raw_iron' ? 'iron_ingot' : input === 'mutton' ? 'cooked_mutton' : 'stone', count);
             return true;
         },
@@ -391,6 +394,18 @@ test('cooked meat uses real earned raw drops and coal in an observed furnace', a
     assert.equal(f.amount('cooked_mutton'), 2);
     assert.equal(f.amount('coal'), 0);
     assert.deepEqual(f.calls.filter(call => call[0] === 'smelt'), [['smelt', 'mutton', 2]]);
+});
+
+test('cooking with an owned furnace and wood does not require a coal expedition', async () => {
+    const f = fixture([ensure('cooked_mutton', 2)], { mutton: 2, oak_planks: 4 }, 'Moss');
+    f.bot.health = 2;
+    f.bot.food = 0;
+    f.resources.set('furnace', f.block('furnace'));
+    await f.run();
+    assert.equal(f.amount('cooked_mutton'), 2);
+    assert.equal(f.amount('oak_planks'), 2);
+    assert.equal(f.amount('coal'), 0);
+    assert.equal(f.calls.some(call => call[0] === 'gather'), false);
 });
 
 test('food preparation approaches the nearest observed animal beyond the combat radius before hunting it', async () => {
