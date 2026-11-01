@@ -44,7 +44,7 @@ test('telemetry reflects actual held slot changes and inventory without private 
   assert.equal(viewerState(bot, 'idle').moving, false);
 });
 
-test('upstream server patch removes viewer timers and listeners on disconnect', () => {
+test('upstream server patch rejects changed integration anchors', () => {
   const fixture = "http.listen(port, () => {\nworldView.init(bot.entity.position)\nworldView.updatePosition(bot.entity.position)\nbot.on('move', botPosition)\nbot.removeListener('move', botPosition)";
   const result = patchViewerServer(fixture, viewerState.toString());
   assert.match(result, /clearInterval\(stateTimer\)/);
