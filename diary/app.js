@@ -101,6 +101,7 @@ function startCamera() {
   feed.allow = 'fullscreen';
   document.querySelector('.hero').append(feed);
   cameraControls.hidden = false;
+  document.querySelector('#image-time').hidden = true;
   liveToggle.textContent = 'Show latest snapshot';
   liveToggle.setAttribute('aria-pressed', 'true');
   document.querySelector('#camera-label').textContent = 'CONNECTING CAMERA…';
@@ -134,6 +135,7 @@ liveToggle.addEventListener('click', () => {
   if (existing) {
     existing.remove();
     cameraControls.hidden = true;
+    document.querySelector('#image-time').hidden = false;
     clearInterval(liveMonitor);
     liveToggle.textContent = 'Watch live ↗';
     liveToggle.setAttribute('aria-pressed', 'false');

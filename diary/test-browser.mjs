@@ -37,6 +37,7 @@ try {
     await page.getByRole('button', { name: 'Watch live' }).click();
     await page.locator('#live-feed').waitFor();
     assert.equal(await page.locator('#live-toggle').getAttribute('aria-pressed'), 'true');
+    assert.equal(await page.locator('#image-time').isVisible(), false);
     await page.getByText('Main hand: stone sword ×1', { exact: true }).waitFor();
     await page.locator('#camera-bot').selectOption('Moss');
     await page.getByText('Main hand: iron pickaxe ×1', { exact: true }).waitFor();
@@ -53,6 +54,7 @@ try {
     await page.getByRole('button', { name: 'Show latest snapshot' }).click();
     assert.equal(await page.locator('#live-feed').count(), 0);
     assert.equal(await page.locator('#camera-controls').isVisible(), false);
+    assert.equal(await page.locator('#image-time').getAttribute('hidden'), null);
     data.observedAt = '2020-01-01T00:00:00Z';
     await page.reload();
     await page.getByText(/Stale status/).waitFor();
