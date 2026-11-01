@@ -1,0 +1,25 @@
+[Unit]
+Description=Minecraft player isolated skill broker
+Requires=minecraft-player-sandbox.socket
+After=minecraft-player-sandbox.socket
+
+[Service]
+Type=simple
+User=root
+Group=minecraft-adventure-project
+ExecStart=/usr/bin/node /opt/minecraft-adventure/player/sandbox-broker.mjs
+WorkingDirectory=/
+Environment=PATH=/usr/bin:/bin
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+RestrictAddressFamilies=AF_UNIX
+CapabilityBoundingSet=
+ReadOnlyPaths=/var/lib/minecraft-player-sandbox/root
+MemoryMax=128M
+MemorySwapMax=0
+TasksMax=32
+TimeoutStopSec=10
+Restart=on-failure
+RestartSec=2

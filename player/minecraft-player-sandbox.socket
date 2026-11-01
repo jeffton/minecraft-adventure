@@ -1,0 +1,13 @@
+[Unit]
+Description=Minecraft player isolated skill broker socket
+
+[Socket]
+ListenStream=/run/minecraft-player-sandbox/broker.sock
+SocketMode=0660
+SocketUser=root
+SocketGroup=minecraft-adventure-project
+DirectoryMode=0755
+Service=minecraft-player-sandbox.service
+
+[Install]
+WantedBy=sockets.target
