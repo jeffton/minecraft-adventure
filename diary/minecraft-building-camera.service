@@ -1,0 +1,33 @@
+[Unit]
+Description=Read-only Minecraft base camera for planner vision
+After=network.target minecraft-adventure-bots.service
+
+[Service]
+Type=simple
+User=minecraft-diary
+Group=minecraft-diary
+WorkingDirectory=/opt/minecraft-adventure/diary
+ExecStart=/usr/bin/node vision-capture.mjs
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=15
+KillMode=control-group
+MemoryMax=768M
+TasksMax=256
+Slice=minecraft-adventure.slice
+CPUWeight=10
+Nice=15
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+CapabilityBoundingSet=
+Environment=HOME=/tmp XDG_CONFIG_HOME=/tmp/roycraft-vision-config XDG_CACHE_HOME=/tmp/roycraft-vision-cache
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

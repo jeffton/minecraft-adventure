@@ -9,6 +9,7 @@ import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite
 import { MODEL_ROLES, MODEL_OUTPUT_TOKENS } from './contracts.mjs';
 import { admittedModels } from './admission.mjs';
 import { assertWorldScope } from './world-scope.mjs';
+import { durableInput } from './vision.mjs';
 
 const initialAdventureState = () => ({
   revision: 0,
@@ -151,7 +152,7 @@ export async function openEngine({ stateDir, worldScope, socketPath, models, tim
       }, context);
       return snapshot();
     },
-    async complete(messages, requestId, { signal, role = 'repair' } = {}) {
+    async complete(messages, requestId, { signal, role = 'repair', images = [] } = {}) {
       signal?.throwIfAborted();
       if (!Object.hasOwn(MODEL_ROLES, role)) throw new Error('Unknown planner model role: ' + role);
       // The shared HTTP queue owns serialization; configure only between completed runs.
@@ -166,7 +167,7 @@ export async function openEngine({ stateDir, worldScope, socketPath, models, tim
       const submission = await root.submit({
         type: 'input',
         requestId: worldScope ? `world:${worldScope.worldId}:${requestId}` : requestId,
-        content: JSON.stringify({ conversation: messages }),
+        content: durableInput(messages, images),
       }, context);
       let cancellation;
       const abort = () => {

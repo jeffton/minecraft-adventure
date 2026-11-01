@@ -3,6 +3,7 @@ import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { AssistantMessageEventStream } from '@earendil-works/pi-ai';
 import { MISSION_INSTRUCTIONS, validateObservation } from './contracts.mjs';
+import { validateVisualFrame } from './vision.mjs';
 
 // Applied below the durable scheduler, so recovered requests and compaction share admission too.
 export function admittedModels(models, { stateDir, intervalMs = 20000 }) {
@@ -30,12 +31,23 @@ export function admittedModels(models, { stateDir, intervalMs = 20000 }) {
           const missionHeader = MISSION_INSTRUCTIONS.split('\n', 1)[0] + '\n';
           if (envelope.conversation?.some(message => message.role === 'system' && message.content.startsWith(missionHeader))) {
             const missionInput = envelope.conversation.findLast(message => message.role === 'user');
-            validateObservation(JSON.parse(missionInput.content).observed);
+            const input = JSON.parse(missionInput.content);
+            validateObservation(input.observed);
+            if (input.visualObservation) {
+              const images = lastUser.content.filter(item => item.type === 'image');
+              if (images.length !== 1) throw new Error('Building review requires exactly one attached image');
+              validateVisualFrame({ ...input.visualObservation, image: images[0] }, input.observed.home);
+            }
           }
         }
         const temporary = stampFile + '.tmp';
         await writeFile(temporary, JSON.stringify({ startedAt: Date.now() }) + '\n', { mode: 0o640 });
         await rename(temporary, stampFile);
+        const images = Array.isArray(lastUser?.content) ? lastUser.content.filter(item => item.type === 'image') : [];
+        if (images.length) {
+          if (!model.input.includes('image')) throw new Error('Selected planner model does not support image input');
+          console.info(JSON.stringify({ event: 'vision_model_input', model: model.id, images: images.length, bytes: images.map(image => Buffer.byteLength(image.data, 'base64')) }));
+        }
         const upstream = models.streamSimple(model, context, options);
         for await (const event of upstream) output.push(event);
         output.end(await upstream.result());

@@ -5,7 +5,7 @@ getent group minecraft-diary >/dev/null || groupadd --system minecraft-diary
 id minecraft-diary >/dev/null 2>&1 || useradd --system --gid minecraft-diary --home-dir /nonexistent --shell /usr/sbin/nologin minecraft-diary
 setfacl -m u:minecraft-diary:r-X,d:u:minecraft-diary:r-X /var/lib/minecraft-adventure/observations
 install -d -m 0755 /opt/minecraft-adventure/diary
-for file in publish.py capture.mjs package.json package-lock.json; do
+for file in publish.py capture.mjs vision-capture.mjs package.json package-lock.json; do
     install -m 0644 "$source_dir/$file" /opt/minecraft-adventure/diary/
 done
 npm ci --ignore-scripts --prefix /opt/minecraft-adventure/diary
@@ -25,6 +25,7 @@ fi
 install -m 0644 "$source_dir/nginx.conf" /etc/nginx/snippets/roycraft-diary.conf
 install -m 0644 "$source_dir/minecraft-adventure-diary.service" /etc/systemd/system/
 install -m 0644 "$source_dir/minecraft-adventure-diary.timer" /etc/systemd/system/
+install -m 0644 "$source_dir/minecraft-building-camera.service" /etc/systemd/system/
 systemctl daemon-reload
 systemd-analyze verify /etc/systemd/system/minecraft-adventure-diary.service /etc/systemd/system/minecraft-adventure-diary.timer
 nginx -t

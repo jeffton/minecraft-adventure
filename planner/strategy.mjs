@@ -106,6 +106,7 @@ export function validateReview(answer, previous, evidence, observed) {
     goal: { id: goal.id, title: goal.title, owner: goal.owner, dependsOn: [...goal.dependsOn], success },
     decision: card.decision, basis: card.basis,
     reason: words(card.reason, 'reason'), adaptation: words(card.adaptation, 'adaptation'),
+    ...(card.visualAssessment !== undefined ? { visualAssessment: words(card.visualAssessment, 'visual assessment') } : {}),
     nextGoals: card.nextGoals.map(value => words(value, 'next objective', 180)),
     reviewedAt: observed.updatedAt, completedGoals: completedGoals.slice(-16),
     blockerBaseline: Object.fromEntries(evidence.blockers.map(blocker => [blocker.key, blocker.count])),
