@@ -4,10 +4,11 @@ import path from 'node:path';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createModels } from '@earendil-works/pi-ai/models';
 import { openaiCodexProvider } from '@earendil-works/pi-ai/providers/openai-codex';
-import { AssistantEntry, Harness, createRegistry, defineDoc } from '@earendil-works/pi-durable';
+import { AssistantEntry, Harness, createRegistry, defineDoc, defineDocFamily } from '@earendil-works/pi-durable';
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { MODEL_ROLES, MODEL_OUTPUT_TOKENS } from './contracts.mjs';
 import { admittedModels } from './admission.mjs';
+import { assertWorldScope } from './world-scope.mjs';
 
 const initialAdventureState = () => ({
   revision: 0,
@@ -22,6 +23,16 @@ const AdventureState = defineDoc({
   kind: 'minecraft.adventure-state',
   version: 1,
   scope: 'session',
+  initial: initialAdventureState,
+  checkpointWhen: () => true,
+});
+
+// Keep the existing live-world document intact when explicit namespacing is activated.
+const WorldAdventureStates = defineDocFamily({
+  kind: 'minecraft.world-adventure-state',
+  version: 1,
+  scope: 'session',
+  family: true,
   initial: initialAdventureState,
   checkpointWhen: () => true,
 });
@@ -74,7 +85,11 @@ export async function brokerModels(socketPath) {
   return models;
 }
 
-export async function openEngine({ stateDir, socketPath, models, timeoutMs = 120000, intervalMs = 20000 }) {
+export async function openEngine({ stateDir, worldScope, socketPath, models, timeoutMs = 120000, intervalMs = 20000 }) {
+  if (worldScope) await assertWorldScope(worldScope);
+  const document = worldScope ? WorldAdventureStates : AdventureState;
+  const address = worldScope ? [worldScope.worldId] : [];
+  const mutableState = tx => worldScope ? tx.doc(document, ...address, null) : tx.doc(document);
   models ??= await brokerModels(socketPath);
   await mkdir(stateDir, { recursive: true, mode: 0o750 });
   const context = BACKGROUND_CONTEXT;
@@ -102,20 +117,21 @@ export async function openEngine({ stateDir, socketPath, models, timeoutMs = 120
   harness.resume();
   await root.waitForIdle(context);
 
+  const snapshot = async () => await harness.snapshot(document, ...address, context) ?? initialAdventureState();
   return {
     async getAdventureState() {
-      return await harness.snapshot(AdventureState, context) ?? initialAdventureState();
+      return snapshot();
     },
     async recordEvidence({ expectedRevision, evidence, lastTriggerFingerprint }) {
       const observed = structuredClone(evidence);
       await root.commit(async tx => {
-        const state = await tx.doc(AdventureState);
+        const state = await mutableState(tx);
         if (state.revision !== expectedRevision) throw new Error('Adventure state revision conflict');
         state.evidence = observed;
         if (lastTriggerFingerprint !== undefined) state.lastTriggerFingerprint = lastTriggerFingerprint;
         state.revision++;
       }, context);
-      return harness.snapshot(AdventureState, context);
+      return snapshot();
     },
     async commitAdventureState({ expectedRevision, next }) {
       // The server validates these opaque JSON fields; storage owns revision and atomicity.
@@ -127,13 +143,13 @@ export async function openEngine({ stateDir, socketPath, models, timeoutMs = 120
         lastTriggerFingerprint: next.lastTriggerFingerprint,
       });
       await root.commit(async tx => {
-        const state = await tx.doc(AdventureState);
+        const state = await mutableState(tx);
         if (value.mission?.id != null && value.mission.id === state.mission?.id) return;
         if (state.revision !== expectedRevision) throw new Error('Adventure state revision conflict');
         Object.assign(state, value);
         state.revision++;
       }, context);
-      return harness.snapshot(AdventureState, context);
+      return snapshot();
     },
     async complete(messages, requestId, { signal, role = 'repair' } = {}) {
       signal?.throwIfAborted();
@@ -149,7 +165,7 @@ export async function openEngine({ stateDir, socketPath, models, timeoutMs = 120
       await root.reset(undefined, context);
       const submission = await root.submit({
         type: 'input',
-        requestId,
+        requestId: worldScope ? `world:${worldScope.worldId}:${requestId}` : requestId,
         content: JSON.stringify({ conversation: messages }),
       }, context);
       let cancellation;

@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, symlinkSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { BOT_ROLES } from './blueprint.mjs';
 import { aggregateState } from './runtime.mjs';
+import { botWorldConfig } from '../planner/world-scope.mjs';
 import * as Mindcraft from '/opt/minecraft-mindcraft/src/mindcraft/mindcraft.js';
 import defaults from '/opt/minecraft-mindcraft/settings.js';
 
@@ -9,6 +10,7 @@ if (process.getuid() === 0) throw new Error('Run the bots as minecraft-bots, nev
 if (!process.env.OPENAI_API_KEY) throw new Error('OPENAI_API_KEY must contain the private local-relay bearer token');
 if (!process.env.NODE_OPTIONS?.includes('bootstrap.mjs')) throw new Error('NODE_OPTIONS must preload the adventure bootstrap');
 
+await botWorldConfig(process.env);
 const data = process.env.BOT_DATA_DIR ?? '/var/lib/minecraft-adventure/bots';
 mkdirSync(data, { recursive: true });
 process.chdir(data);

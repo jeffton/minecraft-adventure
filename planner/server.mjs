@@ -6,6 +6,7 @@ import { MODEL, MODEL_ROLES, MISSION_INSTRUCTIONS, HttpError, validateChat, vali
 import { ModelQueue } from './queue.mjs';
 import { DIARY_INSTRUCTIONS, validateDiaryInput, validateDiaryParagraph } from './diary.mjs';
 import { openEngine } from './engine.mjs';
+import { plannerWorldConfig } from './world-scope.mjs';
 import { MEAL_EVIDENCE_VERSION, correctUnverifiedMeals, initialEvidence, observeEvidence, resetSinceReview } from './evidence.mjs';
 import { STRATEGY_INSTRUCTIONS, reviewTrigger, strategyContext, validateReview } from './strategy.mjs';
 
@@ -237,17 +238,18 @@ export async function startPlanner({
 
 if (import.meta.url === 'file://' + process.argv[1]) {
   process.umask(0o027);
-  const stateDir = process.env.PLANNER_STATE_DIR ?? '/var/lib/minecraft-planner';
+  const config = await plannerWorldConfig(process.env);
   const engine = await openEngine({
-    stateDir,
+    stateDir: config.databaseDir,
+    worldScope: config.worldScope,
     socketPath: process.env.PLANNER_AUTH_SOCKET ?? '/run/minecraft-planner-auth/auth.sock',
   });
   const planner = await startPlanner({
     engine,
     token: process.env.PLANNER_RELAY_TOKEN,
-    stateDir,
-    missionFile: process.env.PLANNER_MISSION_FILE ?? '/var/lib/minecraft-adventure/control/mission.json',
-    observedFile: process.env.PLANNER_OBSERVED_FILE ?? '/var/lib/minecraft-adventure/observations/state.json',
+    stateDir: config.stateDir,
+    missionFile: config.missionFile,
+    observedFile: config.observedFile,
     port: Number(process.env.PLANNER_PORT ?? 8766),
   });
   let closing = false;
