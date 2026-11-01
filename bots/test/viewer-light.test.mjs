@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import {
   attachGeometryLight, createViewerLightMaterial, installViewerLightClient,
-  installViewerLightStream, patchViewerLightWorker, trackViewerLightColumns
+  installViewerLightStream, patchViewerLightServer, patchViewerLightWorker, trackViewerLightColumns
 } from '../viewer-light.mjs';
 import { patchViewerHeightWorker } from '../viewer-height.mjs';
 
@@ -64,6 +64,62 @@ function packet(x = -1, changes = {}) {
     ...changes
   };
 }
+
+test('actual patched upstream connection initializes WorldView and light stream without ASI invocation', t => {
+  const bot = new EventEmitter();
+  bot._client = new EventEmitter();
+  bot.version = '1.21.4';
+  bot.entity = { position: new Vec3(0, 64, 0), yaw: 0, pitch: 0 };
+  bot.world = {};
+  trackViewerLightColumns(bot);
+  const io = new EventEmitter();
+  const socket = new EventEmitter();
+  t.after(() => socket.emit('disconnect'));
+  let instance;
+  class WorldView extends EventEmitter {
+    constructor(world, distance, position, receivedSocket) {
+      super();
+      assert.equal(world, bot.world);
+      assert.equal(receivedSocket, socket);
+      this.loadedChunks = {};
+      this.lastPos = position;
+      this.viewDistance = distance;
+      instance = this;
+    }
+    init(position) {
+      assert.equal(position, bot.entity.position);
+      assert.equal(bot._client.listenerCount('update_light'), 1, 'Light installer runs before init');
+      this.initialized = true;
+    }
+    listenToBot(receivedBot) { assert.equal(receivedBot, bot); }
+    removeListenersFromBot(receivedBot) { assert.equal(receivedBot, bot); }
+    updatePosition() {}
+  }
+  let listenCalls = 0;
+  const modules = {
+    events: EventEmitter,
+    '../viewer': { WorldView },
+    express: () => ({}),
+    http: { createServer: () => ({ listen() { listenCalls++; }, close() {} }) },
+    'socket.io': () => io,
+    './common': { setupRoutes() {} }
+  };
+  const upstream = readFileSync(`${root}/node_modules/prismarine-viewer/lib/mineflayer.js`, 'utf8');
+  const patched = patchViewerLightServer(upstream, installViewerLightStream.toString());
+  const module = { exports: {} };
+  new Function('require', 'module', patched)(name => {
+    assert.ok(Object.hasOwn(modules, name), `Unexpected upstream dependency: ${name}`);
+    return modules[name];
+  }, module);
+  module.exports(bot, { port: 0 });
+  assert.equal(listenCalls, 1, 'Upstream listen is mocked, not a real HTTP server');
+  assert.doesNotThrow(() => io.emit('connection', socket));
+  assert.equal(instance.initialized, true);
+  assert.equal(bot.listenerCount('move'), 1);
+  socket.emit('disconnect');
+  assert.equal(bot._client.listenerCount('update_light'), 0);
+  assert.equal(bot.listenerCount('move'), 0);
+});
 
 test('1.21.4 light survives binary structured clone and partial/empty section updates at minY', () => {
   const original = new Chunk();
