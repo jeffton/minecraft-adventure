@@ -8,7 +8,6 @@ try {
 } catch (error) {
   console.error(error);
   document.querySelector('#image-empty').textContent = 'Item artwork could not load';
-  for (const camera of document.querySelectorAll('[data-camera]')) camera.disabled = true;
   document.querySelector('#camera-state').textContent = 'Item artwork could not load';
   clearInventory('Item artwork could not load');
 }
@@ -27,7 +26,7 @@ function node(tag, text, className) {
   return element;
 }
 
-function render(data) {
+function render(data, journal = data) {
   const stale = Date.now() - new Date(data.observedAt).getTime() > 20 * 60_000;
   document.querySelector('.live').classList.toggle('stale', stale);
   document.querySelector('#updated').textContent = stale
@@ -52,7 +51,7 @@ function render(data) {
       node('span', milestone.label));
     return item;
   }));
-  document.querySelector('#journal').replaceChildren(...data.entries.map(entry => {
+  document.querySelector('#journal').replaceChildren(...journal.entries.map(entry => {
     const article = node('article', '', 'entry');
     const time = node('time', dateTime(entry.at));
     time.dateTime = entry.at;
@@ -79,7 +78,25 @@ function render(data) {
 async function refresh() {
   const response = await fetch('data.json', { cache: 'no-store' });
   if (!response.ok) throw new Error(`Journal returned ${response.status}`);
-  render(await response.json());
+  const data = await response.json();
+  const selectedWorld = new URLSearchParams(location.search).get('world');
+  const archives = document.querySelector('#world-archives');
+  archives.replaceChildren();
+  for (const world of [{ worldId: data.worldId }, ...data.archives]) {
+    const link = node('a', world.worldId === data.worldId ? 'Current world' : world.worldId);
+    link.href = `?world=${encodeURIComponent(world.worldId)}#journal`;
+    archives.append(link);
+  }
+  let journal = data;
+  if (selectedWorld && selectedWorld !== data.worldId) {
+    const archive = data.archives.find(world => world.worldId === selectedWorld);
+    if (!archive) throw new Error(`Unknown diary world: ${selectedWorld}`);
+    const archived = await fetch(archive.path, { cache: 'no-store' });
+    if (!archived.ok) throw new Error(`Archived diary returned ${archived.status}`);
+    journal = await archived.json();
+  }
+  document.querySelector('#journal-title').textContent = journal === data ? 'Field notes' : `Field notes · ${selectedWorld}`;
+  render(data, journal);
 }
 
 function reportError(error) {
@@ -88,19 +105,9 @@ function reportError(error) {
   document.querySelector('.live').classList.add('stale');
 }
 
-const cameraButtons = [...document.querySelectorAll('[data-camera]')];
-let cameraBot = 'Roy';
+const cameraBot = 'Roy';
 let liveMonitor;
 let inventorySignature;
-
-function cameraStatus(status) {
-  for (const button of cameraButtons) {
-    const selected = button.dataset.camera === cameraBot;
-    button.setAttribute('aria-pressed', String(selected));
-    button.dataset.status = selected ? status : '';
-    button.title = selected ? `${cameraBot} camera · ${status}` : `${button.dataset.camera} camera`;
-  }
-}
 
 function stopCamera(message) {
   document.querySelector('#live-feed')?.remove();
@@ -111,12 +118,11 @@ function stopCamera(message) {
 
 function startCamera() {
   stopCamera('Waiting for live inventory');
-  cameraStatus('connecting');
   document.querySelector('#camera-state').textContent = `Connecting to ${cameraBot}…`;
   const feed = document.createElement('iframe');
   feed.id = 'live-feed';
   feed.title = `Live first-person camera: ${cameraBot}`;
-  feed.src = cameraBot === 'Roy' ? 'live/' : `live/${cameraBot}/`;
+  feed.src = 'live/';
   feed.allow = 'fullscreen';
   document.querySelector('.hero').append(feed);
   document.querySelector('#camera-label').textContent = 'CONNECTING CAMERA…';
@@ -131,13 +137,11 @@ function startCamera() {
       : connectedBefore ? 'CAMERA DISCONNECTED' : 'CONNECTING CAMERA…';
     if (!connected) {
       const status = state?.name === cameraBot && state.status === 'offline' ? 'offline' : 'waiting';
-      cameraStatus(status);
       document.querySelector('#camera-state').textContent = `${cameraBot} · ${status === 'offline' ? 'Offline' : 'Waiting for live observations'}`;
       clearInventory('Live inventory unavailable');
       inventorySignature = undefined;
       return;
     }
-    cameraStatus('live');
     const p = state.position;
     document.querySelector('#camera-state').textContent = `${state.name} · ${state.digging ? `Mining ${state.digging.replaceAll('_', ' ')}` : state.moving ? 'Moving' : 'Stationary'} · ${state.action.replaceAll('action:', '')} · ${Math.round(p.x)}, ${Math.round(p.y)}, ${Math.round(p.z)}`;
     const signature = JSON.stringify([state.health, state.food, state.held, state.offhand, state.inventory]);
@@ -148,13 +152,6 @@ function startCamera() {
   }, 250);
 }
 
-for (const button of cameraButtons) {
-  button.addEventListener('click', () => {
-    if (button.dataset.camera === cameraBot && document.querySelector('#live-feed')) return;
-    cameraBot = button.dataset.camera;
-    startCamera();
-  });
-}
 refresh().catch(reportError);
 setInterval(() => refresh().catch(reportError), 60_000);
 if (itemAssets) startCamera();

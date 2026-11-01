@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -18,7 +19,11 @@ PHASE_TITLES = {
     'end': 'Facing the dragon', 'completed': 'After the expedition',
     'recovery': 'Back on track',
 }
-ROLES = {'Roy': 'Builder', 'Spruce': 'Forester', 'Flint': 'Miner and smith', 'Moss': 'Food and supplies'}
+def world_identity(state):
+    identity = state['worldId']
+    if not isinstance(identity, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,79}', identity):
+        raise ValueError('worldId must be a stable filesystem-safe identity, 1–80 characters')
+    return identity
 
 
 def atomic_json(path, value):
@@ -38,14 +43,14 @@ def validate_frame(path):
 
 def public_bot(bot):
     return {
-        'name': bot['name'], 'role': ROLES[bot['name']], 'health': bot['health'],
+        'name': bot['name'], 'role': 'Autonomous player', 'health': bot['health'],
         'food': bot['food'], 'task': bot['task'], 'status': bot['status'],
     }
 
 
 def field_notes(events):
     notes = []
-    for bot in ROLES:
+    for bot in dict.fromkeys(event['bot'] for event in events):
         observed = [event for event in events if event['bot'] == bot]
         mined = {}
         for event in observed:
@@ -78,14 +83,15 @@ def diary_context(state, since):
     for event in events:
         if event['type'] == 'eat' and event['data'].get('verified') is True:
             facts.append(f"{event['bot']}: {event['message']}")
+        if event['type'] == 'action' and event['data'].get('verified') is True:
+            facts.append(f"{event['bot']}: {event['message']}")
         if event['type'] == 'craft':
             facts.append(f"{event['bot']}: Crafted {event['data']['count']} {event['data']['item']}.")
         if (event['type'] == 'build' and event['data'].get('verified') is True
-                and event['data'].get('scope') == 'lodge'
                 and event['data']['material'].removeprefix('minecraft:') not in {'air', 'cave_air', 'void_air'}):
-            facts.append(f"{event['bot']}: Placed one verified {event['data']['material']} lodge block; this does not establish a finished house.")
+            facts.append(f"{event['bot']}: Placed one verified {event['data']['material']} block; this does not establish a finished house.")
     return {
-        'observedAt': state['updatedAt'], 'since': since,
+        'worldId': world_identity(state), 'observedAt': state['updatedAt'], 'since': since,
         'objective': state['objective'],
         'facts': facts,
         'bots': [{key: bot[key] for key in (
@@ -110,7 +116,7 @@ def narrate(context):
 
 def make_entry(state, now, image, capture_error, narrative):
     return {
-        'at': now, 'observedAt': state['updatedAt'],
+        'worldId': world_identity(state), 'at': now, 'observedAt': state['updatedAt'],
         'title': PHASE_TITLES[state['phase']], 'summary': narrative['text'],
         'events': [],
         'author': narrative['model'], 'answerEntryId': narrative['answerEntryId'],
@@ -124,13 +130,18 @@ def publish(state_path, output, capture_script):
     observed = datetime.fromisoformat(state['updatedAt'].replace('Z', '+00:00'))
     if (now - observed).total_seconds() > 120:
         raise RuntimeError('Gameplay observations are stale; refusing to label them current')
-    stamp = now.strftime('%Y%m%dT%H%M%SZ')
+    world_id = world_identity(state)
+    stamp = world_id + '-' + now.strftime('%Y%m%dT%H%M%SZ')
     images = output / 'images'
     images.mkdir(parents=True, exist_ok=True)
     data_path = output / 'data.json'
     previous = json.loads(data_path.read_text()) if data_path.exists() else {'entries': []}
-    since = previous['entries'][0]['observedAt'] if previous['entries'] else ''
+    same_world = previous.get('worldId') == world_id
+    entries = previous['entries'] if same_world else []
+    since = entries[0]['observedAt'] if entries else ''
     narrative = narrate(diary_context(state, since))
+    if narrative['worldId'] != world_id:
+        raise ValueError('Diary narrative worldId does not match current observations')
     image_path = images / f'{stamp}.webp'
     temporary = images / f'.{stamp}.webp'
     capture_error = None
@@ -145,13 +156,22 @@ def publish(state_path, output, capture_script):
         image = None
     now_text = now.isoformat()
     entry = make_entry(state, now_text, image, capture_error, narrative)
+    archives = list(previous.get('archives', []))
+    if previous['entries'] and not same_world:
+        old_id = previous.get('worldId', 'legacy-expedition')
+        world_identity({'worldId': old_id})
+        archive_directory = output / 'archives' / old_id
+        archive_directory.mkdir(parents=True, exist_ok=True)
+        atomic_json(archive_directory / 'data.json', previous)
+        archives.append({'worldId': old_id, 'path': f'archives/{old_id}/data.json'})
     data = {
+        'worldId': world_id, 'archives': archives,
         'publishedAt': now_text, 'observedAt': state['updatedAt'],
         'objective': state['objective'], 'longTerm': state['longTerm'],
         'serverVersion': state['serverVersion'],
         'bots': [public_bot(bot) for bot in state['bots']],
         'milestones': state['milestones'],
-        'entries': [entry, *previous['entries']],
+        'entries': [entry, *entries],
     }
     archive = output / 'entries'
     archive.mkdir(exist_ok=True)

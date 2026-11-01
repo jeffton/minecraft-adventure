@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#152a25">
-  <title>Roycraft · A shared adventure</title>
+  <title>Roycraft</title>
   <link rel="stylesheet" href="style.css">
   <link rel="stylesheet" href="map.css">
   <link rel="stylesheet" href="inventory.css">
@@ -16,12 +16,6 @@
     <section class="hero" aria-label="Live views from the world"><div id="image-empty">Connecting to the expedition…</div><div class="image-caption"><span id="camera-label">CONNECTING CAMERA…</span></div></section>
     <section id="camera-controls" class="camera-controls" aria-label="Live camera">
       <div class="camera-topline">
-        <div class="camera-bots" role="group" aria-label="Choose a bot camera">
-          <button type="button" data-camera="Roy" aria-pressed="true">Roy</button>
-          <button type="button" data-camera="Spruce" aria-pressed="false">Spruce</button>
-          <button type="button" data-camera="Flint" aria-pressed="false">Flint</button>
-          <button type="button" data-camera="Moss" aria-pressed="false">Moss</button>
-        </div>
         <span id="camera-state" role="status">Connecting to Roy…</span>
       </div>
       <div id="camera-vitals" class="mc-vitals" aria-label="Live health and food"></div>
@@ -35,13 +29,13 @@
       <div class="map-panel"><iframe id="world-map" data-src="/map/" title="Isometric map and live player positions" allow="fullscreen" referrerpolicy="same-origin"></iframe></div>
       <p class="map-note">Drag to explore · Scroll or pinch to zoom · Select a player to follow. Only visited chunks are mapped; terrain updates after the world saves. Player positions are live. Choose a dimension from the map menu; unvisited dimensions are empty.</p>
     </section>
-    <section class="mission"><div><p class="eyebrow">THE NEXT MOVE</p><h2 id="objective">A shared home. A long adventure.</h2></div><div><p class="eyebrow">THE BIG PICTURE</p><p id="long-term">Survive together, build beautifully, and prepare for the End.</p></div></section>
-    <section class="crew-section"><div class="section-heading"><h2>The crew</h2><span>Different roles. Shared resources.</span></div><div class="crew" id="crew"></div></section>
+    <section class="mission"><div><p class="eyebrow">THE NEXT MOVE</p><h2 id="objective">Find a foothold.</h2></div><div><p class="eyebrow">THE BIG PICTURE</p><p id="long-term">Survive, build a home, and reach the End.</p></div></section>
+    <section class="crew-section"><div class="section-heading"><h2>The player</h2></div><div class="crew" id="crew"></div></section>
     <section class="route-section"><div class="section-heading"><h2>The road to the dragon</h2><span>Progress observed in the game. Not wishful thinking.</span></div><ol id="milestones" class="route"></ol></section>
-    <section class="journal-section"><div class="section-heading"><h2>Field notes</h2><span>A snapshot every fifteen minutes.</span></div><div id="journal"></div></section>
+    <section class="journal-section"><div class="section-heading"><h2 id="journal-title">Field notes</h2><span>Roy’s diary · Every fifteen minutes</span></div><nav id="world-archives" aria-label="Diary worlds"></nav><div id="journal"></div></section>
     <section class="server" id="server"><div><p class="eyebrow">VISIT THE WORLD</p><h2>Drop by the building site.</h2><p>Java Edition · Survival · Normal · Whitelist</p></div><div><code>minecraft.roybot.se</code><p id="version">Game version appears with the next update.</p></div></section>
   </main>
-  <footer><span>Roycraft / Roybot</span><p>Terra makes the plans. The bots do the work. Images show the actual world through a bot camera. Minecraft artwork © Mojang AB / Microsoft. Not an official Minecraft service or associated with Mojang or Microsoft.</p></footer>
+  <footer><span>Roycraft / Roybot</span><p>Roy explores with an autonomous code agent. Terra writes his diary from observed events. Images show the actual world through Roy’s camera. Minecraft artwork © Mojang AB / Microsoft. Not an official Minecraft service or associated with Mojang or Microsoft.</p></footer>
   <script type="module" src="app.js"></script>
   <script type="module" src="map.js"></script>
 </body>

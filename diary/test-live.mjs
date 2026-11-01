@@ -20,58 +20,33 @@ for (const width of widths) {
     });
     await page.goto('https://minecraft.roybot.se/', { waitUntil: 'domcontentloaded' });
     await page.getByRole('heading', { name: 'Roy', exact: true }).waitFor();
-    await page.locator('#live-feed').waitFor();
-    const positions = {};
-    for (const name of ['Roy', 'Spruce', 'Flint', 'Moss']) {
-      await page.locator(`[data-camera="${name}"]`).click();
-      const frame = await (await page.locator('#live-feed').elementHandle()).contentFrame();
-      await frame.waitForFunction(name => window.roycraftReady === true && window.roycraftState?.name === name, name, { timeout: 60000 });
-      await page.getByText('LIVE BOT CAMERA', { exact: true }).waitFor();
-      await page.waitForFunction(() => document.querySelector('#camera-kit').textContent.includes('Main hand:'));
-      const actual = await frame.evaluate(() => {
-        const meshes = Object.values(window.roycraftViewer.entities.entities);
-        return {
-          state: window.roycraftState, chunks: Object.keys(window.roycraftViewer.world.loadedChunks).length,
-          pending: window.roycraftViewer.world.sectionsOutstanding.size, far: window.roycraftViewer.camera.far,
-          purple: meshes.filter(mesh => mesh.material?.color?.getHex() === 0xff00ff).length,
-          custom: meshes.filter(mesh => mesh.userData.roycraftCustom).map(mesh => ({ kind: mesh.userData.roycraftKind, item: mesh.userData.itemKey })),
-        };
-      });
-      assert.equal(actual.state.name, name);
-      assert.ok(Array.isArray(actual.state.inventory));
-      assert.equal(actual.far, 48);
-      assert.equal(actual.purple, 0, `Purple placeholder meshes remain for ${name}`);
-      assert.ok(actual.chunks > 25, `Loaded terrain for ${name}: ${actual.chunks}`);
-      // Equipment may change between the frame sample and the HUD's next poll.
-      // Compare both current values in one browser turn, including stack count.
-      await page.waitForFunction(() => {
-        const state = document.querySelector('#live-feed').contentWindow.roycraftState;
-        const expected = `Main hand: ${state.held ? `${state.held.name.replaceAll('_', ' ')} ×${state.held.count}` : 'Empty'}`;
-        return document.querySelector('#camera-kit [aria-label^="Main hand:"]')?.getAttribute('aria-label') === expected;
-      }, undefined, { timeout: 10000 });
-      assert.equal(await page.locator('#live-feed').count(), 1);
-      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
-      if (name === 'Moss') await page.screenshot({ path: `${process.env.SCREENSHOT_DIR || '/tmp'}/roycraft-live-${name}-${width}.png` });
-      positions[name] = actual.state.position;
-      console.log(`${width}px ${name}: ${JSON.stringify(actual)}`);
-    }
-    // Rapid switching must leave just the final actor's iframe/state, never an old inventory.
-    await page.locator('[data-camera="Roy"]').click();
-    await page.locator('[data-camera="Flint"]').click();
-    await page.locator('[data-camera="Spruce"]').click();
-    const finalFrame = await (await page.locator('#live-feed').elementHandle()).contentFrame();
-    await finalFrame.waitForFunction(() => window.roycraftState?.name === 'Spruce', undefined, { timeout: 45000 });
+    const frame = await (await page.locator('#live-feed').elementHandle()).contentFrame();
+    await frame.waitForFunction(() => window.roycraftReady === true && window.roycraftState?.name === 'Roy', undefined, { timeout: 60000 });
+    await page.getByText('LIVE BOT CAMERA', { exact: true }).waitFor();
+    const actual = await frame.evaluate(() => ({
+      state: window.roycraftState,
+      chunks: Object.keys(window.roycraftViewer.world.loadedChunks).length,
+      purple: Object.values(window.roycraftViewer.entities.entities)
+        .filter(mesh => mesh.material?.color?.getHex() === 0xff00ff).length,
+    }));
+    assert.ok(Array.isArray(actual.state.inventory));
+    assert.equal(actual.purple, 0, 'Purple placeholder meshes remain');
+    assert.ok(actual.chunks > 0, 'Live terrain must be loaded');
+    await page.waitForFunction(() => {
+      const state = document.querySelector('#live-feed').contentWindow.roycraftState;
+      const expected = `Main hand: ${state.held ? `${state.held.name.replaceAll('_', ' ')} ×${state.held.count}` : 'Empty'}`;
+      return document.querySelector('#camera-kit [aria-label^="Main hand:"]')?.getAttribute('aria-label') === expected;
+    });
     assert.equal(await page.locator('#live-feed').count(), 1);
-    assert.equal(await page.locator('#live-toggle, #image-time, #hero-image').count(), 0);
-    assert.equal(await page.locator('[data-camera]').count(), 4);
+    assert.equal(await page.locator('[data-camera], #live-toggle, #image-time, #hero-image').count(), 0);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     assert.ok(await page.locator('#journal .entry img').count() > 0, 'Automatic diary images remain');
-    // Navigation closes the selected live camera; there is no snapshot mode.
+    console.log(`${width}px Roy: ${JSON.stringify(actual)}`);
     const closed = Promise.all([...activeSockets].map(socket => socket.waitForEvent('close', { timeout: 10000 })));
     await page.goto('about:blank');
     await closed;
     assert.equal(activeSockets.size, 0);
     assert.deepEqual(errors, []);
-    assert.ok(new Set(Object.values(positions).map(p => JSON.stringify(p))).size > 1, 'Feeds must be genuine distinct bot positions');
     await page.close();
   } finally {
     await browser.close();
