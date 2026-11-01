@@ -43,8 +43,9 @@ class PublishTests(unittest.TestCase):
         return json.loads((output / 'data.json').read_text()), generate.call_args.args[0]
 
     def test_new_world_archives_history_and_resets_event_window(self):
-        previous = {'entries': [{'observedAt': '2026-11-01T12:00:00Z',
-                                 'summary': 'Old expedition', 'image': 'images/old.webp'}]}
+        previous = {'worldId': 'previous-world', 'entries': [
+            {'observedAt': '2026-11-01T12:00:00Z',
+             'summary': 'Previous journey', 'image': 'images/old.webp'}]}
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             data, context = self.publish_in(root, state(), previous)
@@ -52,10 +53,10 @@ class PublishTests(unittest.TestCase):
             self.assertEqual(context['worldId'], state()['worldId'])
             self.assertEqual(len(data['entries']), 1)
             self.assertEqual(data['entries'][0]['worldId'], state()['worldId'])
-            archived = root / 'public/archives/legacy-expedition/data.json'
+            archived = root / 'public/archives/previous-world/data.json'
             self.assertEqual(json.loads(archived.read_text()), previous)
-            self.assertEqual(data['archives'], [{'worldId': 'legacy-expedition',
-                                               'path': 'archives/legacy-expedition/data.json'}])
+            self.assertEqual(data['archives'], [{'worldId': 'previous-world',
+                                               'path': 'archives/previous-world/data.json'}])
             self.assertTrue((root / 'public' / data['entries'][0]['image']).exists())
             # A second publication retains same-world entries and the archive index.
             next_data, next_context = self.publish_in(root, state())
@@ -64,9 +65,26 @@ class PublishTests(unittest.TestCase):
             self.assertEqual(next_data['archives'], data['archives'])
             self.assertEqual(json.loads(archived.read_text()), previous)
 
+    def test_untagged_history_is_rejected_before_model_or_capture(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / 'public'
+            output.mkdir()
+            previous = json.dumps({'entries': [{'summary': 'Unidentified history'}]})
+            (output / 'data.json').write_text(previous)
+            path = root / 'state.json'
+            path.write_text(json.dumps(state()))
+            with patch('publish.narrate') as generate, patch('publish.subprocess.run') as frame:
+                with self.assertRaises(KeyError):
+                    publish.publish(path, output, root / 'capture.mjs')
+                generate.assert_not_called()
+                frame.assert_not_called()
+            self.assertEqual((output / 'data.json').read_text(), previous)
+            self.assertFalse((output / 'archives').exists())
+
     def test_next_world_preserves_all_prior_archives(self):
         previous = {'worldId': 'previous-world', 'archives': [
-            {'worldId': 'legacy-expedition', 'path': 'archives/legacy-expedition/data.json'}
+            {'worldId': 'earlier-world', 'path': 'archives/earlier-world/data.json'}
         ], 'entries': [{'observedAt': '2026-11-01T12:00:00Z', 'summary': 'Previous world'}]}
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -80,7 +98,7 @@ class PublishTests(unittest.TestCase):
                 root = Path(directory)
                 output = root / 'public'
                 output.mkdir()
-                old = '{"entries": [{"summary": "Keep me"}]}'
+                old = '{"worldId": "player-20261101", "entries": [{"observedAt": "2026-11-01T12:00:00Z", "summary": "Keep me"}]}'
                 (output / 'data.json').write_text(old)
                 path = root / 'state.json'
                 path.write_text(json.dumps(state()))

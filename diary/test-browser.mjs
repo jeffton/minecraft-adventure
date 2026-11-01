@@ -10,7 +10,7 @@ const data = {
   objective: 'Gather wood', longTerm: 'Reach the End.', serverVersion: 'Java 26.3',
   bots: [{ name: 'Roy', role: 'Autonomous player', status: 'online', health: 20, food: 18, task: oldActionId }],
   milestones: [{ label: 'A home', completed: false }],
-  archives: [{ worldId: 'legacy-expedition', path: 'archives/legacy-expedition/data.json' }],
+  archives: [{ worldId: 'previous-world', path: 'archives/previous-world/data.json' }],
   entries: [{ at: now, title: 'The first day', summary: '<img src=x onerror="window.injected=true">', events: [], image: null, captureError: null }],
 };
 const browser = await chromium.launch({ executablePath: '/opt/google/chrome/chrome', args: ['--no-sandbox'] });
@@ -23,7 +23,7 @@ try {
     await page.route('http://diary.test/**', async route => {
       const name = new URL(route.request().url()).pathname.slice(1) || 'index.html';
       if (name === 'data.json') return route.fulfill({ json: data });
-      if (name === 'archives/legacy-expedition/data.json') {
+      if (name === 'archives/previous-world/data.json') {
         return route.fulfill({ json: { entries: [{ ...data.entries[0], summary: 'My old expedition.', image: 'item-assets/coal.png' }] } });
       }
       if (name === 'live/') {
@@ -88,9 +88,9 @@ try {
     await page.getByText('Roy · Waiting for live observations', { exact: true }).waitFor();
     assert.equal(await page.locator('#camera-vitals').textContent(), '');
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
-    await page.getByRole('link', { name: 'legacy-expedition', exact: true }).click();
+    await page.getByRole('link', { name: 'previous-world', exact: true }).click();
     await page.getByText('My old expedition.', { exact: true }).waitFor();
-    assert.equal(await page.locator('#journal-title').textContent(), 'Field notes · legacy-expedition');
+    assert.equal(await page.locator('#journal-title').textContent(), 'Field notes · previous-world');
     assert.equal(await page.locator('#objective').textContent(), data.objective);
     await page.locator('.bot .task').getByText(skillName, { exact: true }).waitFor();
     assert.equal((await page.locator('body').textContent()).includes(oldActionId), false);

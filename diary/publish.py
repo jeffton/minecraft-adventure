@@ -155,6 +155,7 @@ def publish(state_path, output, capture_script):
     data_path = output / 'data.json'
     previous = json.loads(data_path.read_text()) if data_path.exists() else {'entries': []}
     same_world = previous.get('worldId') == world_id
+    old_id = world_identity(previous) if previous['entries'] and not same_world else None
     entries = previous['entries'] if same_world else []
     since = entries[0]['observedAt'] if entries else ''
     if state.get('gameplayLedger') is True:
@@ -177,9 +178,7 @@ def publish(state_path, output, capture_script):
     now_text = now.isoformat()
     entry = make_entry(state, now_text, image, capture_error, narrative)
     archives = list(previous.get('archives', []))
-    if previous['entries'] and not same_world:
-        old_id = previous.get('worldId', 'legacy-expedition')
-        world_identity({'worldId': old_id})
+    if old_id is not None:
         archive_directory = output / 'archives' / old_id
         archive_directory.mkdir(parents=True, exist_ok=True)
         atomic_json(archive_directory / 'data.json', previous)
