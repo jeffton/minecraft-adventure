@@ -3,7 +3,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import subprocess
 
 import publish
@@ -144,6 +144,105 @@ class PublishTests(unittest.TestCase):
             'Roy: Placed a chest', 'Roy: Ate cooked beef', 'Roy: Crafted 1 stone_sword.',
             'Roy: Placed one verified oak_log block; this does not establish a finished house.',
         ])
+
+    def test_gameplay_ledger_keeps_early_results_after_telemetry_eviction(self):
+        current = state()
+        current['gameplayLedger'] = True
+        end = datetime.fromisoformat(current['updatedAt'])
+        start = end - timedelta(minutes=15)
+        current['events'] = [
+            {'at': (end - timedelta(seconds=index)).isoformat(), 'bot': 'Roy',
+             'type': 'telemetry', 'message': 'Heartbeat', 'data': {}}
+            for index in range(200)
+        ]
+        def event(at, kind, message, world=current['worldId']):
+            return {'worldId': world, 'at': at.isoformat(), 'bot': 'Roy',
+                    'type': kind, 'message': message, 'data': {}}
+        events = [
+            event(start - timedelta(seconds=1), 'death', 'Before window', 'older-world'),
+            event(start, 'death', 'At previous boundary'),
+            event(start + timedelta(seconds=1), 'gather', 'Mined oak_log at (1, 2, 3).'),
+            event(start + timedelta(seconds=2), 'death', 'Early death'),
+            event(end + timedelta(seconds=1), 'death', 'After snapshot'),
+        ]
+        previous = {'worldId': current['worldId'], 'entries': [{'observedAt': start.isoformat()}]}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            ledger = root / f'gameplay-{current["worldId"]}.jsonl'
+            ledger.write_text(''.join(json.dumps(event) + '\n' for event in events))
+            _, context = self.publish_in(root, current, previous)
+        self.assertEqual(context['facts'], [
+            'Roy: Mined 1 oak log; inventory pickup is tracked separately.',
+            'Roy: Died 1 time(s); dropped items remain in the world.',
+        ])
+
+    def test_selected_mismatched_ledger_event_rejects_before_narration(self):
+        current = state()
+        current['gameplayLedger'] = True
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / 'state.json'
+            path.write_text(json.dumps(current))
+            (root / f'gameplay-{current["worldId"]}.jsonl').write_text(json.dumps({
+                'worldId': 'wrong-world', 'at': current['updatedAt'],
+                'bot': 'Roy', 'type': 'death', 'message': 'Died', 'data': {},
+            }) + '\n')
+            with patch('publish.narrate') as generate:
+                with self.assertRaisesRegex(ValueError, 'ledger event worldId'):
+                    publish.publish(path, root / 'public', root / 'capture.mjs')
+                generate.assert_not_called()
+            self.assertFalse((root / 'public/data.json').exists())
+
+    def test_declared_missing_ledger_fails_without_embedded_event_fallback(self):
+        current = state()
+        current['gameplayLedger'] = True
+        current['events'] = [{'at': current['updatedAt'], 'bot': 'Roy',
+                              'type': 'death', 'message': 'Embedded death', 'data': {}}]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / 'state.json'
+            path.write_text(json.dumps(current))
+            with patch('publish.narrate') as generate:
+                with self.assertRaises(FileNotFoundError):
+                    publish.publish(path, root / 'public', root / 'capture.mjs')
+                generate.assert_not_called()
+
+    def test_empty_fresh_world_ledger_produces_no_invented_or_embedded_facts(self):
+        current = state()
+        current['gameplayLedger'] = True
+        current['events'] = [{'at': current['updatedAt'], 'bot': 'Roy',
+                              'type': 'death', 'message': 'Embedded death', 'data': {}}]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / f'gameplay-{current["worldId"]}.jsonl').touch()
+            _, context = self.publish_in(root, current)
+        self.assertEqual(context['facts'], [])
+
+    def test_ledger_is_iterated_line_by_line_without_bulk_reading(self):
+        current = state()
+        class StreamingLedger:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                pass
+
+            def read(self, *args):
+                raise AssertionError('Bulk ledger read')
+
+            def readlines(self, *args):
+                raise AssertionError('Bulk ledger readlines')
+
+            def __iter__(self):
+                yield json.dumps({'worldId': current['worldId'],
+                                  'at': current['updatedAt'], 'type': 'death',
+                                  'bot': 'Roy', 'message': 'Died', 'data': {}}) + '\n'
+
+        with patch.object(Path, 'open', return_value=StreamingLedger()) as opened:
+            selected = publish.ledger_events(Path('/observations/state.json'), current, '')
+        self.assertEqual(len(selected), 1)
+        self.assertEqual(selected[0]['type'], 'death')
+        opened.assert_called_once_with(encoding='utf-8')
 
     def test_bad_or_undersized_camera_images_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -19,6 +19,8 @@ PHASE_TITLES = {
     'end': 'Facing the dragon', 'completed': 'After the expedition',
     'recovery': 'Back on track',
 }
+
+
 def world_identity(state):
     identity = state['worldId']
     if not isinstance(identity, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,79}', identity):
@@ -72,6 +74,22 @@ def field_notes(events):
             message = errors[-1]['message'].removeprefix('Program: ')
             notes.append(f'{bot}: Encountered a blocker — {message.splitlines()[0]}')
     return notes
+
+
+def ledger_events(state_path, state, since):
+    world_id = world_identity(state)
+    start = datetime.fromisoformat(since.replace('Z', '+00:00')) if since else None
+    end = datetime.fromisoformat(state['updatedAt'].replace('Z', '+00:00'))
+    selected = []
+    with (state_path.parent / f'gameplay-{world_id}.jsonl').open(encoding='utf-8') as ledger:
+        for line in ledger:
+            event = json.loads(line)
+            at = datetime.fromisoformat(event['at'].replace('Z', '+00:00'))
+            if (start is None or at > start) and at <= end:
+                if event['worldId'] != world_id:
+                    raise ValueError('Gameplay ledger event worldId does not match current observations')
+                selected.append(event)
+    return selected
 
 
 def diary_context(state, since):
@@ -139,6 +157,8 @@ def publish(state_path, output, capture_script):
     same_world = previous.get('worldId') == world_id
     entries = previous['entries'] if same_world else []
     since = entries[0]['observedAt'] if entries else ''
+    if state.get('gameplayLedger') is True:
+        state['events'] = ledger_events(state_path, state, since)
     narrative = narrate(diary_context(state, since))
     if narrative['worldId'] != world_id:
         raise ValueError('Diary narrative worldId does not match current observations')
