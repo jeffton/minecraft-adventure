@@ -1,0 +1,38 @@
+[Unit]
+Description=Minecraft Adventure Paper survival backend
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+User=minecraft-adventure
+Group=minecraft-adventure
+WorkingDirectory=/var/lib/minecraft-adventure/server
+ExecStart=/usr/bin/java -Xms512m -Xmx2304m -XX:ActiveProcessorCount=2 -Dpaper.disablePluginRemapping=false -jar paper.jar --nogui
+Restart=on-failure
+RestartSec=15
+KillSignal=SIGINT
+TimeoutStopSec=90
+SuccessExitStatus=0 130 143
+Slice=minecraft-adventure.slice
+MemoryMax=3G
+CPUWeight=20
+IOWeight=20
+Nice=10
+LimitNOFILE=32768
+UMask=0027
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+ReadWritePaths=/var/lib/minecraft-adventure/server
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

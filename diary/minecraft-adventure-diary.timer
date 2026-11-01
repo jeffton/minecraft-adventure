@@ -1,0 +1,11 @@
+[Unit]
+Description=Update Roycraft diary every quarter hour
+
+[Timer]
+OnCalendar=*-*-* *:00,15,30,45:00
+Persistent=true
+RandomizedDelaySec=0
+Unit=minecraft-adventure-diary.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#152a25">
+  <title>Roycraft · A shared adventure</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header><a class="brand" href="https://roybot.se/">ROYBOT <span>/ ROYCRAFT</span></a><a class="join" href="#server">Join the world <span>↗</span></a></header>
+  <main>
+    <section class="intro"><p class="eyebrow">A LIVING MINECRAFT EXPERIMENT</p><h1>Four bots.<br>One world.</h1><p class="lede">From the first log to a home of their own.<br>And one day: the Ender Dragon.</p><div class="live"><i></i><span id="updated">Finding the expedition…</span></div></section>
+    <section class="hero" aria-label="Views from the world"><img id="hero-image" alt="Bot camera from the Minecraft world" hidden><div id="image-empty">The camera follows the expedition.</div><button id="live-toggle" type="button" aria-pressed="false">Watch live ↗</button><div class="image-caption"><span id="camera-label">BOT CAMERA</span><span id="image-time"></span></div></section>
+    <section class="mission"><div><p class="eyebrow">THE NEXT MOVE</p><h2 id="objective">A shared home. A long adventure.</h2></div><div><p class="eyebrow">THE BIG PICTURE</p><p id="long-term">Survive together, build beautifully, and prepare for the End.</p></div></section>
+    <section class="crew-section"><div class="section-heading"><h2>The crew</h2><span>Different roles. Shared resources.</span></div><div class="crew" id="crew"></div></section>
+    <section class="route-section"><div class="section-heading"><h2>The road to the dragon</h2><span>Progress observed in the game. Not wishful thinking.</span></div><ol id="milestones" class="route"></ol></section>
+    <section class="journal-section"><div class="section-heading"><h2>Field notes</h2><span>A snapshot every fifteen minutes.</span></div><div id="journal"></div></section>
+    <section class="server" id="server"><div><p class="eyebrow">VISIT THE WORLD</p><h2>Drop by the building site.</h2><p>Java Edition · Survival · Normal · Whitelist</p></div><div><code>minecraft.roybot.se</code><p id="version">Game version appears with the next update.</p></div></section>
+  </main>
+  <footer><span>Roycraft / Roybot</span><p>Terra makes the plans. The bots do the work. Images show the actual world through a bot camera.</p></footer>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,37 @@
+[Unit]
+Description=Minecraft Adventure Velocity proxy (%i)
+After=network-online.target minecraft-adventure-server.service
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+User=minecraft-adventure
+Group=minecraft-adventure
+WorkingDirectory=/var/lib/minecraft-adventure/proxy-%i
+ExecStart=/usr/bin/java -Xms32m -Xmx128m -XX:ActiveProcessorCount=1 -jar /var/lib/minecraft-adventure/bin/velocity.jar
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=30
+SuccessExitStatus=0 130 143
+Slice=minecraft-adventure.slice
+MemoryMax=256M
+CPUWeight=20
+IOWeight=20
+Nice=10
+LimitNOFILE=8192
+UMask=0027
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+ReadWritePaths=/var/lib/minecraft-adventure/proxy-%i
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

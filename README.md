@@ -1,0 +1,53 @@
+# Roycraft
+
+A cooperative survival expedition at **minecraft.roybot.se**, with a field journal and read-only live bot camera at **https://minecraft.roybot.se/**.
+
+## Runtime
+
+- Paper 26.3 / Java 25: ordinary world generation, survival, normal difficulty, enforced historical whitelist.
+- Public Velocity requires Microsoft authentication. A separate loopback-only Velocity admits the four offline bot identities. Both use secret-authenticated modern forwarding to the loopback backend.
+- Mineflayer/Mindcraft: Roy builds, Spruce supplies timber, Flint mines and smiths, Moss supplies food. Client protocol 1.21.4 is translated by ViaBackwards and matches the renderer's actual block definitions.
+- Codex Terra (`gpt-5.6-terra`) uses Pi Durable 1.4.0 and SQLite. Shared missions are reconsidered every five minutes. Model requests are serialized and paced at least twenty seconds apart.
+- Immediate movement, mining, combat, eating and retreat run locally. Terra selects actions and revises bounded declarative programs; arbitrary generated JavaScript and host commands are disabled.
+- A systemd timer publishes observed status and an actual bot-camera WebP every fifteen minutes. The live viewer renders in visitors' browsers and has an eight-viewer limit. Neither interface controls the bots.
+
+## Progression
+
+Food and temporary shelter → timber-and-stone lodge → renewable supplies and iron equipment → diamond pickaxe and obsidian → Nether supplies → Eyes of Ender and stronghold → crystals and dragon.
+
+The lodge uses an explicit survival-built blueprint: stone skirt, timber posts, recessed windows, pitched roof, overhangs, porch and lighting. Portal construction, Eye tracking, portal entry and End combat use authored gameplay skills. Milestones are based on observed inventory, blocks, dimensions or entity-death events, not a model claiming success. A completed dragon run is an expedition objective, not an integration-test assertion.
+
+Strategy: [main adventure](https://minecraft.wiki/w/Tutorial:Complete_main_adventure), [Nether survival](https://minecraft.wiki/w/Tutorial:Nether_survival), [dragon combat](https://minecraft.wiki/w/Tutorial:Defeating_the_ender_dragon).
+
+## Isolation
+
+| Component | User | Listener |
+| --- | --- | --- |
+| Paper | `minecraft-adventure` | `127.0.0.1:25566` |
+| Public Velocity | `minecraft-adventure` | TCP `25565` |
+| Local bot Velocity | `minecraft-adventure` | `127.0.0.1:25567` |
+| Bots / private Mindcraft UI / viewer | `minecraft-bots` | loopback `8930` / `8931` |
+| Terra planner | `minecraft-planner` | `127.0.0.1:8766` |
+| Diary / capture browser | `minecraft-diary` | no listener |
+
+The narrow root credential broker only resolves Codex access authentication through Batty's canonical credential lock. It runs no gameplay or model harness. Bots cannot read the OAuth store, forwarding secret or planner database. A separate shared project group carries observations and mission files; the diary has read-only observation ACLs.
+
+Gameplay state lives under `/var/lib/minecraft-adventure/`; the Pi database under `/var/lib/minecraft-planner/`; public journal files under `/var/www/roybot.se/minecraft/`. Deployed code is root-owned under `/opt/minecraft-adventure/` and `/opt/minecraft-mindcraft/`.
+
+The shared `minecraft-adventure.slice` has a 4 GiB ceiling and low CPU/I/O priority. Only TCP 25565 is opened publicly. Batty's service, data and existing scheduled jobs are independent.
+
+## Operations
+
+```sh
+systemctl status minecraft-adventure-server minecraft-adventure-proxy@public minecraft-adventure-proxy@local
+systemctl status minecraft-adventure-bots minecraft-planner minecraft-planner-auth
+systemctl list-timers minecraft-adventure-diary.timer
+journalctl -u minecraft-adventure-bots -u minecraft-planner -n 80
+curl -fsS http://127.0.0.1:8766/healthz
+```
+
+Install order: `server/`, `planner/`, `bots/`, then `diary/`. Each component contains its installer and tests. The diary installer requires the existing Let's Encrypt certificate for `minecraft.roybot.se`; HTTP renewal challenges use `/var/www/roybot.se`. The legacy `/minecraft/` route redirects to the subdomain.
+
+The Mineflayer compatibility hook closes real client ticks and teleport responses with `tick_end`. Mindcraft's separate delayed-movement wrapper is disabled because it breaks those packet boundaries. Source hooks verify unique upstream anchors and fail visibly if the pinned upstream source changes.
+
+Server-side Java processes, bots, planner and renderers all run unprivileged. Old Minecraft worlds and their immutable Storage Box archive are not used or modified by this expedition.

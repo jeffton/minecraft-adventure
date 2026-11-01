@@ -1,0 +1,27 @@
+[Unit]
+Description=Roycraft gameplay diary and bot-camera snapshot
+After=network.target minecraft-adventure-bots.service
+
+[Service]
+Type=oneshot
+User=minecraft-diary
+Group=minecraft-diary
+WorkingDirectory=/opt/minecraft-adventure/diary
+ExecStart=/usr/bin/python3 /opt/minecraft-adventure/diary/publish.py
+TimeoutStartSec=85
+MemoryMax=768M
+Slice=minecraft-adventure.slice
+CPUWeight=10
+IOWeight=10
+Nice=15
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+CapabilityBoundingSet=
+ReadWritePaths=/var/www/roybot.se/minecraft
+Environment=HOME=/tmp XDG_CONFIG_HOME=/tmp/roycraft-config XDG_CACHE_HOME=/tmp/roycraft-cache
+UMask=0022

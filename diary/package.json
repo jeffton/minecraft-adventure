@@ -1,0 +1,11 @@
+{
+  "name": "roycraft-diary",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "python3 -m unittest discover -s . -p 'test_*.py' && node --check app.js && node --check capture.mjs"
+  },
+  "dependencies": {
+    "playwright-core": "1.64.1"
+  }
+}

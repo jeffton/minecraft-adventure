@@ -1,0 +1,47 @@
+[Unit]
+Description=Minecraft Adventure bounded Terra planner and Mindcraft relay
+After=network-online.target minecraft-planner-auth.service
+Wants=network-online.target
+Requires=minecraft-planner-auth.service
+
+[Service]
+Type=simple
+User=minecraft-planner
+Group=minecraft-planner
+SupplementaryGroups=minecraft-adventure-project
+WorkingDirectory=/opt/minecraft-adventure/planner
+EnvironmentFile=/etc/minecraft-adventure/planner.env
+Environment=PLANNER_STATE_DIR=/var/lib/minecraft-planner
+Environment=PLANNER_AUTH_SOCKET=/run/minecraft-planner-auth/auth.sock
+Environment=PLANNER_OBSERVED_FILE=/var/lib/minecraft-adventure/observations/state.json
+Environment=PLANNER_MISSION_FILE=/var/lib/minecraft-adventure/control/mission.json
+Environment=NODE_OPTIONS=--max-old-space-size=384
+ExecStart=/usr/bin/node server.mjs
+StateDirectory=minecraft-planner
+StateDirectoryMode=0750
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=300
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/minecraft-planner /var/lib/minecraft-adventure/control
+UMask=0027
+MemoryHigh=384M
+MemoryMax=512M
+CPUQuota=50%
+TasksMax=128
+Slice=minecraft-adventure.slice
+
+[Install]
+WantedBy=multi-user.target

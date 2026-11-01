@@ -1,0 +1,64 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, mkdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { EventEmitter } from 'node:events';
+import { createRequire } from 'node:module';
+import { viewerAllowed } from '../viewer-policy.mjs';
+
+process.env.ADVENTURE_ROOT = mkdtempSync(join(tmpdir(), 'roy-minecraft-integration-'));
+const { setProgramMode } = await import('../bootstrap.mjs');
+const { Prompter } = await import('/opt/minecraft-mindcraft/src/models/prompter.js');
+const { createObserver, CONTROL, atomicJson } = await import('../runtime.mjs');
+const require = createRequire('/opt/minecraft-mindcraft/package.json');
+const { Vec3 } = require('vec3');
+
+test('model response already received cannot execute after a program takes ownership during log save', async () => {
+  let logStarted;
+  const entered = new Promise(resolve => { logStarted = resolve; });
+  let releaseLog;
+  const logGate = new Promise(resolve => { releaseLog = resolve; });
+  const prompter = Object.assign(Object.create(Prompter.prototype), {
+    agent: { name: 'Roy' }, profile: { conversing: 'Return one command.' }, cooldown: 0,
+    chat_model: { sendRequest: async () => '!collectBlocks("oak_log", 1)' },
+    _saveLog: async () => { logStarted(); await logGate; }
+  });
+  setProgramMode('Roy', false);
+  const pending = prompter.promptConvo([]);
+  await entered;
+  setProgramMode('Roy', true);
+  releaseLog();
+  assert.equal(await pending, '', 'the stale command is withheld at the final handoff');
+  setProgramMode('Roy', false);
+});
+
+test('a published Terra program starts locally without another chat inference', async () => {
+  mkdirSync(CONTROL, { recursive: true });
+  atomicJson(join(CONTROL, 'mission.json'), { id: 'observed-program-1', phase: 'survival', objective: 'Earn supplies', home: null,
+    bots: Object.fromEntries(['Roy', 'Spruce', 'Flint', 'Moss'].map(name => [name, { task: 'Gather supplies', program: [{ action: 'ensure_item', item: 'oak_log', count: 1 }] }])) });
+  let localRuns = 0;
+  let chatStarts = 0;
+  const bot = Object.assign(new EventEmitter(), {
+    _client: { state: 'play' }, entity: { position: new Vec3(0, 64, 0), velocity: new Vec3(0, 0, 0), onGround: true },
+    pathfinder: { isMoving: () => false, isMining: () => false, isBuilding: () => false }, getControlState: () => false, game: { dimension: 'overworld' }, health: 20, food: 20,
+    inventory: { items: () => [] }, entities: {}, registry: { blocksByName: {}, biomes: { 0: { name: 'plains' } } },
+    world: { getBiome: () => 0 }, findBlocks: () => [], blockAt: () => null
+  });
+  const agent = { name: 'Roy', bot, isIdle: () => true, actions: { currentActionLabel: '' },
+    self_prompter: { prompt: '', isStopped: () => true, isActive: () => false, start: () => chatStarts++ } };
+  createObserver(agent, { programMode() {}, cancelChat() {}, runProgram: async () => { localRuns++; return 'Program completed'; } });
+  try {
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(localRuns, 1);
+    assert.equal(chatStarts, 0);
+  } finally { bot.emit('end', 'test finished'); }
+});
+
+test('eight public viewers cannot consume the reserved local diary capture slot', () => {
+  const fullPublic = Array(8).fill(true);
+  assert.equal(viewerAllowed(true, fullPublic), false);
+  assert.equal(viewerAllowed(false, fullPublic), true);
+  assert.equal(viewerAllowed(false, [...fullPublic, false]), false);
+  assert.equal(viewerAllowed(true, [false, ...Array(7).fill(true)]), true);
+});

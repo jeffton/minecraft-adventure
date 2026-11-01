@@ -1,0 +1,40 @@
+[Unit]
+Description=Cooperative Minecraft survival agents (Mindcraft and Mineflayer)
+After=network.target minecraft-adventure-server.service minecraft-adventure-proxy@local.service minecraft-planner.service
+Requires=minecraft-adventure-proxy@local.service minecraft-planner.service
+
+[Service]
+Type=simple
+User=minecraft-bots
+Group=minecraft-bots
+SupplementaryGroups=minecraft-adventure-project
+WorkingDirectory=/var/lib/minecraft-adventure/bots
+EnvironmentFile=/etc/minecraft-adventure/bots.env
+Environment=ADVENTURE_ROOT=/var/lib/minecraft-adventure
+Environment=BOT_DATA_DIR=/var/lib/minecraft-adventure/bots
+Environment="NODE_OPTIONS=--max-old-space-size=192 --import=/opt/minecraft-adventure/bots/bootstrap.mjs"
+ExecStart=/opt/node-minecraft22/bin/node /opt/minecraft-adventure/bots/launch.mjs
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=15
+KillMode=control-group
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/minecraft-adventure/bots /var/lib/minecraft-adventure/control /var/lib/minecraft-adventure/observations
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+IPAddressDeny=any
+IPAddressAllow=localhost
+MemoryHigh=1100M
+MemoryMax=1400M
+TasksMax=128
+Slice=minecraft-adventure.slice
+
+[Install]
+WantedBy=multi-user.target

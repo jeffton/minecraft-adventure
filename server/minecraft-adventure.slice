@@ -1,0 +1,8 @@
+[Unit]
+Description=Minecraft Adventure resource budget
+
+[Slice]
+MemoryHigh=3584M
+MemoryMax=4G
+CPUWeight=20
+IOWeight=20

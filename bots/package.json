@@ -1,0 +1,9 @@
+{
+  "name": "roy-minecraft-bots",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.mjs progression.test.mjs program.test.mjs",
+    "start": "node launch.mjs"
+  }
+}

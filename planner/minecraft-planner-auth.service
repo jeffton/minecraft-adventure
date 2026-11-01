@@ -1,0 +1,41 @@
+[Unit]
+Description=Minecraft Adventure narrow Codex credential broker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=minecraft-planner
+WorkingDirectory=/opt/minecraft-adventure/planner
+Environment=BATTY_PROVIDER_AUTH_PATH=/root/github/.batty/auth.json
+Environment=PLANNER_AUTH_SOCKET=/run/minecraft-planner-auth/auth.sock
+Environment=NODE_OPTIONS=--max-old-space-size=192
+ExecStart=/usr/bin/node credential-broker.mjs
+RuntimeDirectory=minecraft-planner-auth
+RuntimeDirectoryMode=0750
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/root/github/.batty
+InaccessiblePaths=/root/github/.batty/environment.json /var/lib/batty2
+UMask=0007
+MemoryMax=256M
+CPUQuota=25%
+TasksMax=64
+Slice=minecraft-adventure.slice
+
+[Install]
+WantedBy=multi-user.target
