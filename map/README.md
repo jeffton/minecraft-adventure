@@ -2,6 +2,8 @@
 
 [Public map](https://minecraft.roybot.se/map/) · embedded in the adventure diary.
 
+The embedded renderer mounts only when the map intersects the viewport and unloads when it leaves. Chrome’s proximity-based iframe lazy loading is not used. Offline bots use explicit colored location dots rather than missing Mojang skin images; their names and positions remain server-sourced.
+
 BlueMap 5.29 supports Paper 26.3 and Java 25. It reads saved chunks without generating terrain. Each dimension has its own map; `min-inhabited-time: 1` excludes generated chunks that players have never visited. Visited means Minecraft's chunk habitation counter, not line-of-sight discovery. Nether's ceiling is cut away for navigation.
 
 All connected players, including the four local bots, have live server-sourced markers. Selecting a player follows them; switching dimensions retains real world coordinates, not an Overworld/Nether coordinate conversion. Invisible/spectator players are also public on this deliberately public map.
@@ -16,7 +18,7 @@ Rendering uses one lowest-priority thread. Terrain refresh follows saved world c
 
 ## Verification
 
-`python3 -m unittest discover -s map -p 'test_*.py'` checks deployment/configuration boundaries. `node --test map/test_*.mjs` reproduces the upstream camera-height failure and checks player-following, dimension resets and connection lifecycle. `map/test-live.mjs` runs the public map smoke using nonroot Chrome, verifying real rendered terrain, live markers, desktop/mobile layout and dimension separation. It requires the diary's installed Playwright dependency.
+`python3 -m unittest discover -s map -p 'test_*.py'` checks deployment/configuration boundaries. `node --test map/test_*.mjs` reproduces the upstream camera-height failure and checks player-following, dimension resets and connection lifecycle. `map/test-live.mjs` runs the public map smoke using nonroot Chrome, verifying real rendered terrain, live markers, desktop/mobile layout and dimension separation. It requires the diary's installed Playwright dependency. `map/test-viewport-live.mjs` independently verifies zero map requests above the fold, actual terrain and decoded marker PNGs on entry, and destruction of the map document on exit at desktop/mobile widths.
 
 BlueMap 5.29 skips terrain-height correction for tilted orthographic cameras. The small `isometric.js` hook supplies that missing calculation and sets dimension resets to an isometric projection; it does not modify game state or replace the renderer. `connection.js` closes each dimension’s event stream before BlueMap disposes that map, preventing stale tile events from dereferencing unloaded geometry. Its badge reports live, reconnecting and offline states.
 

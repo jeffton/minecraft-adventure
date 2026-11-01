@@ -2,7 +2,8 @@
 set -euo pipefail
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 # Install the plugin separately with map/install.py. This deployment never restarts Paper.
-install -m 0644 "$root/diary/index.html" "$root/diary/map.css" /var/www/roybot.se/minecraft/
+python3 "$root/map/marker_icons.py"
+install -m 0644 "$root/diary/index.html" "$root/diary/map.css" "$root/diary/map.js" /var/www/roybot.se/minecraft/
 install -m 0644 "$root/diary/minecraft.roybot.se.conf" /etc/nginx/sites-available/minecraft.roybot.se
 nginx -t
 systemctl reload nginx

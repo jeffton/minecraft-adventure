@@ -11,7 +11,7 @@ done
 npm ci --ignore-scripts --prefix /opt/minecraft-adventure/diary
 chmod -R a+rX /opt/minecraft-adventure/diary/node_modules
 install -d -o minecraft-diary -g minecraft-diary -m 0755 /var/www/roybot.se/minecraft
-for file in index.html style.css app.js map.css; do
+for file in index.html style.css app.js map.css map.js; do
     install -m 0644 "$source_dir/$file" /var/www/roybot.se/minecraft/
 done
 test -r /etc/letsencrypt/live/minecraft.roybot.se/fullchain.pem

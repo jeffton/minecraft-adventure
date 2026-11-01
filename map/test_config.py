@@ -38,8 +38,10 @@ class MapBoundaryTests(unittest.TestCase):
 
     def test_map_embed_does_not_start_another_game_camera(self):
         html = (ROOT / "diary/index.html").read_text()
-        self.assertIn('src="/map/"', html)
-        self.assertIn('loading="lazy"', html)
+        self.assertIn('data-src="/map/"', html)
+        self.assertNotIn('<iframe src="/map/"', html)
+        self.assertNotIn('loading="lazy"', html)
+        self.assertIn('src="map.js"', html)
         self.assertIn('title="Isometric map and live player positions"', html)
         self.assertNotIn('src="/live/"', html)
 

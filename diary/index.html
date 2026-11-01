@@ -22,7 +22,7 @@
     </section>
     <section class="world-map-section" aria-label="Explored world map">
       <div class="section-heading"><h2>The explored world</h2><a class="map-open" href="/map/" target="_blank" rel="noopener">Open full map ↗</a></div>
-      <div class="map-panel"><iframe src="/map/" title="Isometric map and live player positions" loading="lazy" allow="fullscreen" referrerpolicy="same-origin"></iframe></div>
+      <div class="map-panel"><iframe id="world-map" data-src="/map/" title="Isometric map and live player positions" allow="fullscreen" referrerpolicy="same-origin"></iframe></div>
       <p class="map-note">Drag to explore · Scroll or pinch to zoom · Select a player to follow. Only visited chunks are mapped; terrain updates after the world saves. Player positions are live. Choose a dimension from the map menu; unvisited dimensions are empty.</p>
     </section>
     <section class="mission"><div><p class="eyebrow">THE NEXT MOVE</p><h2 id="objective">A shared home. A long adventure.</h2></div><div><p class="eyebrow">THE BIG PICTURE</p><p id="long-term">Survive together, build beautifully, and prepare for the End.</p></div></section>
@@ -33,5 +33,6 @@
   </main>
   <footer><span>Roycraft / Roybot</span><p>Terra makes the plans. The bots do the work. Images show the actual world through a bot camera.</p></footer>
   <script type="module" src="app.js"></script>
+  <script type="module" src="map.js"></script>
 </body>
 </html>

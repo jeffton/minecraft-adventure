@@ -9,6 +9,8 @@ from pathlib import Path
 import pwd
 import urllib.request
 
+from marker_icons import install as install_marker_icons
+
 VERSION = "5.29"
 SHA256 = "7bf475936c26107d476c63151c76d5b49e865eebeada12c9e7d92155de877b9f"
 SERVER = Path("/var/lib/minecraft-adventure/server")
@@ -114,6 +116,7 @@ def install():
         asset.write_bytes(Path(__file__).with_name(filename).read_bytes())
         os.chown(asset, account.pw_uid, account.pw_gid)
         asset.chmod(0o640)
+    install_marker_icons(web, account.pw_uid, account.pw_gid)
     plugin = SERVER / "plugins/BlueMap.jar"
     plugin.write_bytes(jar)
     plugin.chmod(0o640)
