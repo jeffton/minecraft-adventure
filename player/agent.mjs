@@ -6,7 +6,7 @@ import { AssistantMessageEventStream, Type } from '@earendil-works/pi-ai';
 import { createModels } from '@earendil-works/pi-ai/models';
 import { openaiCodexProvider } from '@earendil-works/pi-ai/providers/openai-codex';
 import {
-  AssistantEntry, Harness, createRegistry, defineDoc, defineExtension, defineTool,
+  AssistantEntry, GenerationTask, Harness, createRegistry, defineDoc, defineExtension, defineTool, hook,
 } from '@earendil-works/pi-durable';
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
 
@@ -83,9 +83,11 @@ function nativeResult(value) {
  * tools: plain {name, description, parameters: JSONSchema, execute(args, api, context)}[]
  * or native Pi tool definitions. Plain results become tool text; native results pass through.
  * step() does not own the game loop: action handles/programs keep running during model calls.
+ * getFeedback(): null | {key, needsAction, observation, images?}; keys identify
+ * state changes, not clock ticks. Fresh idle feedback can continue a native run.
  */
 export async function openPlayerAgent({
-  stateDir, worldId, socketPath, tools, instructions = '', onEvent = () => {}, models,
+  stateDir, worldId, socketPath, tools, instructions = '', onEvent = () => {}, models, getFeedback,
 }) {
   if (typeof worldId !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(worldId)) {
     throw new Error('worldId must be a safe, nonempty world identifier');
@@ -97,6 +99,7 @@ export async function openPlayerAgent({
   let modelCalls = 0;
   let diaryCalls = 0;
   let toolCalls = 0;
+  let lastFeedbackKey;
   let busy = false;
   let narrating = false;
   let closed = false;
@@ -118,7 +121,24 @@ export async function openPlayerAgent({
       }
     },
   }));
-  const player = defineExtension({ name: 'minecraft.player', tools: registeredTools });
+  const player = defineExtension({
+    name: 'minecraft.player', tools: registeredTools,
+    hooks: [hook(GenerationTask, {
+      async onYield() {
+        if (!getFeedback || modelCalls >= MAX_MODEL_CALLS - 1 || toolCalls >= MAX_TOOL_CALLS - 1) return;
+        const feedback = await getFeedback();
+        if (!feedback?.needsAction || feedback.key === lastFeedbackKey ||
+            feedback.observation.action?.state === 'running' || feedback.observation.reflexOwner) return;
+        lastFeedbackKey = feedback.key;
+        const text = JSON.stringify({
+          worldId, observation: feedback.observation,
+          feedback: { key: feedback.key, instruction: 'Use this fresh server-backed state to start the next useful action.' },
+        });
+        emit({ type: 'feedback_continue', key: feedback.key });
+        return { continue: feedback.images?.length ? [{ type: 'text', text }, ...feedback.images] : text };
+      },
+    })],
+  });
   registry.install(player);
   // Enforcement belongs at the model boundary: Pi hooks report exceptions but do
   // not block generation. Never rely on an observational hook for a budget.
@@ -237,6 +257,7 @@ export async function openPlayerAgent({
         busy = true;
         modelCalls = 0;
         toolCalls = 0;
+        lastFeedbackKey = undefined;
         try {
           const text = JSON.stringify({ worldId, observation });
           const result = await run(root, images.length ? [{ type: 'text', text }, ...images] : text, PLAYER_MODEL);

@@ -13,7 +13,7 @@ const answer = text => fauxAssistantMessage(text);
 const call = (name, args) => fauxAssistantMessage(fauxToolCall(name, args), { stopReason: 'toolUse' });
 const schema = { type: 'object', properties: { code: { type: 'string' } }, required: ['code'], additionalProperties: false };
 
-async function fixture(responses, tools = [], contextWindow = 131072) {
+async function fixture(responses, tools = [], contextWindow = 131072, getFeedback) {
   const stateDir = await mkdtemp(path.join(tmpdir(), 'minecraft-player-agent-'));
   const models = createModels();
   const provider = fauxProvider({
@@ -28,7 +28,8 @@ async function fixture(responses, tools = [], contextWindow = 131072) {
   models.setProvider(provider.provider);
   const events = [];
   const open = (worldId = 'fresh-one') => openPlayerAgent({
-    stateDir, worldId, models, tools, instructions: 'Runtime API documentation.', onEvent: event => events.push(event),
+    stateDir, worldId, models, tools, getFeedback,
+    instructions: 'Runtime API documentation.', onEvent: event => events.push(event),
   });
   return { open, calls, events, provider, stateDir };
 }
@@ -227,6 +228,121 @@ test('Terra cannot start nonexistent tools or loop through a narration tool stor
     assert.equal(f.calls.length, 1);
     assert.ok(f.events.some(event => event.category === 'diary_tools_forbidden'));
     assert.equal((await agent.narrate({ events: ['one new event'] })).text, 'A short factual paragraph.');
+  } finally { await agent.close(); }
+});
+
+test('completion during model thinking continues the same native step with persisted fresh facts and real images', async () => {
+  const waiting = deferred();
+  const release = deferred();
+  let feedback = null;
+  let starts = 0;
+  const image = { type: 'image', mimeType: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6S8sAAAAASUVORK5CYII=' };
+  const f = await fixture([
+    call('execute', { code: 'first useful local program' }),
+    async () => { waiting.resolve(); await release.promise; return answer('The first program is still running.'); },
+    call('execute', { code: 'next useful local program' }),
+    answer('The next program is working.'),
+    answer('I remember the actual completion.'),
+  ], [{
+    name: 'execute', description: 'Start useful asynchronous work.', parameters: schema,
+    execute: async () => {
+      const id = `action-${++starts}`;
+      feedback = { key: `${id}:running`, needsAction: false, observation: { action: { id, state: 'running' }, reflexOwner: null } };
+      return { actionId: id };
+    },
+  }], 131072, () => feedback);
+  let agent = await f.open();
+  try {
+    const pending = agent.step({ action: null, life: 0 });
+    await waiting.promise;
+    feedback = {
+      key: 'action-1:completed', needsAction: true,
+      observation: { action: { id: 'action-1', state: 'completed' }, notes: { outcome: 'server-confirmed-completion-marker' }, reflexOwner: null },
+      images: [image],
+    };
+    release.resolve();
+    const result = await pending;
+    assert.equal(starts, 2);
+    assert.equal(result.modelCalls, 4);
+    assert.equal(result.text, 'The next program is working.');
+    const continuation = f.calls[2].context.messages.filter(message => message.role === 'user').at(-1);
+    assert.deepEqual(continuation.content.find(block => block.type === 'image'), image);
+    const input = JSON.parse(continuation.content.find(block => block.type === 'text').text);
+    assert.equal(input.observation.action.state, 'completed');
+    assert.equal(input.observation.notes.outcome, 'server-confirmed-completion-marker');
+    assert.equal(input.feedback.key, 'action-1:completed');
+    assert.equal(f.events.filter(event => event.type === 'feedback_continue').length, 1);
+    await agent.close();
+    agent = await f.open();
+    await agent.step({ action: { id: 'action-2', state: 'running' } });
+    assert.match(JSON.stringify(f.calls[4].context), /server-confirmed-completion-marker/);
+  } finally { release.resolve(); await agent.close(); }
+});
+
+test('unchanged idle feedback is injected once per step, not an unbounded yield loop', async () => {
+  const feedback = { key: 'same-completed-action', needsAction: true, observation: { action: { state: 'completed' }, reflexOwner: null } };
+  const f = await fixture([
+    answer('Initial answer.'), answer('No productive next action found.'),
+    answer('Another initial answer.'), answer('No new change.'),
+  ], [], 131072, () => feedback);
+  const agent = await f.open();
+  try {
+    assert.equal((await agent.step({})).modelCalls, 2);
+    assert.equal((await agent.step({})).modelCalls, 2);
+    assert.equal(f.events.filter(event => event.type === 'feedback_continue').length, 2);
+  } finally { await agent.close(); }
+});
+
+for (const [name, feedback] of [
+  ['absent', null],
+  ['not needed', { key: 'idle', needsAction: false, observation: { action: null } }],
+  ['running authored action', { key: 'running', needsAction: true, observation: { action: { state: 'running' } } }],
+  ['emergency reflex owner', { key: 'emergency', needsAction: true, observation: { action: null, reflexOwner: 'defending' } }],
+]) {
+  test(`yield finishes normally when feedback is ${name}`, async () => {
+    const f = await fixture([answer('Finished thinking.')], [], 131072, () => feedback);
+    const agent = await f.open();
+    try {
+      assert.equal((await agent.step({})).modelCalls, 1);
+      assert.equal(f.events.filter(event => event.type === 'feedback_continue').length, 0);
+    } finally { await agent.close(); }
+  });
+}
+
+test('changing idle feedback stops continuing before the native model budget is exhausted', async () => {
+  let key = 0;
+  const f = await fixture(Array.from({ length: 7 }, () => answer('Still choosing.')), [], 131072, () => ({
+    key: `new-state-${++key}`, needsAction: true, observation: { action: null, reflexOwner: null },
+  }));
+  const agent = await f.open();
+  try {
+    const result = await agent.step({});
+    assert.equal(result.modelCalls, 7);
+    assert.equal(f.events.filter(event => event.type === 'feedback_continue').length, 6);
+    assert.equal(f.events.filter(event => event.type === 'model_error').length, 0);
+  } finally { await agent.close(); }
+});
+
+test('feedback continuation preserves tool budget headroom instead of requesting another tool round', async () => {
+  let executions = 0;
+  let feedbackReads = 0;
+  const f = await fixture([
+    fauxAssistantMessage(Array.from({ length: 11 }, (_, i) => fauxToolCall('inspect', {}, { id: `inspect-${i}` })), { stopReason: 'toolUse' }),
+    answer('Finished this bounded inspection.'),
+  ], [{
+    name: 'inspect', description: 'Inspect one prerequisite.', parameters: { type: 'object', properties: {} },
+    execute: async () => { executions++; return 'observed'; },
+  }], 131072, () => {
+    feedbackReads++;
+    return { key: 'completed', needsAction: true, observation: { action: null, reflexOwner: null } };
+  });
+  const agent = await f.open();
+  try {
+    const result = await agent.step({});
+    assert.equal(executions, 11);
+    assert.equal(result.toolCalls, 11);
+    assert.equal(result.modelCalls, 2);
+    assert.equal(feedbackReads, 0);
   } finally { await agent.close(); }
 });
 
