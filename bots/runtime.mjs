@@ -84,6 +84,7 @@ export function createObserver(agent, controls = {}) {
   let lastSurvey = 0;
   let error = null;
   let errorCount = 0;
+  let foodMissing = false;
   let programRunning = false;
   let repairRunning = false;
   let programId = null;
@@ -101,8 +102,16 @@ export function createObserver(agent, controls = {}) {
   let serverCorrections = 0;
   bot.on('physicsTick', () => { physicsTicks++; });
   bot.on('forcedMove', () => { serverCorrections++; });
-  bot.on('autoeat_finished', item => emit('eat', `Ate earned ${item.name}; food ${bot.food}/20, health ${bot.health}/20.`));
-  bot.on('autoeat_error', recordError);
+  bot.on('autoeat_finished', item => {
+    foodMissing = false;
+    emit('eat', `Ate earned ${item.name}; food ${bot.food}/20, health ${bot.health}/20.`);
+  });
+  bot.on('autoeat_error', error => {
+    if (error.message !== 'No food found.') return recordError(error);
+    // An empty food inventory is observed state, not a failed gameplay action.
+    if (!foodMissing) emit('food', 'No edible food available; forage or cook owned supplies.');
+    foodMissing = true;
+  });
   bot.on('death', () => emit('death', 'Died in survival; items remain in the world.'));
   bot.on('respawn', () => {
     // Completed preparation cannot survive a death: tools and supplies were dropped.

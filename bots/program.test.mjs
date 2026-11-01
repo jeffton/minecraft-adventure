@@ -324,6 +324,21 @@ test('gather updates desired state after each block, replay adds nothing', async
     assert.equal(f.calls.filter(call => call[0] === 'gather').length, 2);
 });
 
+test('regroup delegates distant home travel to the loaded-horizon navigator', async () => {
+    const f = fixture([{ action: 'regroup' }]);
+    const home = { x: 200, y: 64, z: 0, dimension: 'overworld' };
+    f.setHome(home);
+    let navigated = false;
+    f.helpers.navigateHome = async (bot, target, check) => {
+        assert.equal(target, home);
+        check();
+        navigated = true;
+        Object.assign(bot.entity.position, { x: 200, y: 64, z: 0 });
+    };
+    await f.run();
+    assert.equal(navigated, true);
+});
+
 test('home footprint is not selected as a resource', async () => {
     const f = fixture([ensure('oak_log', 1)]);
     f.setHome({ x: 0, y: 64, z: 0, dimension: 'overworld' });
@@ -428,6 +443,26 @@ test('food preparation approaches the nearest observed animal beyond the combat 
     };
     await f.run();
     assert.equal(f.amount('mutton'), 2);
+});
+
+test('food eaten by the survival reflex is real hunting progress, not a blocked program', async () => {
+    const f = fixture([ensure('mutton', 1)], {}, 'Moss');
+    f.bot.food = 0;
+    f.bot.entities = {
+        1: { name: 'sheep', position: { x: 5, y: 64, z: 0 } },
+        2: { name: 'sheep', position: { x: 8, y: 64, z: 0 } }
+    };
+    let hunted = 0;
+    f.skills.attackEntity = async (bot, animal) => {
+        delete f.bot.entities[++hunted];
+        f.bot.food += 2;
+        if (hunted === 2) f.add('mutton', 1);
+        return true;
+    };
+    await f.run();
+    assert.equal(hunted, 2);
+    assert.equal(f.bot.food, 4);
+    assert.equal(f.amount('mutton'), 1);
 });
 
 test('hunting without observed food drops cannot claim recovery success', async () => {

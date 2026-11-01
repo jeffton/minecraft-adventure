@@ -162,10 +162,11 @@ export async function executeProgram(agent, skills, helpers) {
                 if (bot.entity.position.distanceTo(animal.position) > 20) await operation(() => helpers.approachAnimal(agent, animal));
                 if (++gathered > 64) throw new Error('Program reached its 64-resource gathering budget.');
                 const before = inventoryCount(bot, item);
+                const foodBefore = bot.food;
                 // Attack the observed passive animal directly. attackNearest disables
                 // cowardice; food gathering must remain interruptible by nearby hostiles.
                 await operation(() => skills.attackEntity(bot, animal, true));
-                if (inventoryCount(bot, item) <= before) throw new Error(`Hunting ${MEAT[item]} yielded no observed ${item}; stop and re-observe.`);
+                if (inventoryCount(bot, item) <= before && bot.food <= foodBefore) throw new Error(`Hunting ${MEAT[item]} yielded no observed ${item} or eaten food; stop and re-observe.`);
             }
             return;
         }
@@ -252,7 +253,7 @@ export async function executeProgram(agent, skills, helpers) {
                 const home = helpers.getHome();
                 if (!home) throw new Error('Cannot regroup before shared home is chosen.');
                 if (home.dimension !== bot.game.dimension) throw new Error('Shared home is in another dimension; use an authored portal action.');
-                if (bot.entity.position.distanceTo(home) > 3) await operation(() => skills.goToPosition(bot, home.x, home.y, home.z, 3));
+                if (bot.entity.position.distanceTo(home) > 3) await operation(() => helpers.navigateHome(bot, home, check));
                 if (bot.entity.position.distanceTo(home) > 4) throw new Error('Regroup did not reach the shared home.');
             }
             check();
@@ -265,7 +266,7 @@ export async function executeProgram(agent, skills, helpers) {
 export function registerPrograms(actionsList, skills, helpers = {}) {
     actionsList.push({
         name: '!runProgram',
-        description: 'Execute the current Terra-authored declarative program using earned resources. Rechecks inventory, stops on mission revisions, and reports unsupported requirements. No arbitrary code.',
+        description: 'Execute the current shared declarative program using earned resources. Rechecks inventory, stops on mission revisions, and reports unsupported requirements. No arbitrary code.',
         perform: async agent => {
             if (typeof helpers.getMission !== 'function' || typeof helpers.getHome !== 'function') throw new Error('Program mission/home helpers are not registered.');
             let message;

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { EventEmitter } from 'node:events';
@@ -48,11 +48,30 @@ test('a published program starts locally and rechecks dropped prerequisites afte
   });
   const agent = { name: 'Roy', bot, isIdle: () => true, actions: { currentActionLabel: '' },
     self_prompter: { prompt: '', isStopped: () => true, isActive: () => false, start: () => chatStarts++ } };
-  createObserver(agent, { programMode() {}, cancelChat() {}, runProgram: async () => { localRuns++; return 'Program completed'; } });
+  const observer = createObserver(agent, { programMode() {}, cancelChat() {}, runProgram: async () => { localRuns++; return 'Program completed'; } });
   try {
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(localRuns, 1);
     assert.equal(chatStarts, 0);
+    bot.food = 0;
+    for (let index = 0; index < 5; index++) bot.emit('autoeat_error', new Error('No food found.'));
+    observer.publish();
+    const observed = JSON.parse(readFileSync(join(process.env.ADVENTURE_ROOT, 'observations', 'Roy.json'), 'utf8'));
+    assert.equal(observed.error, null, 'missing food must not invalidate a successful preparation action');
+    assert.equal(observed.events.filter(event => event.type === 'food').length, 1);
+    bot.food = 2;
+    bot.emit('autoeat_finished', { name: 'mutton' });
+    bot.emit('autoeat_error', new Error('No food found.'));
+    observer.publish();
+    const afterMeal = JSON.parse(readFileSync(join(process.env.ADVENTURE_ROOT, 'observations', 'Roy.json'), 'utf8'));
+    assert.equal(afterMeal.events.filter(event => event.type === 'food').length, 2, 'a meal resets missing-food reporting');
+    const errors = t.mock.method(console, 'error', () => {});
+    bot.emit('autoeat_error', new Error('Consume rejected'));
+    observer.publish();
+    const failedEating = JSON.parse(readFileSync(join(process.env.ADVENTURE_ROOT, 'observations', 'Roy.json'), 'utf8'));
+    assert.equal(failedEating.error, 'Consume rejected');
+    assert.equal(errors.mock.calls.length, 1);
+    errors.mock.restore();
     bot.emit('death');
     bot.emit('respawn');
     t.mock.timers.tick(15000);
