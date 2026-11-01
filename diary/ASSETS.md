@@ -9,11 +9,13 @@ python3 diary/build-item-assets.py \
 python3 -m unittest discover -s diary -p test_item_assets.py
 ```
 
-The builder reads local files only and explicitly sets its output directory to 0755 and public files to 0644, including when run under umask 077. Generated PNGs and `manifest.json` belong outside the Git repository; do not commit or package Mojang assets. Only the generator, tests and documentation are source code.
+The builder reads installed assets and downloads 17 pinned, checksum-verified official Bedrock item sprites: all 16 bed colors and chain. Downloads require HTTPS access to `raw.githubusercontent.com`; checksum, image-format or dimension failures stop the build. It sets its output directory to 0755 and public files to 0644, including under umask 077. Each file is replaced atomically; the manifest is published last. Generated PNGs and `manifest.json` belong outside the Git repository; do not commit or package Mojang assets. Only the generator, tests and documentation are source code.
 
 ## Manifest
 
-`version` is `26.1`. `items` contains every name in `items_textures.json`: a site-relative `item-assets/name.png` URL, or explicit `null` for unsupported graphics. `unmapped` gives each null entry's reason; the build also prints them. The UI must show the item name for null/unknown entries rather than inventing an image. `hud` supplies `heartEmpty`, `heartFull`, `heartHalf`, `foodEmpty`, `foodFull` and `foodHalf` from the original HUD sprites.
+`version` is `26.1`, identifying the installed asset set. `items` contains every name in `items_textures.json`, plus the Java 1.21.4 `chain` name when the installed set calls it `iron_chain`: a site-relative `item-assets/name.png` URL, or explicit `null` for unsupported graphics. `unmapped` gives each null entry's reason; the build also prints them. The UI must show the item name for null/unknown entries rather than inventing an image. `hud` supplies `heartEmpty`, `heartFull`, `heartHalf`, `foodEmpty`, `foodFull` and `foodHalf` from the original HUD sprites.
+
+`sources` records the URL, SHA-256 and Mojang EULA notice for each downloaded sprite. Bed and chain icons come from [Mojang/bedrock-samples at commit `15701fa9c13923f12662984c32c124327e40e3d3`](https://github.com/Mojang/bedrock-samples/tree/15701fa9c13923f12662984c32c124327e40e3d3/resource_pack/textures/items). They are original 16×16 PNG item art, not block-face previews. Java `light_gray_bed` uses Bedrock's `bed_silver.png`; other colors map directly to `bed_COLOR.png`.
 
 `kinds` identifies the imagery:
 
@@ -24,7 +26,7 @@ The builder reads local files only and explicitly sets its output directory to 0
 - `entity-texture-preview`: the chest front (lid, body, latch) or unpatterned shield plate from its actual entity atlas, not a full 3D model. Shield banner patterns are not available in inventory telemetry.
 - `empty`: transparent air.
 
-Model selection uses the item's model reference, inventory variants and actual blockstate model references. This includes fences, trapdoors, bee nests and waxed copper aliases. The renderer intentionally does not turn particle textures into icons. Banners, spawn eggs and other special-renderer items without suitable standalone sprites may remain unmapped. Animated textures use their first frame. Biome/dye-dependent model tinting and custom resource packs are not applied. This is 26.1 imagery for the mature 26.1 bot/viewer protocol; the server runs 26.3, so newer items can be absent and must remain text-labelled.
+Model selection uses the item's model reference, inventory variants and actual blockstate model references. This includes fences, trapdoors, bee nests and waxed copper aliases. The renderer intentionally does not turn particle textures into icons. Banners, spawn eggs and other special-renderer items without suitable standalone sprites may remain unmapped. Animated textures use their first frame. Biome/dye-dependent model tinting and custom resource packs are not applied. The primary imagery set is 26.1; item names also support the bots' Java 1.21.4 `chain` spelling. Items absent from the manifest must remain text-labelled.
 
 ## Ownership
 
