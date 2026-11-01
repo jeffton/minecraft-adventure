@@ -6,10 +6,10 @@ export const BOT_ROLES = Object.freeze({
 });
 
 export const INITIAL_TASKS = Object.freeze({
-  Roy: 'Gather 12 logs. Craft planks, a crafting table, sticks and a wooden pickaxe. Choose a safe shared home with !chooseHome. Build the lodge gradually with !buildLodge; ask Spruce for wood and Flint for cobblestone. Do not harvest the lodge.',
-  Spruce: 'Gather nearby logs, replant saplings where possible. Craft a wooden axe and later stone axe. Supply Roy with locally available logs and planks using !givePlayer. Keep at least 8 logs for your own tools. Work outside the marked home footprint.',
-  Flint: 'Gather enough wood for a crafting table, sticks and wooden pickaxe. Mine stone, craft stone tools and a furnace, then gather accessible coal and iron. Smelt iron, make shields and equipment for all four. Share resources, avoid digging below the home.',
-  Moss: 'Gather wood for basic tools and a crafting table. Secure food: hunt cows, pigs or sheep, cook meat in a furnace and share cooked food with the others. Collect wool for four beds. Establish a renewable wheat farm beside home after food is secure.'
+  Roy: 'Secure immediate food and basic tools. Choose a safe reachable shared home with !chooseHome. Build small lodge batches from owned local materials; prioritize shelter and shared storage before distant exploration. Do not harvest the lodge.',
+  Spruce: 'Gather nearby local timber outside the home footprint. Secure a personal tool and weapon, then help establish the first shared chest and deposit surplus building supplies through the checked program. Preserve personal food and tools; replant saplings where possible.',
+  Flint: 'Earn basic stone tools, a weapon and furnace. Supply accessible stone for shelter through shared storage before deep mining or iron expeditions. Keep a reachable route home; do not dig below the home.',
+  Moss: 'Secure immediate food, basic tools and defence. Source observed sheep and matching wool for personal beds early, coordinating separate bed footprints and confirmed spawn setting through the checked program. Establish renewable food beside the shared shelter after urgent food and beds.'
 });
 
 const WOOD_FAMILIES = ['oak', 'spruce', 'birch', 'jungle', 'acacia', 'dark_oak', 'mangrove', 'cherry', 'pale_oak', 'bamboo', 'crimson', 'warped'];

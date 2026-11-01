@@ -1,10 +1,22 @@
 import { randomUUID } from 'node:crypto';
+import { join } from 'node:path';
+import { createBaseUtilities } from './base-utilities.mjs';
 
 // The shared planner supplies data, never executable code.
 const WOODS = ['oak', 'spruce', 'birch', 'jungle', 'acacia', 'dark_oak', 'mangrove', 'cherry', 'pale_oak'];
 const LOGS = new Set(WOODS.map(wood => `${wood}_log`));
 const PLANKS = new Set(WOODS.map(wood => `${wood}_planks`));
-const CRAFTED = new Set(['stick', 'crafting_table', 'furnace', 'chest', 'torch', 'shield', 'bucket', 'flint_and_steel', 'oak_door', 'glass_pane', ...PLANKS]);
+const BED_COLORS = ['white', 'orange', 'magenta', 'light_blue', 'yellow', 'lime', 'pink', 'gray', 'light_gray', 'cyan', 'purple', 'blue', 'brown', 'green', 'red', 'black'];
+const BEDS = new Set(BED_COLORS.map(color => `${color}_bed`));
+const WOOL = new Set(BED_COLORS.map(color => `${color}_wool`));
+const CRAFTED = new Set(['stick', 'crafting_table', 'furnace', 'chest', 'torch', 'shield', 'bucket', 'flint_and_steel', 'oak_door', 'glass_pane', ...PLANKS, ...BEDS, ...WOODS.map(wood => `${wood}_door`)]);
+export const BASE_ACTION_KEYS = Object.freeze({
+    place_chest: ['action', 'x', 'y', 'z'],
+    deposit: ['action', 'x', 'y', 'z', 'item', 'count'],
+    withdraw: ['action', 'x', 'y', 'z', 'item', 'count'],
+    place_bed: ['action', 'x', 'y', 'z', 'item', 'facing'],
+    use_bed: ['action', 'x', 'y', 'z']
+});
 for (const material of ['wooden', 'stone', 'iron']) {
     for (const tool of ['pickaxe', 'axe', 'shovel', 'hoe', 'sword']) CRAFTED.add(`${material}_${tool}`);
 }
@@ -12,7 +24,7 @@ for (const armour of ['helmet', 'chestplate', 'leggings', 'boots']) CRAFTED.add(
 const RAW = { sand: ['sand'], cobblestone: ['stone', 'cobblestone'], coal: ['coal_ore', 'deepslate_coal_ore'], raw_iron: ['iron_ore', 'deepslate_iron_ore'] };
 const MEAT = { beef: 'cow', porkchop: 'pig', mutton: 'sheep', chicken: 'chicken' };
 const SMELTED = { glass: 'sand', iron_ingot: 'raw_iron', stone: 'cobblestone', cooked_beef: 'beef', cooked_porkchop: 'porkchop', cooked_mutton: 'mutton', cooked_chicken: 'chicken' };
-export const ACQUISITION_ITEMS = Object.freeze([...new Set([...LOGS, ...CRAFTED, ...Object.keys(RAW), ...Object.keys(MEAT), ...Object.keys(SMELTED)])].sort());
+export const ACQUISITION_ITEMS = Object.freeze([...new Set([...LOGS, ...CRAFTED, ...Object.keys(RAW), ...Object.keys(MEAT), ...Object.keys(SMELTED), ...WOOL])].sort());
 
 export class PreconditionError extends Error {
     constructor(message) { super(message); this.name = 'PreconditionError'; }
@@ -27,12 +39,26 @@ export function observedInventory(bot) {
 
 const acquiredCount = (bot, name) => observedInventory(bot).filter(item => item.name === name).reduce((sum, item) => sum + item.count, 0);
 
+export function observedSheepWool(bot, entity) {
+    if (entity.name !== 'sheep') return null;
+    const keys = bot.registry.entitiesByName.sheep.metadataKeys;
+    const wool = entity.metadata?.[keys.indexOf('wool')];
+    const baby = entity.metadata?.[keys.indexOf('baby')];
+    if (!Number.isInteger(wool) || baby !== false || (wool & 16) !== 0) return null;
+    return `${BED_COLORS[wool & 15]}_wool`;
+}
+
 export function validateProgram(program, bot, name) {
     if (!Array.isArray(program) || program.length < 1 || program.length > 6) throw new Error('Program must contain one to six declarative steps.');
     for (const step of program) {
-        const keys = { ensure_item: ['action', 'item', 'count'], equip: ['action', 'item'], build_lodge: ['action'], regroup: ['action'] }[step?.action];
-        if (!keys || Object.keys(step).some(key => !keys.includes(key))) throw new Error('Unsupported program action or fields; executable code is not accepted.');
-        if (['ensure_item', 'equip'].includes(step.action) && (typeof step.item !== 'string' || !Object.hasOwn(bot.registry.itemsByName, step.item))) throw new Error(`Unknown registry item: ${step.item}.`);
+        const keys = { ensure_item: ['action', 'item', 'count'], equip: ['action', 'item'], build_lodge: ['action'], regroup: ['action'], ...BASE_ACTION_KEYS }[step?.action];
+        if (!keys || Object.keys(step).length !== keys.length || keys.some(key => !Object.hasOwn(step, key))) throw new Error('Unsupported program action or fields; executable code is not accepted.');
+        if (Object.hasOwn(BASE_ACTION_KEYS, step.action)) {
+            if (![step.x, step.y, step.z].every(Number.isInteger) || Math.abs(step.x) > 29999984 || Math.abs(step.z) > 29999984 || step.y < -60 || step.y > 300) throw new Error('Base action requires bounded integer coordinates.');
+            if (step.action === 'place_bed' && (!BEDS.has(step.item) || !['north', 'south', 'east', 'west'].includes(step.facing))) throw new Error('place_bed requires a colored bed and cardinal facing.');
+            if (['deposit', 'withdraw'].includes(step.action) && (!Number.isInteger(step.count) || step.count < 1 || step.count > 64)) throw new Error('Chest transfer count must be 1..64.');
+        }
+        if (['ensure_item', 'equip', 'deposit', 'withdraw', 'place_bed'].includes(step.action) && (typeof step.item !== 'string' || !Object.hasOwn(bot.registry.itemsByName, step.item))) throw new Error(`Unknown registry item: ${step.item}.`);
         if (step.action === 'ensure_item' && !ACQUISITION_ITEMS.includes(step.item)) throw new Error(`Acquisition is not implemented for ${step.item}.`);
         if (step.action === 'ensure_item' && (!Number.isInteger(step.count) || step.count < 1 || step.count > 64)) throw new Error('ensure_item count must be an inventory minimum from 1 to 64.');
         if (step.action === 'build_lodge' && name !== 'Roy') throw new Error('Only Roy may execute build_lodge.');
@@ -169,7 +195,7 @@ export async function executeProgram(agent, skills, helpers) {
             return sum + (local ? 1 : 10) * Math.max(0, ingredient.count - inventoryCount(bot, ingredient.name) - held);
         }, 0);
         return recipes.filter(recipe => recipe.result.id === bot.registry.itemsByName[item].id && recipeIngredients(recipe, bot.registry).every(ingredient =>
-            ingredient.name !== item && (inventoryCount(bot, ingredient.name) >= ingredient.count || LOGS.has(ingredient.name) || RAW[ingredient.name] || CRAFTED.has(ingredient.name) || Object.hasOwn(SMELTED, ingredient.name))))
+            ingredient.name !== item && (inventoryCount(bot, ingredient.name) >= ingredient.count || LOGS.has(ingredient.name) || RAW[ingredient.name] || WOOL.has(ingredient.name) || CRAFTED.has(ingredient.name) || Object.hasOwn(SMELTED, ingredient.name))))
             .sort((a, b) => cost(a) - cost(b))[0];
     };
     const acquire = async (item, target, depth) => {
@@ -180,6 +206,23 @@ export async function executeProgram(agent, skills, helpers) {
         if (observedCount() >= target) return;
         if (target > 64) throw new Error(`Bounded resolver cannot supply a batch larger than 64 ${item}.`);
         if (LOGS.has(item) || RAW[item]) return gather(item, target, RAW[item] ?? [item], depth);
+        if (WOOL.has(item)) {
+            while (observedCount() < target) {
+                check();
+                const sheep = Object.values(bot.entities).filter(entity => observedSheepWool(bot, entity) === item && bot.entity.position.distanceTo(entity.position) <= 96)
+                    .sort((a, b) => bot.entity.position.distanceTo(a.position) - bot.entity.position.distanceTo(b.position))[0];
+                if (!sheep) throw new PreconditionError(`No loaded adult unshorn ${item} sheep within 96 blocks; wool color is not invented or dyed.`);
+                if (bot.entity.position.distanceTo(sheep.position) > 20) await operation(() => helpers.approachAnimal(agent, sheep));
+                check();
+                if (observedSheepWool(bot, sheep) !== item) throw new PreconditionError('Observed sheep wool changed before harvesting.');
+                if (++gathered > 64) throw new Error('Program reached its 64-resource gathering budget.');
+                const before = inventoryCount(bot, item);
+                await operation(() => skills.attackEntity(bot, sheep, true));
+                await syncInventory();
+                if (inventoryCount(bot, item) <= before) throw new Error(`Sheep hunt yielded no server-observed ${item}; inspect drops before retrying.`);
+            }
+            return;
+        }
         if (Object.hasOwn(MEAT, item)) {
             while (observedCount() < target) {
                 check();
@@ -256,6 +299,16 @@ export async function executeProgram(agent, skills, helpers) {
             return await acquire(item, target, depth);
         } finally { resolving.delete(item); }
     };
+    const regroup = async () => {
+        const home = helpers.getHome();
+        if (!home) throw new PreconditionError('Cannot regroup before shared home is chosen.');
+        if (home.dimension !== bot.game.dimension) throw new Error('Shared home is in another dimension; use an authored portal action.');
+        if (bot.entity.position.distanceTo(home) > 3) await operation(() => helpers.navigateHome(bot, home, check));
+        if (bot.entity.position.distanceTo(home) > 4) throw new Error('Regroup did not reach the shared home.');
+        return home;
+    };
+    const base = createBaseUtilities({ lockDirectory: join(process.env.ADVENTURE_ROOT ?? '/var/lib/minecraft-adventure', 'control', 'base-utilities') });
+    const baseContext = createBaseContext(bot, check, operation);
     const timer = setTimeout(() => {
         timedOut = true;
         bot.interrupt_code = true;
@@ -271,7 +324,21 @@ export async function executeProgram(agent, skills, helpers) {
             check();
             const step = program[index];
             activeStep = step;
-            if (step.action === 'ensure_item') await ensure(step.item, step.count);
+            if (step.action === 'ensure_item') {
+                // A placement consumes its item. On retry, an immediately paired
+                // prerequisite is satisfied by re-verifying that exact structure,
+                // not by crafting another bed/chest that would never be placed.
+                const next = program[index + 1];
+                const home = helpers.getHome();
+                let existingPlacement = null;
+                if (step.count === 1 && home && next?.action === 'place_bed' && step.item === next.item) {
+                    existingPlacement = await base.verifyOwnedBed(bot, home, next, next.item, next.facing, baseContext);
+                } else if (step.count === 1 && home && next?.action === 'place_chest' && step.item === 'chest') {
+                    existingPlacement = await base.verifyChest(bot, home, next, baseContext);
+                }
+                if (existingPlacement) skills.log(bot, `Reverified existing ${step.item} for the immediately following placement; no replacement item acquired.`);
+                else await ensure(step.item, step.count);
+            }
             else if (step.action === 'equip') {
                 if (!bot.inventory.slots.some(item => item?.name === step.item)) throw new PreconditionError(`Cannot equip missing earned ${step.item}.`);
                 const slot = step.item.endsWith('_helmet') ? 5 : step.item.endsWith('_chestplate') || step.item === 'elytra' ? 6 :
@@ -284,15 +351,36 @@ export async function executeProgram(agent, skills, helpers) {
                 }
             } else if (step.action === 'build_lodge') {
                 if (!helpers.buildLodge) throw new Error('Direct authored lodge helper is not registered.');
+                // The authored build helper chooses home when none exists yet.
+                if (helpers.getHome()) await regroup();
                 const result = await operation(() => helpers.buildLodge(bot, helpers.getHome(), agent));
                 skills.log(bot, result.message);
-                if (result.complete !== true) throw new Error('Lodge remains incomplete after earned build batch; re-observe supplies and continue building.');
+                if (result.complete !== true && !(result.placed > 0)) throw new Error('Lodge build batch placed no blocks; re-observe supplies and continue building.');
+            } else if (Object.hasOwn(BASE_ACTION_KEYS, step.action)) {
+                const home = await regroup();
+                const p = { x: step.x, y: step.y, z: step.z };
+                let result;
+                if (step.action === 'place_chest') result = await base.ensureChest(bot, home, p, baseContext);
+                else if (['deposit', 'withdraw'].includes(step.action)) result = await base.transferChest(bot, home, p, { direction: step.action, item: step.item, count: step.count, receiptKey: JSON.stringify([mission.id, agent.name, index, step]) }, baseContext);
+                else if (step.action === 'place_bed') result = await base.placeBed(bot, home, p, step.item, step.facing, baseContext);
+                else result = await base.useBed(bot, home, p, baseContext);
+                const observation = { action: step.action, at: result.observedAt ?? new Date().toISOString(), dimension: bot.game.dimension, ...result };
+                agent.adventureBaseUtilities ??= {};
+                agent.adventureBaseUtilities[`${bot.game.dimension}:${step.x},${step.y},${step.z}`] = observation;
+                helpers.emit?.(agent, 'base_utility', `Observed ${step.action} at ${step.x},${step.y},${step.z}.`, observation);
+                if (['deposit', 'withdraw'].includes(step.action) && result.confirmed === true && !result.replayed) {
+                    helpers.emit?.(agent, 'delivery', `Server confirmed ${step.action} of ${step.count} ${step.item} at shared chest ${step.x},${step.y},${step.z}.`, observation);
+                }
+                if (result.placed === true) {
+                    helpers.emit?.(agent, 'build', `Verified placement of ${result.item} at ${step.x},${step.y},${step.z}; base completion not established.`, { ...observation, scope: 'base_utility', verified: true, material: result.item });
+                }
+                if (step.action === 'use_bed' && result.spawnConfirmed === true) {
+                    helpers.emit?.(agent, 'milestone', `Server acknowledged personal spawn at owned bed ${step.x},${step.y},${step.z}.`, observation);
+                }
+                skills.log(bot, JSON.stringify(observation));
+                if (step.action === 'use_bed' && result.spawnConfirmed !== true) throw new PreconditionError('Bed interaction had no personal-spawn acknowledgement; protection is unconfirmed.');
             } else {
-                const home = helpers.getHome();
-                if (!home) throw new Error('Cannot regroup before shared home is chosen.');
-                if (home.dimension !== bot.game.dimension) throw new Error('Shared home is in another dimension; use an authored portal action.');
-                if (bot.entity.position.distanceTo(home) > 3) await operation(() => helpers.navigateHome(bot, home, check));
-                if (bot.entity.position.distanceTo(home) > 4) throw new Error('Regroup did not reach the shared home.');
+                await regroup();
             }
             check();
             helpers.emit?.(agent, 'program', `${mission.id}: step ${index + 1}/${program.length} ${step.action} completed.`);
@@ -308,6 +396,35 @@ export async function executeProgram(agent, skills, helpers) {
         helpers.emit?.(agent, 'attempt_failed', error.message, { ...attempt(), action: activeStep.action, target: activeStep.item ?? (activeStep.action === 'regroup' ? JSON.stringify(helpers.getHome()) : activeStep.action), kind, reason: error.message });
         throw error;
     } finally { clearTimeout(timer); }
+}
+
+// Each utility action owns a shared world resource. Do not release that resource
+// while a delayed inventory operation can still complete in the background.
+export function createBaseContext(bot, check, operation) {
+    return { check, async run(perform, { passive = false } = {}) {
+        check();
+        let settled = false;
+        let timer;
+        const pending = operation(perform).finally(() => { settled = true; });
+        try {
+            return await Promise.race([pending, new Promise((_, reject) => {
+                timer = setInterval(() => { try { check(); } catch (error) { reject(error); } }, 50);
+            })]);
+        } catch (error) {
+            if (passive) throw error;
+            bot.pathfinder.setGoal(null);
+            bot.clearControlStates();
+            let drainTimer;
+            try {
+                await Promise.race([pending.catch(() => {}), new Promise(resolve => { drainTimer = setTimeout(resolve, 2000); })]);
+            } finally { clearTimeout(drainTimer); }
+            if (!settled) {
+                bot.end('Base utility did not settle after cancellation; closing connection to prevent late interactions.');
+                error.retainUtilityLock = true;
+            }
+            throw error;
+        } finally { clearInterval(timer); }
+    } };
 }
 
 export function registerPrograms(actionsList, skills, helpers = {}) {

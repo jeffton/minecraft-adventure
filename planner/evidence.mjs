@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { BASE_ACTION_KEYS } from '../bots/program.mjs';
 
 // Pure, JSON-roundtrippable evidence card. Input: {updatedAt, bots: {name: bot}}
 // (or a bots array with name). Events start at sequence 1 in each UUID session.
@@ -68,7 +69,7 @@ function count(value, label) {
 function observeProgram(evidence, event) {
   const data = event.data;
   if (!Array.isArray(data?.program)) return;
-  const actionKeys = { ensure_item: ['action', 'item', 'count'], equip: ['action', 'item'], build_lodge: ['action'], regroup: ['action'] };
+  const actionKeys = { ensure_item: ['action', 'item', 'count'], equip: ['action', 'item'], build_lodge: ['action'], regroup: ['action'], ...BASE_ACTION_KEYS };
   if (!data.program.length || data.program.length > 6 || data.program.some(step => {
     const keys = actionKeys[step?.action];
     return !keys || Object.keys(step).length !== keys.length || keys.some(key => !Object.hasOwn(step, key));

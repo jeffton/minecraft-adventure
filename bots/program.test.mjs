@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import { craftExecutions, recipeIngredients, registerPrograms, validateProgram } from './program.mjs';
 
 function fixture(program, initial = {}, name = 'Roy') {
-    const names = ['oak_log', 'oak_planks', 'stick', 'crafting_table', 'wooden_pickaxe', 'cobblestone', 'stone_pickaxe', 'coal', 'raw_iron', 'iron_ingot', 'furnace', 'diamond', 'torch', 'iron_helmet', 'mutton', 'cooked_mutton', 'acacia_log', 'acacia_planks', 'pale_oak_log', 'pale_oak_planks', 'sand', 'glass', 'glass_pane', 'oak_door'];
+    const names = ['oak_log', 'oak_planks', 'stick', 'crafting_table', 'wooden_pickaxe', 'cobblestone', 'stone_pickaxe', 'coal', 'raw_iron', 'iron_ingot', 'furnace', 'diamond', 'torch', 'iron_helmet', 'mutton', 'cooked_mutton', 'acacia_log', 'acacia_planks', 'pale_oak_log', 'pale_oak_planks', 'sand', 'glass', 'glass_pane', 'oak_door', 'white_bed', 'white_wool', 'gray_bed', 'gray_wool', 'acacia_door'];
     const items = names.map((name, id) => ({ name, id }));
-    const registry = { items, itemsByName: Object.fromEntries(items.map(item => [item.name, item])) };
+    const registry = { items, itemsByName: Object.fromEntries(items.map(item => [item.name, item])), entitiesByName: { sheep: { metadataKeys: ['baby', 'wool'] } } };
     const inventory = new Map(Object.entries(initial));
     const equipment = new Map();
     const amount = item => inventory.get(item) ?? 0;
@@ -27,6 +27,9 @@ function fixture(program, initial = {}, name = 'Roy') {
     recipe('iron_helmet', 1, { iron_ingot: 5 }, true);
     recipe('glass_pane', 16, { glass: 6 }, true);
     recipe('oak_door', 3, { oak_planks: 6 }, true);
+    recipe('white_bed', 1, { white_wool: 3, oak_planks: 3 }, true);
+    recipe('gray_bed', 1, { gray_wool: 3, oak_planks: 3 }, true);
+    recipe('acacia_door', 3, { acacia_planks: 6 }, true);
     let mission = { id: 'revision1', bots: { [name]: { program } } };
     let home = null;
     const events = [], calls = [];
@@ -372,9 +375,13 @@ test('earned iron is smelted from actual raw iron and fuel', async () => {
     assert.deepEqual(f.calls.filter(call => call[0] === 'smelt'), [['smelt', 'raw_iron', 2]]);
 });
 
-test('lodge batch is not misreported as a finished structure', async () => {
+test('zero-block lodge batch fails while actual partial construction completes its program', async () => {
+    const partial = fixture([{ action: 'build_lodge' }]);
+    partial.helpers.buildLodge = async () => ({ message: 'Eight blocks placed; lodge incomplete.', complete: false, placed: 8 });
+    await partial.run();
+    assert.ok(partial.events.some(event => event[1] === 'attempt_completed'));
     const f = fixture([{ action: 'build_lodge' }]);
-    await assert.rejects(f.run(), /Lodge remains incomplete/);
+    await assert.rejects(f.run(), /placed no blocks/);
     assert.ok(!f.events.some(event => event[1] === 'program' && event[2].includes('completed')));
     const other = fixture([{ action: 'build_lodge' }], {}, 'Moss');
     assert.throws(() => validateProgram([{ action: 'build_lodge' }], other.bot, 'Moss'), /Only Roy/);
@@ -390,6 +397,67 @@ test('injured hungry empty-inventory bots can forage, craft and equip without a 
     assert.ok(f.calls.some(call => call[0] === 'gather'));
     assert.ok(f.calls.some(call => call[0] === 'craft'));
     assert.ok(f.calls.some(call => call[0] === 'equip'));
+});
+
+test('local acacia door is crafted from acacia planks without an oak dependency', async () => {
+    const f = fixture([ensure('acacia_door', 1)], { acacia_planks: 6 });
+    f.resources.set('table', f.block('crafting_table'));
+    await f.run();
+    assert.equal(f.amount('acacia_door'), 3);
+    assert.equal(f.amount('acacia_planks'), 0);
+    assert.equal(f.amount('oak_planks'), 0);
+});
+
+test('bed acquisition hunts only observed matching adult unshorn sheep and crafts actual drops', async () => {
+    const f = fixture([ensure('white_bed', 1)], { oak_planks: 3 }, 'Moss');
+    f.resources.set('table', f.block('crafting_table'));
+    f.bot.entities = {
+        white1: { name: 'sheep', metadata: [false, 0], position: { x: 5, y: 64, z: 0 } },
+        white2: { name: 'sheep', metadata: [false, 0], position: { x: 6, y: 64, z: 0 } },
+        white3: { name: 'sheep', metadata: [false, 0], position: { x: 7, y: 64, z: 0 } },
+        gray: { name: 'sheep', metadata: [false, 7], position: { x: 1, y: 64, z: 0 } },
+        sheared: { name: 'sheep', metadata: [false, 16], position: { x: 2, y: 64, z: 0 } },
+        baby: { name: 'sheep', metadata: [true, 0], position: { x: 3, y: 64, z: 0 } }
+    };
+    let hunted = 0;
+    f.skills.attackEntity = async (_, entity) => {
+        assert.deepEqual(entity.metadata, [false, 0]);
+        for (const [id, candidate] of Object.entries(f.bot.entities)) if (candidate === entity) delete f.bot.entities[id];
+        f.add('white_wool', 1); f.add('mutton', 1); hunted++;
+        return true;
+    };
+    await f.run();
+    assert.equal(hunted, 3);
+    assert.equal(f.amount('white_bed'), 1);
+    assert.equal(f.amount('white_wool'), 0);
+    assert.equal(f.amount('oak_planks'), 0);
+    assert.equal(f.amount('mutton'), 3);
+    assert.ok(f.bot.entities.gray && f.bot.entities.sheared && f.bot.entities.baby);
+});
+
+test('missing matching wool and unsuccessful actual wool pickup stop bed acquisition', async () => {
+    const missing = fixture([ensure('gray_bed', 1)], { oak_planks: 3 });
+    missing.resources.set('table', missing.block('crafting_table'));
+    missing.bot.entities = { white: { name: 'sheep', metadata: [false, 0], position: { x: 5, y: 64, z: 0 } } };
+    await assert.rejects(missing.run(), /No loaded adult unshorn gray_wool/);
+    assert.equal(missing.amount('gray_bed'), 0);
+    const noDrop = fixture([ensure('white_wool', 1)]);
+    noDrop.bot.entities = { white: { name: 'sheep', metadata: [false, 0], position: { x: 5, y: 64, z: 0 } } };
+    noDrop.skills.attackEntity = async () => true;
+    await assert.rejects(noDrop.run(), /no server-observed white_wool/);
+});
+
+test('build action reaches shared home before accepting a positive partial batch', async () => {
+    const f = fixture([{ action: 'build_lodge' }]);
+    const home = { x: 100, y: 64, z: 0, dimension: 'overworld' };
+    f.setHome(home);
+    f.helpers.navigateHome = async () => { f.calls.push(['regroup-before-build']); f.bot.entity.position.x = 100; };
+    f.helpers.buildLodge = async () => {
+        assert.ok(f.calls.some(call => call[0] === 'regroup-before-build'));
+        assert.equal(f.bot.entity.position.x, home.x);
+        return { message: 'Placed two real blocks.', placed: 2, complete: false };
+    };
+    await f.run();
 });
 
 test('injured empty-inventory Moss can obtain actual edible drops from observed sheep', async () => {

@@ -14,9 +14,9 @@ A cooperative survival expedition at **minecraft.roybot.se**, with a field journ
 
 ## Progression
 
-Food and temporary shelter → timber-and-stone lodge → renewable supplies and iron equipment → diamond pickaxe and obsidian → Nether supplies → Eyes of Ender and stronghold → crystals and dragon.
+Immediate food and defence → reachable shelter, shared chest and personal beds → timber-and-stone lodge → renewable supplies and iron equipment → diamond pickaxe and obsidian → Nether supplies → Eyes of Ender and stronghold → crystals and dragon.
 
-The lodge uses an explicit survival-built blueprint: stone skirt, timber posts, recessed windows, pitched roof, overhangs, porch and lighting. Authored gameplay helpers cover later progression, but the shared mission API currently executes gathering, equipment, lodge-building and regrouping. Supply transfer, portals and dragon combat require additional mission actions. Milestones are based on observed inventory, blocks, dimensions or entity-death events, not a model claiming success. A completed dragon run is an expedition objective, not an integration-test assertion.
+The lodge uses an explicit survival-built blueprint: stone skirt, timber posts, recessed windows, pitched roof, overhangs, porch and lighting. Compatible local timber can be mixed with existing building blocks. Small verified building batches count as progress without claiming a completed house. The shared mission API covers gathering, equipment, lodge-building, regrouping, shared chest deposits/withdrawals and owned beds. Container transfers require confirmed changes on both sides; personal spawn requires a server acknowledgement, not merely a placed bed. Portals and dragon combat require additional mission actions. Milestones are based on observed inventory, blocks, dimensions or entity-death events, not a model claiming success. A completed dragon run is an expedition objective, not an integration-test assertion.
 
 Strategy: [main adventure](https://minecraft.wiki/w/Tutorial:Complete_main_adventure), [Nether survival](https://minecraft.wiki/w/Tutorial:Nether_survival), [dragon combat](https://minecraft.wiki/w/Tutorial:Defeating_the_ender_dragon).
 

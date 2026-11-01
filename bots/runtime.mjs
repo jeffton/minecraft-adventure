@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, renameSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
-import { observedInventory } from './program.mjs';
+import { observedInventory, observedSheepWool } from './program.mjs';
 import { observeMeals, interruptedProgramRetry, safeToResume } from './survival.mjs';
 import { BOT_ROLES, INITIAL_TASKS, missionPrompt, validateMission } from './blueprint.mjs';
 import { RepairScheduler, inventoryContext, repairOutcomeContext, runRepair } from './repair.mjs';
@@ -11,7 +11,7 @@ export const OBS = join(ROOT, 'observations');
 export const CONTROL = join(ROOT, 'control');
 export const NAMES = Object.keys(BOT_ROLES);
 const controllerHash = createHash('sha256');
-for (const file of ['program.mjs', 'gather.mjs', 'navigation.mjs', 'extensions.mjs', 'compat-loader.mjs', 'inventory-controller.mjs', 'progression.mjs', 'scout.mjs', 'bootstrap.mjs', 'survival.mjs', 'runtime.mjs', 'repair.mjs']) {
+for (const file of ['program.mjs', 'gather.mjs', 'navigation.mjs', 'extensions.mjs', 'compat-loader.mjs', 'inventory-controller.mjs', 'progression.mjs', 'scout.mjs', 'bootstrap.mjs', 'survival.mjs', 'runtime.mjs', 'repair.mjs', 'base-utilities.mjs', 'blueprint.mjs']) {
   controllerHash.update(readFileSync(new URL(file, import.meta.url)));
 }
 export const CONTROLLER_REVISION = controllerHash.digest('hex');
@@ -38,10 +38,9 @@ export function getMission() {
   return existsSync(path) ? validateMission(readJson(path)) : null;
 }
 
-export function surveySurroundings(bot) {
+export function surveySurroundings(bot, home = getHome()) {
   const position = bot.entity.position;
   const names = Object.keys(bot.registry.blocksByName);
-  const home = getHome();
   const harvestable = block => !home || home.dimension !== bot.game.dimension ||
     block.position.x < home.x - 2 || block.position.x > home.x + 8 ||
     block.position.z < home.z - 3 || block.position.z > home.z + 10 || block.position.y < home.y - 2;
@@ -61,6 +60,11 @@ export function surveySurroundings(bot) {
     .filter(entity => ['cow', 'pig', 'sheep', 'chicken', 'rabbit'].includes(entity.name) && entity.position?.distanceTo(position) <= 96)
     .sort((a, b) => a.position.distanceTo(position) - b.position.distanceTo(position)).slice(0, 4)
     .map(entity => ({ name: entity.name, x: entity.position.x, y: entity.position.y, z: entity.position.z }));
+  nearbyResources.wool = Object.values(bot.entities)
+    .map(entity => ({ entity, item: observedSheepWool(bot, entity) }))
+    .filter(({ entity, item }) => item && entity.position?.distanceTo(position) <= 96)
+    .sort((a, b) => a.entity.position.distanceTo(position) - b.entity.position.distanceTo(position)).slice(0, 4)
+    .map(({ entity, item }) => ({ item, x: entity.position.x, y: entity.position.y, z: entity.position.z }));
   const terrain = [];
   for (const [heading, dx, dz] of [['north', 0, -1], ['east', 1, 0], ['south', 0, 1], ['west', -1, 0],
     ['northeast', 1, -1], ['southeast', 1, 1], ['southwest', -1, 1], ['northwest', -1, -1]]) {
@@ -82,7 +86,19 @@ export function surveySurroundings(bot) {
     ['hostile', 'mob'].includes(entity.type) && !['iron_golem', 'snow_golem'].includes(entity.name) &&
     (entity.name !== 'enderman' || entity.metadata?.[17] === true) && entity.position.distanceTo(position) <= 32)
     .map(entity => ({ name: entity.name, distance: Math.round(entity.position.distanceTo(position)) }));
-  return { nearbyResources, terrain, threats, timeOfDay: bot.time?.timeOfDay ?? null,
+  const baseBlocks = [];
+  if (home && home.dimension === bot.game.dimension) {
+    const utilityIds = names.filter(name => name === 'chest' || name.endsWith('_bed')).map(name => bot.registry.blocksByName[name].id);
+    if (utilityIds.length) {
+      const withinHome = block => block.position && Math.abs(block.position.x - home.x) <= 12 &&
+        Math.abs(block.position.z - home.z) <= 12 && Math.abs(block.position.y - home.y) <= 4;
+      for (const p of bot.findBlocks({ matching: utilityIds, maxDistance: 96, count: 16, useExtraInfo: withinHome })) {
+        const block = bot.blockAt(p);
+        if (block && withinHome(block)) baseBlocks.push({ name: block.name, x: p.x, y: p.y, z: p.z, properties: block.getProperties() });
+      }
+    }
+  }
+  return { nearbyResources, terrain, threats, baseBlocks, timeOfDay: bot.time?.timeOfDay ?? null,
     biome: bot.registry.biomes[biomeId]?.name ?? null };
 }
 
@@ -265,6 +281,7 @@ export function createObserver(agent, controls = {}) {
           digging: bot.targetDigBlock ? { name: bot.targetDigBlock.name, position: bot.targetDigBlock.position } : null
         },
         inventory: observedInventory(bot),
+        baseUtilities: agent.adventureBaseUtilities ?? {},
         events,
         error
       };
