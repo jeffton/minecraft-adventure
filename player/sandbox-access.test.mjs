@@ -30,7 +30,7 @@ test('nonroot minecraft-bots client can execute through the group-restricted roo
       let count=0;
       const rpc={observe:()=>({inventory:[{name:'oak_log',count}]}),call:async(method,args)=>count+=args[0],cancel(){}};
       const sandbox=new SkillSandbox({rpc,socketPath:${JSON.stringify(socketPath)}});
-      const id=sandbox.start('return await mc.call("collect",2)',{worldId:'nonroot-test'});
+      const id=sandbox.start('return await mc.call("collect",2)',{name:'Collect two logs',worldId:'nonroot-test'});
       const result=await sandbox.wait(id);
       console.log(JSON.stringify({uid:process.getuid(),result}));
     `;
@@ -38,6 +38,7 @@ test('nonroot minecraft-bots client can execute through the group-restricted roo
     const value = JSON.parse(stdout);
     assert.notEqual(value.uid, 0);
     assert.equal(value.result.state, 'completed', stdout);
+    assert.equal(value.result.name, 'Collect two logs');
     assert.equal(value.result.value, 2);
     assert.equal(value.result.after.inventory[0].count, 2);
     const denied = await run('/usr/sbin/runuser', ['-u', 'nobody', '--', '/usr/bin/node', '--input-type=module', '-e', `

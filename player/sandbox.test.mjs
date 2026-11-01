@@ -72,7 +72,7 @@ test('real DynamicUser sandbox has only runtime files, no environment, host file
       socket.on('error', e => resolve(e.code));
     });
     return { uid:process.getuid(), env:process.env, root:await fs.readdir('/'), errors, network };
-  `, { worldId: 'isolation-test' });
+  `, { name: 'Run sandbox checks', worldId: 'isolation-test' });
   assert.equal(typeof id, 'string');
   const result = await sandbox.wait(id);
   assert.equal(result.state, 'completed', JSON.stringify(result));
@@ -93,9 +93,9 @@ test('real worker composes RPC, returns an immediate handle, and records trusted
   const rpc = fakeRpc();
   const events = [];
   const sandbox = new SkillSandbox({ rpc, socketPath, onEvent: event => events.push(event) });
-  const id = sandbox.start('await mc.call("collect", input.count); return await mc.observe();', { input: { count: 3 }, worldId: 'fresh' });
+  const id = sandbox.start('await mc.call("collect", input.count); return await mc.observe();', { name: 'Collect oak logs', input: { count: 3 }, worldId: 'fresh' });
   assert.equal(sandbox.status(id).state, 'running');
-  assert.throws(() => sandbox.start('return 1', { worldId: 'fresh' }), /still running/);
+  assert.throws(() => sandbox.start('return 1', { name: 'Run sandbox checks', worldId: 'fresh' }), /still running/);
   const result = await sandbox.wait(id);
   assert.equal(result.state, 'completed', JSON.stringify(result));
   assert.equal(result.before.inventory[0].count, 0);
@@ -110,7 +110,7 @@ test('real worker composes RPC, returns an immediate handle, and records trusted
 test('cancelling an infinite skill kills its cgroup and invokes host-side Minecraft cancellation', { skip: !canRun }, async () => {
   const rpc = fakeRpc();
   const sandbox = new SkillSandbox({ rpc, socketPath });
-  const id = sandbox.start('while(true) {}', { worldId: 'fresh' });
+  const id = sandbox.start('while(true) {}', { name: 'Run sandbox checks', worldId: 'fresh' });
   await new Promise(resolve => setTimeout(resolve, 500));
   const cancelled = sandbox.cancel(id, 'death');
   assert.equal(cancelled.state, 'cancelled');
@@ -122,7 +122,7 @@ test('cancelling an infinite skill kills its cgroup and invokes host-side Minecr
 test('normal completion permits immediate successor actions without broker-busy races', { skip: !canRun }, async () => {
   const sandbox = new SkillSandbox({ rpc: fakeRpc(), socketPath });
   for (let index = 0; index < 4; index++) {
-    const id = sandbox.start('return input;', { worldId: 'fresh', input: index });
+    const id = sandbox.start('return input;', { name: 'Run sandbox checks', worldId: 'fresh', input: index });
     const result = await sandbox.wait(id);
     assert.equal(result.state, 'completed', JSON.stringify(result));
     assert.equal(result.value, index);
@@ -133,12 +133,12 @@ test('normal completion permits immediate successor actions without broker-busy 
 test('cancellation preserves overlap lock until broker drain and wait permits immediate successor', { skip: !canRun }, async () => {
   const sandbox = new SkillSandbox({ rpc: fakeRpc(), socketPath });
   for (const delay of [1, 100]) {
-    const id = sandbox.start('while(true) {}', { worldId: 'fresh' });
+    const id = sandbox.start('while(true) {}', { name: 'Run sandbox checks', worldId: 'fresh' });
     await new Promise(resolve => setTimeout(resolve, delay));
     sandbox.cancel(id);
-    assert.throws(() => sandbox.start('return 1;', { worldId: 'fresh' }), /still running/);
+    assert.throws(() => sandbox.start('return 1;', { name: 'Run sandbox checks', worldId: 'fresh' }), /still running/);
     assert.equal((await sandbox.wait(id)).settled, true);
-    const next = sandbox.start('return 42;', { worldId: 'fresh' });
+    const next = sandbox.start('return 42;', { name: 'Run sandbox checks', worldId: 'fresh' });
     assert.equal((await sandbox.wait(next)).value, 42);
   }
   await drained();
@@ -146,11 +146,11 @@ test('cancellation preserves overlap lock until broker drain and wait permits im
 
 test('worker protocol failure drains before wait resolves and immediate successor starts', { skip: !canRun }, async () => {
   const sandbox = new SkillSandbox({ rpc: fakeRpc(), socketPath });
-  const id = sandbox.start('console.log("hello"); while(true) {}', { worldId: 'fresh' });
+  const id = sandbox.start('console.log("hello"); while(true) {}', { name: 'Run sandbox checks', worldId: 'fresh' });
   const failed = await sandbox.wait(id);
   assert.equal(failed.state, 'failed');
   assert.equal(failed.settled, true);
-  const next = sandbox.start('return 43;', { worldId: 'fresh' });
+  const next = sandbox.start('return 43;', { name: 'Run sandbox checks', worldId: 'fresh' });
   const result = await sandbox.wait(next);
   assert.equal(result.state, 'completed', JSON.stringify(result));
   assert.equal(result.value, 43);
@@ -158,6 +158,6 @@ test('worker protocol failure drains before wait resolves and immediate successo
 
 test('protocol rejects oversized skill before opening a socket', () => {
   const sandbox = new SkillSandbox({ rpc: fakeRpc() });
-  assert.throws(() => sandbox.start('x'.repeat(32769), { worldId: 'fresh' }), /32 KiB/);
-  assert.throws(() => sandbox.start('return 1'), /worldId/);
+  assert.throws(() => sandbox.start('x'.repeat(32769), { name: 'Run sandbox checks', worldId: 'fresh' }), /32 KiB/);
+  assert.throws(() => sandbox.start('return 1', { name: 'Check world identity' }), /worldId/);
 });

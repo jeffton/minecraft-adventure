@@ -13,15 +13,19 @@ export class SkillSandbox {
     this.activeId = null;
   }
 
-  start(code, { input = {}, worldId } = {}) {
-    if (this.activeId) throw new Error(`Action ${this.activeId} is still running`);
+  start(code, { name, input = {}, worldId } = {}) {
+    if (this.activeId) throw new Error(`Action "${this.actions.get(this.activeId).action.name}" is still running`);
     if (typeof code !== 'string' || Buffer.byteLength(code) > 32_768) throw new Error('Skill code must be at most 32 KiB');
+    if (typeof name !== 'string' || /\p{Cc}/u.test(name) || !name.trim() || name.trim().length > 80) {
+      throw new Error('Skill name is required (1–80 trimmed characters, no control characters)');
+    }
+    name = name.trim();
     if (typeof worldId !== 'string' || !worldId || worldId.length > 128) throw new Error('worldId is required (maximum 128 characters)');
     // Validate before creating a connection; serialization errors must remain visible.
     const request = { type: 'start', code, input, worldId };
     if (Buffer.byteLength(JSON.stringify(request)) > 65_536) throw new Error('Action exceeds frame limit');
     const id = randomUUID();
-    const action = { id, worldId, sourceHash: createHash('sha256').update(code).digest('hex'), state: 'running', settled: false, startedAt: new Date().toISOString(), callCount: 0, calls: [] };
+    const action = { id, name, worldId, sourceHash: createHash('sha256').update(code).digest('hex'), state: 'running', settled: false, startedAt: new Date().toISOString(), callCount: 0, calls: [] };
     let resolve;
     const promise = new Promise(done => { resolve = done; });
     const record = { action, promise, controller: new AbortController(), resolve };
@@ -89,7 +93,7 @@ export class SkillSandbox {
       }
     } finally {
       record.inFlight = false;
-      this.onEvent({ type: 'rpc-result', actionId: record.action.id, call: structuredClone(call) });
+      this.onEvent({ type: 'rpc-result', actionId: record.action.id, actionName: record.action.name, call: structuredClone(call) });
     }
   }
 
