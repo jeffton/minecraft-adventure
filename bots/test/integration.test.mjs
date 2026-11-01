@@ -33,7 +33,8 @@ test('model response already received cannot execute after a program takes owner
   setProgramMode('Roy', false);
 });
 
-test('a published Terra program starts locally without another chat inference', async () => {
+test('a published program starts locally and rechecks dropped prerequisites after respawn', async t => {
+  t.mock.timers.enable({ apis: ['setInterval'] });
   mkdirSync(CONTROL, { recursive: true });
   atomicJson(join(CONTROL, 'mission.json'), { id: 'observed-program-1', phase: 'survival', objective: 'Earn supplies', home: null,
     bots: Object.fromEntries(['Roy', 'Spruce', 'Flint', 'Moss'].map(name => [name, { task: 'Gather supplies', program: [{ action: 'ensure_item', item: 'oak_log', count: 1 }] }])) });
@@ -51,6 +52,12 @@ test('a published Terra program starts locally without another chat inference', 
   try {
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(localRuns, 1);
+    assert.equal(chatStarts, 0);
+    bot.emit('death');
+    bot.emit('respawn');
+    t.mock.timers.tick(15000);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(localRuns, 2, 'the same mission must reacquire prerequisites lost at death');
     assert.equal(chatStarts, 0);
   } finally { bot.emit('end', 'test finished'); }
 });

@@ -32,6 +32,10 @@ export function getMission() {
 export function surveySurroundings(bot) {
   const position = bot.entity.position;
   const names = Object.keys(bot.registry.blocksByName);
+  const home = getHome();
+  const harvestable = block => !home || home.dimension !== bot.game.dimension ||
+    block.position.x < home.x - 2 || block.position.x > home.x + 8 ||
+    block.position.z < home.z - 3 || block.position.z > home.z + 10 || block.position.y < home.y - 2;
   const nearbyResources = { loadedChunksOnly: true, range: 96 };
   for (const [kind, filter] of Object.entries({
     wood: name => name.endsWith('_log') || name.endsWith('_stem'),
@@ -39,7 +43,8 @@ export function surveySurroundings(bot) {
     iron: name => name === 'iron_ore' || name === 'deepslate_iron_ore'
   })) {
     const ids = names.filter(filter).map(name => bot.registry.blocksByName[name].id);
-    nearbyResources[kind] = bot.findBlocks({ matching: ids, maxDistance: 96, count: 3 }).map(p => ({
+    nearbyResources[kind] = bot.findBlocks({ matching: ids, maxDistance: 96, count: 3,
+      useExtraInfo: harvestable }).map(p => ({
       name: bot.blockAt(p).name, x: p.x, y: p.y, z: p.z, distance: Math.round(p.distanceTo(position))
     }));
   }
@@ -64,7 +69,12 @@ export function surveySurroundings(bot) {
     }
   }
   const biomeId = bot.world.getBiome(position);
-  return { nearbyResources, terrain, biome: bot.registry.biomes[biomeId]?.name ?? null };
+  const threats = Object.values(bot.entities).filter(entity => entity.position &&
+    ['hostile', 'mob'].includes(entity.type) && !['iron_golem', 'snow_golem'].includes(entity.name) &&
+    (entity.name !== 'enderman' || entity.metadata?.[17] === true) && entity.position.distanceTo(position) <= 32)
+    .map(entity => ({ name: entity.name, distance: Math.round(entity.position.distanceTo(position)) }));
+  return { nearbyResources, terrain, threats, timeOfDay: bot.time?.timeOfDay ?? null,
+    biome: bot.registry.biomes[biomeId]?.name ?? null };
 }
 
 export function createObserver(agent, controls = {}) {
@@ -92,7 +102,12 @@ export function createObserver(agent, controls = {}) {
   bot.on('physicsTick', () => { physicsTicks++; });
   bot.on('forcedMove', () => { serverCorrections++; });
   bot.on('death', () => emit('death', 'Died in survival; items remain in the world.'));
-  bot.on('respawn', () => emit('respawn', 'Respawned.'));
+  bot.on('respawn', () => {
+    // Completed preparation cannot survive a death: tools and supplies were dropped.
+    programId = null;
+    programFailed = false;
+    emit('respawn', 'Respawned; rechecking the shared program against the empty inventory.');
+  });
   bot.on('entityDead', entity => {
     if (entity.name === 'ender_dragon' && String(bot.game.dimension).includes('end')) {
       atomicJson(join(CONTROL, 'dragon-defeated.json'), { at: new Date().toISOString(), source: 'observed entityDead', entityId: entity.id, dimension: bot.game.dimension });
