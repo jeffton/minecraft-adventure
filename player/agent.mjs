@@ -1,7 +1,7 @@
 import http from 'node:http';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
-import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
+import { BACKGROUND_CONTEXT, withAbortSignal } from '@earendil-works/chord/context';
 import { AssistantMessageEventStream, Type } from '@earendil-works/pi-ai';
 import { createModels } from '@earendil-works/pi-ai/models';
 import { openaiCodexProvider } from '@earendil-works/pi-ai/providers/openai-codex';
@@ -88,13 +88,18 @@ function nativeResult(value) {
  */
 export async function openPlayerAgent({
   stateDir, worldId, socketPath, tools, instructions = '', onEvent = () => {}, models, getFeedback,
+  signal, onStatus = () => {},
 }) {
+  const context = signal ? withAbortSignal(signal, BACKGROUND_CONTEXT) : BACKGROUND_CONTEXT;
+  signal?.throwIfAborted();
+  onStatus({ phase: 'opening', tasks: [] });
   if (typeof worldId !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(worldId)) {
     throw new Error('worldId must be a safe, nonempty world identifier');
   }
   const directory = path.join(stateDir, 'worlds', worldId);
   await mkdir(directory, { recursive: true, mode: 0o750 });
   models ??= await playerModels(socketPath);
+  signal?.throwIfAborted();
   const emit = event => onEvent({ ...event, worldId });
   let modelCalls = 0;
   let diaryCalls = 0;
@@ -217,7 +222,18 @@ export async function openPlayerAgent({
     },
     onReport: (_error, info) => emit({ type: 'harness_report', category: info.type }),
   }, context);
+  let closing;
+  const close = () => {
+    closed = true;
+    signal?.removeEventListener('abort', onAbort);
+    closing ??= harness.close(BACKGROUND_CONTEXT);
+    return closing;
+  };
+  // Cancelling a wait does not abort stored tasks. Closing checkpoints them for reopen.
+  const onAbort = () => { void close().catch(error => emit({ type: 'close_error', message: error.message })); };
+  signal?.addEventListener('abort', onAbort, { once: true });
   try {
+    signal?.throwIfAborted();
     const root = await harness.root(context);
     await root.configure({
       model: { provider: 'openai-codex', modelId: PLAYER_MODEL }, thinkingLevel: 'medium',
@@ -233,9 +249,14 @@ export async function openPlayerAgent({
       model: { provider: 'openai-codex', modelId: DIARY_MODEL }, thinkingLevel: 'low',
       extensions: [], tools: [], instructions: DIARY_INSTRUCTIONS,
     }, context);
+    const inspection = await harness.inspect(context);
+    const tasks = inspection.tasks.map(({ record, state }) => ({ id: record.id, taskKind: record.kind, ...state }));
+    onStatus({ phase: tasks.some(task => task.kind === 'blocked') ? 'blocked' : 'recovering', tasks });
     harness.resume();
     await root.waitForIdle(context);
     await diary.waitForIdle(context);
+    signal?.throwIfAborted();
+    onStatus({ phase: 'ready', tasks: [] });
 
     async function run(conversation, content, model) {
       const submission = await conversation.submit({ type: 'input', content }, context);
@@ -273,14 +294,10 @@ export async function openPlayerAgent({
           return await run(diary, JSON.stringify({ worldId, facts }), DIARY_MODEL);
         } finally { narrating = false; }
       },
-      async close() {
-        if (closed) return;
-        closed = true;
-        await harness.close(context);
-      },
+      close,
     };
   } catch (error) {
-    await harness.close(context);
+    await close();
     throw error;
   }
 }
