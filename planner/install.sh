@@ -18,7 +18,7 @@ install -d -o root -g root -m 0700 /etc/minecraft-adventure
 install -d -o minecraft-planner -g minecraft-adventure-project -m 2770 /var/lib/minecraft-adventure/control
 install -d -o minecraft-planner -g minecraft-planner -m 0750 /var/lib/minecraft-planner
 
-for name in package.json package-lock.json contracts.mjs item-ids.json queue.mjs admission.mjs engine.mjs evidence.mjs strategy.mjs server.mjs credential-broker.mjs; do
+for name in package.json package-lock.json contracts.mjs item-ids.json queue.mjs admission.mjs engine.mjs evidence.mjs strategy.mjs diary.mjs server.mjs credential-broker.mjs; do
     install -o root -g root -m 0644 "$source_dir/$name" "$target/$name"
 done
 (cd "$target" && npm ci --omit=dev --ignore-scripts --no-audit --no-fund)

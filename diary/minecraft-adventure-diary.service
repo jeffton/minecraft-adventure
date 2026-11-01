@@ -1,14 +1,15 @@
 [Unit]
 Description=Roycraft gameplay diary and bot-camera snapshot
-After=network.target minecraft-adventure-bots.service
+After=network.target minecraft-adventure-bots.service minecraft-planner.service
 
 [Service]
 Type=oneshot
 User=minecraft-diary
 Group=minecraft-diary
 WorkingDirectory=/opt/minecraft-adventure/diary
+EnvironmentFile=/etc/minecraft-adventure/planner.env
 ExecStart=/usr/bin/python3 /opt/minecraft-adventure/diary/publish.py
-TimeoutStartSec=85
+TimeoutStartSec=300
 MemoryMax=768M
 Slice=minecraft-adventure.slice
 CPUWeight=10

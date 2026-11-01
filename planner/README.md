@@ -3,6 +3,7 @@
 A dedicated Pi Durable 1.4.0 Harness uses Codex Sol (`gpt-6.1-sol`, medium reasoning, 4096 output tokens) for strategic reviews and Terra (`gpt-6.1-terra`, low reasoning, 2048 output tokens) for individual repair decisions. Mindcraft retains its local gameplay/skill loop.
 
 - `POST http://127.0.0.1:8766/v1/chat/completions`: non-streaming OpenAI chat, text messages, `user` equal to Roy/Spruce/Flint/Moss, bearer credential from `PLANNER_RELAY_TOKEN`. Repair model/output budget are fixed server-side at Terra/2048 tokens, low reasoning; client model names cannot change routing. Model tools are not accepted.
+- `POST /diary`: authenticated diary observations, narrated as one short English paragraph by Terra through the same queue and durable Harness. No mission context is appended; model/format failures fail publication explicitly. The quarter-hour publisher preserves older entries and camera images.
 - `GET /mission`: authenticated latest shared mission. The same JSON is published to `/var/lib/minecraft-adventure/control/mission.json`.
 - `GET /strategy`: authenticated durable strategy, evidence ledger, verified programs and revision.
 - `GET /healthz`: local status, queue and mission error; `models.mission` and `models.repair` report their model and thinking level. No credentials. This replaces the singular `model` field.

@@ -22,7 +22,8 @@ class PublishTests(unittest.TestCase):
                 capture.assert_not_called()
             self.assertFalse((root / 'public' / 'data.json').exists())
 
-    def test_failed_capture_publishes_explicit_error_not_previous_image(self):
+    @patch('publish.narrate', return_value={'text': 'A subjective diary paragraph.', 'model': 'gpt-6.1-terra', 'answerEntryId': 'test-entry'})
+    def test_failed_capture_publishes_explicit_error_not_previous_image(self, narrative):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             state = root / 'state.json'
@@ -50,8 +51,9 @@ class PublishTests(unittest.TestCase):
                 {'at': '2026-11-01T12:15:04Z', 'bot': 'Roy', 'type': 'mission', 'message': 'Long internal instructions are not field notes'},
             ],
         }
-        entry = publish.make_entry(state, '2026-11-01T12:30:05Z', None, None, '2026-11-01T12:15:00+00:00')
-        self.assertEqual(entry['events'], ['Roy: Mined 1 iron ore; inventory pickup is tracked separately.'])
+        state['bots'] = []
+        context = publish.diary_context(state, '2026-11-01T12:15:00+00:00')
+        self.assertEqual(context['facts'], ['Roy: Mined 1 iron ore; inventory pickup is tracked separately.'])
 
     def test_field_notes_keep_real_setbacks_without_internal_traces_or_claiming_pickup(self):
         events = [
@@ -66,6 +68,83 @@ class PublishTests(unittest.TestCase):
             'Roy: Died 1 time(s); dropped items remain in the world.',
             'Moss: Mined 2 oak log; inventory pickup is tracked separately.',
             'Moss: Encountered a blocker — No reachable stone.',
+        ])
+
+    def test_model_failure_preserves_published_history_and_does_not_capture(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / 'public'
+            output.mkdir()
+            old = '{"entries": [{"observedAt": "2026-11-01T12:00:00Z", "summary": "Keep me"}]}'
+            (output / 'data.json').write_text(old)
+            state = root / 'state.json'
+            state.write_text(json.dumps({
+                'updatedAt': datetime.now(timezone.utc).isoformat(),
+                'objective': 'Build a home', 'bots': [], 'events': [],
+            }))
+            with patch('publish.narrate', side_effect=RuntimeError('Terra failed')):
+                with patch('publish.subprocess.run') as capture:
+                    with self.assertRaisesRegex(RuntimeError, 'Terra failed'):
+                        publish.publish(state, output, root / 'capture.mjs')
+                    capture.assert_not_called()
+            self.assertEqual((output / 'data.json').read_text(), old)
+
+    def test_success_keeps_archive_and_pairs_terra_paragraph_with_new_image(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / 'public'
+            output.mkdir()
+            old = {'observedAt': '2026-11-01T12:00:00Z', 'summary': 'Keep me'}
+            (output / 'data.json').write_text(json.dumps({'entries': [old]}))
+            state = root / 'state.json'
+            state.write_text(json.dumps({
+                'updatedAt': datetime.now(timezone.utc).isoformat(),
+                'phase': 'equipment', 'objective': 'Build a home',
+                'longTerm': 'Dragon', 'serverVersion': 'Java 26.3',
+                'bots': [], 'milestones': [], 'events': [],
+            }))
+            narrative = {'text': 'My subjective diary.', 'model': 'gpt-6.1-terra', 'answerEntryId': 'answer-42'}
+
+            def capture(command, **kwargs):
+                Image.new('RGB', (640, 360), '#add8e6').save(command[-1])
+
+            with patch('publish.narrate', return_value=narrative) as generate:
+                with patch('publish.subprocess.run', side_effect=capture):
+                    publish.publish(state, output, root / 'capture.mjs')
+            data = json.loads((output / 'data.json').read_text())
+            self.assertEqual(data['entries'][1], old)
+            entry = data['entries'][0]
+            self.assertEqual(entry['summary'], narrative['text'])
+            self.assertEqual(entry['events'], [])
+            self.assertEqual(entry['answerEntryId'], 'answer-42')
+            self.assertEqual(entry['author'], 'gpt-6.1-terra')
+            self.assertTrue((output / entry['image']).exists())
+            self.assertIsNone(entry['captureError'])
+            self.assertEqual(generate.call_args.args[0]['since'], old['observedAt'])
+
+    def test_only_server_confirmed_meals_enter_narrative_facts(self):
+        state = {
+            'updatedAt': '2026-11-01T12:30:00Z', 'objective': 'Home', 'bots': [],
+            'events': [
+                {'at': '2026-11-01T12:29:00Z', 'bot': 'Roy', 'type': 'eat', 'message': 'Real meal', 'data': {'verified': True}},
+                {'at': '2026-11-01T12:29:01Z', 'bot': 'Roy', 'type': 'eat', 'message': 'Unverified meal', 'data': {}},
+            ],
+        }
+        self.assertEqual(publish.diary_context(state, '')['facts'], ['Roy: Real meal'])
+
+    def test_confirmed_crafting_and_lodge_blocks_are_not_lost_or_promoted_to_a_house(self):
+        state = {
+            'updatedAt': '2026-11-01T12:30:00Z', 'objective': 'Home', 'bots': [],
+            'events': [
+                {'at': '2026-11-01T12:29:00Z', 'bot': 'Flint', 'type': 'craft', 'message': 'Crafted stone sword', 'data': {'item': 'stone_sword', 'count': 1}},
+                {'at': '2026-11-01T12:29:01Z', 'bot': 'Roy', 'type': 'build', 'message': 'Placed air', 'data': {}},
+                {'at': '2026-11-01T12:29:02Z', 'bot': 'Roy', 'type': 'build', 'message': 'Placed log', 'data': {'verified': True, 'scope': 'lodge', 'material': 'oak_log'}},
+                {'at': '2026-11-01T12:29:03Z', 'bot': 'Roy', 'type': 'build', 'message': 'Placed air', 'data': {'verified': True, 'scope': 'lodge', 'material': 'minecraft:air'}},
+            ],
+        }
+        self.assertEqual(publish.diary_context(state, '')['facts'], [
+            'Flint: Crafted 1 stone_sword.',
+            'Roy: Placed one verified oak_log lodge block; this does not establish a finished house.',
         ])
 
     def test_uniform_sky_from_a_completed_renderer_frame_is_valid(self):

@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import sys
 from datetime import datetime, timezone
+from urllib.request import Request, urlopen
 
 from PIL import Image
 
@@ -68,17 +69,51 @@ def field_notes(events):
     return notes
 
 
-def make_entry(state, now, image, capture_error, since):
+def diary_context(state, since):
     events = [event for event in state['events'] if not since or (
         datetime.fromisoformat(event['at'].replace('Z', '+00:00'))
         > datetime.fromisoformat(since.replace('Z', '+00:00'))
     )]
-    completed = sum(milestone['completed'] for milestone in state['milestones'])
-    summary = f'{completed}/{len(state["milestones"])} milestones achieved. Current objective: {state["objective"]}'
+    facts = field_notes(events)
+    for event in events:
+        if event['type'] == 'eat' and event['data'].get('verified') is True:
+            facts.append(f"{event['bot']}: {event['message']}")
+        if event['type'] == 'craft':
+            facts.append(f"{event['bot']}: Crafted {event['data']['count']} {event['data']['item']}.")
+        if (event['type'] == 'build' and event['data'].get('verified') is True
+                and event['data'].get('scope') == 'lodge'
+                and event['data']['material'].removeprefix('minecraft:') not in {'air', 'cave_air', 'void_air'}):
+            facts.append(f"{event['bot']}: Placed one verified {event['data']['material']} lodge block; this does not establish a finished house.")
+    return {
+        'observedAt': state['updatedAt'], 'since': since,
+        'objective': state['objective'],
+        'facts': facts,
+        'bots': [{key: bot[key] for key in (
+            'name', 'status', 'health', 'food', 'inventory'
+        )} for bot in state['bots']],
+    }
+
+
+def narrate(context):
+    request = Request(
+        'http://127.0.0.1:8766/diary',
+        data=json.dumps(context).encode(),
+        headers={
+            'Authorization': 'Bearer ' + os.environ['PLANNER_RELAY_TOKEN'],
+            'Content-Type': 'application/json',
+        },
+        method='POST',
+    )
+    with urlopen(request, timeout=180) as response:
+        return json.load(response)
+
+
+def make_entry(state, now, image, capture_error, narrative):
     return {
         'at': now, 'observedAt': state['updatedAt'],
-        'title': PHASE_TITLES[state['phase']], 'summary': summary,
-        'events': field_notes(events),
+        'title': PHASE_TITLES[state['phase']], 'summary': narrative['text'],
+        'events': [],
+        'author': narrative['model'], 'answerEntryId': narrative['answerEntryId'],
         'image': image, 'captureError': capture_error,
     }
 
@@ -94,6 +129,8 @@ def publish(state_path, output, capture_script):
     images.mkdir(parents=True, exist_ok=True)
     data_path = output / 'data.json'
     previous = json.loads(data_path.read_text()) if data_path.exists() else {'entries': []}
+    since = previous['entries'][0]['observedAt'] if previous['entries'] else ''
+    narrative = narrate(diary_context(state, since))
     image_path = images / f'{stamp}.webp'
     temporary = images / f'.{stamp}.webp'
     capture_error = None
@@ -107,8 +144,7 @@ def publish(state_path, output, capture_script):
         capture_error = 'No current camera image: capture failed.'
         image = None
     now_text = now.isoformat()
-    since = previous['entries'][0]['observedAt'] if previous['entries'] else ''
-    entry = make_entry(state, now_text, image, capture_error, since)
+    entry = make_entry(state, now_text, image, capture_error, narrative)
     data = {
         'publishedAt': now_text, 'observedAt': state['updatedAt'],
         'objective': state['objective'], 'longTerm': state['longTerm'],

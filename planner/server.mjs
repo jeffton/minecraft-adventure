@@ -4,6 +4,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { MODEL, MODEL_ROLES, MISSION_INSTRUCTIONS, HttpError, validateChat, validateObservation } from './contracts.mjs';
 import { ModelQueue } from './queue.mjs';
+import { DIARY_INSTRUCTIONS, validateDiaryInput, validateDiaryParagraph } from './diary.mjs';
 import { openEngine } from './engine.mjs';
 import { MEAL_EVIDENCE_VERSION, correctUnverifiedMeals, initialEvidence, observeEvidence, resetSinceReview } from './evidence.mjs';
 import { STRATEGY_INSTRUCTIONS, reviewTrigger, strategyContext, validateReview } from './strategy.mjs';
@@ -171,6 +172,18 @@ export async function startPlanner({
       if (!authorized(request, token)) throw new HttpError(401, 'Unauthorized');
       if (request.method === 'GET' && request.url === '/mission') return send(200, mission);
       if (request.method === 'GET' && request.url === '/strategy') return send(200, await engine.getAdventureState());
+      if (request.method === 'POST' && request.url === '/diary') {
+        if (stopping) throw new HttpError(503, 'Planner is stopping');
+        const input = validateDiaryInput(await bodyJson(request));
+        const id = 'diary-' + randomUUID();
+        const answer = await queue.run(() => engine.complete([
+          { role: 'system', content: DIARY_INSTRUCTIONS },
+          { role: 'user', content: JSON.stringify(input) },
+        ], id, { signal: controller.signal, role: 'repair' }), { signal: controller.signal });
+        const text = validateDiaryParagraph(answer.text);
+        console.info(JSON.stringify({ event: 'diary', id, model: MODEL, observedAt: input.observedAt, answerEntryId: answer.answerEntryId, usage: answer.usage }));
+        return send(200, { text, model: MODEL, answerEntryId: answer.answerEntryId });
+      }
       if (request.method !== 'POST' || request.url !== '/v1/chat/completions') throw new HttpError(404, 'Not found');
       if (stopping) throw new HttpError(503, 'Planner is stopping');
       const body = validateChat(await bodyJson(request));
@@ -196,7 +209,7 @@ export async function startPlanner({
     } catch (error) {
       if (controller.signal.aborted) return;
       const code = error instanceof HttpError ? error.status : 502;
-      if (code === 502) console.error('Planner model request failed');
+      if (code === 502) console.error('Planner model request failed:', error.message);
       if (!response.headersSent && !response.destroyed) send(code, { error: { message: code === 502 ? 'Model request failed' : error.message, type: 'planner_error' } });
     }
   });
