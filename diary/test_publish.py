@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import subprocess
 
 import publish
+from PIL import Image
 
 
 class PublishTests(unittest.TestCase):
@@ -66,6 +67,19 @@ class PublishTests(unittest.TestCase):
             'Moss: Mined 2 oak log; inventory pickup is tracked separately.',
             'Moss: Encountered a blocker — No reachable stone.',
         ])
+
+    def test_uniform_sky_from_a_completed_renderer_frame_is_valid(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'frame.webp'
+            Image.new('RGB', (1440, 900), '#add8e6').save(path)
+            publish.validate_frame(path)
+
+    def test_undersized_image_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'frame.webp'
+            Image.new('RGB', (100, 100), '#add8e6').save(path)
+            with self.assertRaisesRegex(ValueError, 'too small'):
+                publish.validate_frame(path)
 
     def test_corrupt_image_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:

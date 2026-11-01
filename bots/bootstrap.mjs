@@ -8,6 +8,7 @@ import { readyScript, patchViewerClient } from './viewer-readiness.mjs';
 import { patchViewerServer, viewerState, createCameraMotion } from './viewer-stream.mjs';
 import { patchViewerEntities, viewerEntityModel } from './viewer-entities.mjs';
 import { patchViewerHeightClient } from './viewer-height.mjs';
+import { patchViewerRevisionClient } from './viewer-revisions.mjs';
 import { createObserver, atomicJson, getHome, OBS } from './runtime.mjs';
 import { join } from 'node:path';
 
@@ -34,7 +35,7 @@ registerHooks({
       source = replaceExactly(source, "io.on('connection', (socket) => {", `io.on('connection', (socket) => {\n    const isPublic = socket.handshake.headers['x-roycraft-public-viewer'] === '1';\n    socket.data.roycraftPublic = isPublic;\n    if (!(${viewerAllowed.toString()})(isPublic, sockets.map(s => s.data.roycraftPublic))) { socket.disconnect(true); return }`, url);
     } else if (url.endsWith('/node_modules/prismarine-viewer/lib/common.js')) {
       const index = '/opt/minecraft-mindcraft/node_modules/prismarine-viewer/public/index.html';
-      source = replaceExactly(source, "app.use(compression())", `app.use(compression())\n  app.get(prefix + '/', (req, res) => res.type('html').send(require('fs').readFileSync(${JSON.stringify(index)}, 'utf8').replace('<body>', '<body>' + ${JSON.stringify(readyScript)})))\n  app.get(prefix + '/index.js', (req, res) => res.type('js').send((${patchViewerHeightClient.toString()})((${patchViewerClient.toString()})((${patchViewerEntities.toString()})(require('fs').readFileSync(${JSON.stringify(index.replace('index.html', 'index.js'))}, 'utf8'), ${JSON.stringify(viewerEntityModel.toString())}), ${JSON.stringify(createCameraMotion.toString())}))))\n  app.get(prefix + '/worker.js', (req, res) => res.sendFile(${JSON.stringify(fileURLToPath(new URL('./assets/worker.js', import.meta.url)))}))`, url);
+      source = replaceExactly(source, "app.use(compression())", `app.use(compression())\n  app.get(prefix + '/', (req, res) => res.type('html').send(require('fs').readFileSync(${JSON.stringify(index)}, 'utf8').replace('<body>', '<body>' + ${JSON.stringify(readyScript)})))\n  app.get(prefix + '/index.js', (req, res) => res.type('js').send((${patchViewerRevisionClient.toString()})((${patchViewerHeightClient.toString()})((${patchViewerClient.toString()})((${patchViewerEntities.toString()})(require('fs').readFileSync(${JSON.stringify(index.replace('index.html', 'index.js'))}, 'utf8'), ${JSON.stringify(viewerEntityModel.toString())}), ${JSON.stringify(createCameraMotion.toString())})))))\n  app.get(prefix + '/worker.js', (req, res) => res.sendFile(${JSON.stringify(fileURLToPath(new URL('./assets/worker.js', import.meta.url)))}))`, url);
     }
     return { ...result, source };
   }

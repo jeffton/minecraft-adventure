@@ -33,9 +33,6 @@ def validate_frame(path):
     with Image.open(path) as image:
         if image.width < 640 or image.height < 360:
             raise ValueError('Camera frame is too small')
-        colors = image.convert('RGB').resize((160, 100)).getcolors(16000)
-        if colors is not None and len(colors) < 32:
-            raise ValueError('Camera frame contains no rendered scene')
 
 
 def public_bot(bot):
