@@ -5,7 +5,7 @@ import path from 'node:path';
 import { MODEL, MODEL_ROLES, MISSION_INSTRUCTIONS, HttpError, validateChat, validateObservation } from './contracts.mjs';
 import { ModelQueue } from './queue.mjs';
 import { openEngine } from './engine.mjs';
-import { initialEvidence, observeEvidence, resetSinceReview } from './evidence.mjs';
+import { MEAL_EVIDENCE_VERSION, correctUnverifiedMeals, initialEvidence, observeEvidence, resetSinceReview } from './evidence.mjs';
 import { STRATEGY_INSTRUCTIONS, reviewTrigger, strategyContext, validateReview } from './strategy.mjs';
 
 const BODY_LIMIT = 128 * 1024;
@@ -54,6 +54,9 @@ export async function startPlanner({
       strategy: null, evidence: initialEvidence(), mission: existingMission,
       lastReviewAt: 0, lastTriggerFingerprint: null,
     } });
+  }
+  if (adventure.evidence.mealEvidence !== MEAL_EVIDENCE_VERSION) {
+    adventure = await engine.recordEvidence({ expectedRevision: adventure.revision, evidence: correctUnverifiedMeals(adventure.evidence) });
   }
   let mission = adventure.mission;
   // Pi Durable is authoritative; this file is only the bot-readable projection.

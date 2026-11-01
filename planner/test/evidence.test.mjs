@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { initialEvidence, observeEvidence, resetSinceReview } from '../evidence.mjs';
+import { correctUnverifiedMeals, initialEvidence, observeEvidence, resetSinceReview } from '../evidence.mjs';
 
 const at = '2026-11-01T15:00:00Z';
 function observation(events = [], overrides = {}) {
@@ -18,7 +18,7 @@ const observe = (events, overrides) => observeEvidence(initialEvidence(), observ
 
 test('JSON restart and repeated snapshots do not recount death, meal, craft or mining', () => {
   const snapshot = observation([
-    { type: 'death' }, { type: 'eat', data: { item: 'apple', count: 1, food: 8, health: 20 } },
+    { type: 'death' }, { type: 'eat', data: { verified: true, item: 'apple', count: 1, food: 8, health: 20 } },
     { type: 'craft', data: { item: 'stick', count: 4 } },
     { type: 'gather', data: { material: 'stone', position: { x: 1, y: 70, z: 0 } } },
   ]);
@@ -27,6 +27,28 @@ test('JSON restart and repeated snapshots do not recount death, meal, craft or m
   assert.equal(initial.totals.deaths, 0);
   assert.deepEqual(first.totals, { deaths: 1, meals: 1, crafted: 4, mined: 1, lodgeVerifiedPlacements: 0 });
   assert.deepEqual(observeEvidence(JSON.parse(JSON.stringify(first)), snapshot), first);
+});
+
+test('faulty historical meal signals are audited, never promoted or replayed as consumption', () => {
+  const legacy = initialEvidence();
+  delete legacy.mealEvidence;
+  legacy.totals.meals = 7;
+  legacy.sinceReview.counters.meals = 3;
+  legacy.cursors.Roy = { session: 'session-a', sequence: 7 };
+  const corrected = correctUnverifiedMeals(legacy);
+  assert.equal(legacy.totals.meals, 7, 'correction does not mutate its input');
+  assert.equal(corrected.totals.meals, 0);
+  assert.equal(corrected.sinceReview.counters.meals, 0);
+  assert.equal(corrected.unverifiedMealEvents, 7);
+  const next = observeEvidence(corrected, observation([
+    { sequence: 7, type: 'eat', data: { item: 'chicken', count: 1 } },
+    { sequence: 8, type: 'eat', data: { item: 'chicken', count: 1 } },
+    { sequence: 9, type: 'eat', data: { verified: true, item: 'chicken', count: 1, food: 4, health: 8 } },
+  ]));
+  assert.equal(next.totals.meals, 1);
+  assert.equal(next.unverifiedMealEvents, 8);
+  assert.deepEqual(correctUnverifiedMeals(next), next, 'a later restart preserves verified consumption');
+  assert.deepEqual(observeEvidence(next, observation([])), next);
 });
 
 test('missing sequences are explicit gaps and a new session does not invent a death', () => {
@@ -60,7 +82,7 @@ test('offline and omitted bot inventories are unknown, not lost; last-known stat
 test('consumed food is a meal, not lost progress; reset establishes food/equipment baseline', () => {
   const first = observe([], { food: 5, inventory: [{ name: 'apple', count: 2 }, { name: 'iron_pickaxe', count: 1 }] });
   const next = observeEvidence(resetSinceReview(first), observation([
-    { type: 'eat', data: { item: 'apple', count: 1, food: 9, health: 20 } },
+    { type: 'eat', data: { verified: true, item: 'apple', count: 1, food: 9, health: 20 } },
   ], { food: 9, inventory: [{ name: 'apple', count: 1 }] }));
   assert.equal(next.sinceReview.counters.meals, 1);
   assert.deepEqual(next.sinceReview.foodEquipmentChanges.Roy, {

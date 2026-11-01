@@ -41,7 +41,10 @@ test('a published program starts locally and rechecks dropped prerequisites afte
   let localRuns = 0;
   let chatStarts = 0;
   const bot = Object.assign(new EventEmitter(), {
-    _client: { state: 'play' }, entity: { position: new Vec3(0, 64, 0), velocity: new Vec3(0, 0, 0), onGround: true },
+    _client: Object.assign(new EventEmitter(), { state: 'play' }),
+    autoEat: { options: { eatingTimeout: 3000 } },
+    getEquipmentDestSlot: () => 36,
+    entity: { id: 1, position: new Vec3(0, 64, 0), velocity: new Vec3(0, 0, 0), onGround: true },
     pathfinder: { isMoving: () => false, isMining: () => false, isBuilding: () => false }, getControlState: () => false, game: { dimension: 'overworld' }, health: 20, food: 20,
     inventory: { slots: Array(46), items: () => [] }, entities: {}, registry: { blocksByName: {}, biomes: { 0: { name: 'plains' } } },
     world: { getBiome: () => 0 }, findBlocks: () => [], blockAt: () => null
@@ -59,12 +62,20 @@ test('a published program starts locally and rechecks dropped prerequisites afte
     const observed = JSON.parse(readFileSync(join(process.env.ADVENTURE_ROOT, 'observations', 'Roy.json'), 'utf8'));
     assert.equal(observed.error, null, 'missing food must not invalidate a successful preparation action');
     assert.equal(observed.events.filter(event => event.type === 'food').length, 1);
-    bot.food = 2;
     bot.emit('autoeat_finished', { name: 'mutton' });
     bot.emit('autoeat_error', new Error('No food found.'));
     observer.publish();
+    const unverified = JSON.parse(readFileSync(join(process.env.ADVENTURE_ROOT, 'observations', 'Roy.json'), 'utf8'));
+    assert.equal(unverified.events.filter(event => event.type === 'eat').length, 0);
+    assert.equal(unverified.events.filter(event => event.type === 'food').length, 1);
+    bot.emit('autoeat_started', { name: 'mutton' }, false);
+    bot.food = 2;
+    bot.emit('health');
+    bot.emit('autoeat_error', new Error('No food found.'));
+    observer.publish();
     const afterMeal = JSON.parse(readFileSync(join(process.env.ADVENTURE_ROOT, 'observations', 'Roy.json'), 'utf8'));
-    assert.equal(afterMeal.events.filter(event => event.type === 'food').length, 2, 'a meal resets missing-food reporting');
+    assert.equal(afterMeal.events.filter(event => event.type === 'food').length, 2, 'a confirmed meal resets missing-food reporting');
+    assert.equal(afterMeal.events.find(event => event.type === 'eat').data.verified, true);
     const errors = t.mock.method(console, 'error', () => {});
     bot.emit('autoeat_error', new Error('Consume rejected'));
     observer.publish();

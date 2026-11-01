@@ -8,6 +8,8 @@ import { createHash } from 'node:crypto';
 // Counters describe observed events, never inferred losses or model claims. 'lodge'
 // means first verified lodge placement, NOT a completed building. Placement keys
 // are capped at 4096 (one small lodge); overflow is explicitly incomplete evidence.
+export const MEAL_EVIDENCE_VERSION = 'server-consumption-v1';
+
 const MAX_BLOCKERS = 12;
 const MAX_PLACEMENTS = 4096;
 const counterNames = ['deaths', 'meals', 'crafted', 'mined', 'lodgeVerifiedPlacements'];
@@ -18,12 +20,25 @@ const equipmentView = bot => ({ food: bot.food, equipment: equipment(bot.invento
 
 export function initialEvidence() {
   return {
+    mealEvidence: MEAL_EVIDENCE_VERSION, unverifiedMealEvents: 0,
     cursors: {}, totals: counters(), achievements: {}, current: {}, lastKnown: {},
     inventoryMax: {}, blockers: [], verifiedLodgePositions: [], verifiedPrograms: [],
     evidenceGapCount: 0, coverageGaps: { events: 0, blockers: 0, placements: 0 },
     sinceReview: { counters: counters(), baseline: {}, foodEquipmentChanges: {} },
     progressSummary: {}, progressFingerprint: null,
   };
+}
+
+export function correctUnverifiedMeals(previous) {
+  const evidence = structuredClone(previous);
+  if (evidence.mealEvidence === MEAL_EVIDENCE_VERSION) return evidence;
+  // The earlier auto-eat signal could fire without server consumption. Preserve
+  // its event count for audit, but never retain it as proven gameplay progress.
+  evidence.unverifiedMealEvents = evidence.totals.meals;
+  evidence.totals.meals = 0;
+  evidence.sinceReview.counters.meals = 0;
+  evidence.mealEvidence = MEAL_EVIDENCE_VERSION;
+  return evidence;
 }
 
 function recordGap(evidence, category, count) {
@@ -96,7 +111,11 @@ function applyEvent(evidence, bot, event) {
   const data = event.data;
   switch (event.type) {
     case 'death': increment(evidence, 'deaths', 1); break;
-    case 'eat': increment(evidence, 'meals', count(data.count, 'eat')); break;
+    case 'eat': {
+      if (data.verified === true) increment(evidence, 'meals', count(data.count, 'eat'));
+      else evidence.unverifiedMealEvents++;
+      break;
+    }
     case 'craft': increment(evidence, 'crafted', count(data.count, 'craft')); break;
     case 'gather': increment(evidence, 'mined', 1); break;
     case 'build': {

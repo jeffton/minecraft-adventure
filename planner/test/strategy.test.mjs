@@ -211,6 +211,17 @@ test('completion triggers once, and unrelated monotonic progress cannot mask a s
   assert.equal(trigger(acknowledged, complete, next, 'cadence:later'), null, 'a later cadence cannot re-trigger an acknowledged completion');
 });
 
+test('historical unconfirmed meal counters remain auditable without contaminating reviewed outcomes', () => {
+  const { observed, evidence, strategy } = setup();
+  strategy.history = [{ goalId: 'old-recovery', counters: { meals: 7, deaths: 1 } }];
+  const next = validateReview(nextAnswer(strategy), strategy, evidence, observed).strategy;
+  assert.equal(next.history[0].counters.meals, 0);
+  assert.equal(next.history[0].unverifiedMealEvents, 7);
+  assert.equal(next.history[0].counters.deaths, 1);
+  const following = validateReview(nextAnswer(next), next, evidence, observed).strategy;
+  assert.equal(following.history[0].unverifiedMealEvents, 7, 'reviewing corrected history does not erase the audit');
+});
+
 test('strategy context exposes bounded verified programs without event cursors or placement history', () => {
   const observed = observation();
   observed.bots[0].events = Array.from({ length: 12 }, (_, i) => ({

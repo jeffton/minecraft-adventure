@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { BOT_NAMES, validatePlan } from './contracts.mjs';
 import { ACQUISITION_ITEMS } from '../bots/program.mjs';
+import { MEAL_EVIDENCE_VERSION } from './evidence.mjs';
 import itemRegistry from './item-ids.json' with { type: 'json' };
 
 const items = new Set(itemRegistry.items);
@@ -18,7 +19,7 @@ const identifier = value => {
 export const STRATEGY_INSTRUCTIONS = `You coordinate a persistent survival expedition. Return ONLY JSON:
 {"strategy":{"goal":{"id":"stable-kebab-id","title":"specific achievable objective","owner":"Roy|Moss|Flint|Spruce|team","dependsOn":["completed-goal-id"],"success":[{"metric":"food|health|inventory|near_home|lodge_placements|milestone","bot":"Roy|Moss|Flint|Spruce","item":"only for inventory","min":1,"id":"only for milestone","maxDistance":4}]},"decision":"continue|switch","basis":"initial|progress|blocked|completed|recovery","reason":"why this intervention follows the supplied evidence","nextGoals":["short dependency-ordered next objective"],"adaptation":"specific changed behavior or reason to reuse a verified program"},"mission":THE_EXISTING_MISSION_SCHEMA}.
 Criteria use ONLY applicable fields: food/health={metric,bot,min}; inventory={metric,bot,item,min}; near_home={metric,bot,maxDistance}; lodge_placements={metric,min}; milestone={metric,id} with id settled/stone/iron/lodge. Use 1-12 measurable criteria, no subjective or imagined completion. Inventory goals use supported acquisition items and minima 1-64; unsupported items may only describe an already observed owned inventory. The controller evaluates them, not you. A historical item achievement is NOT current equipment; the first lodge placement is NOT a completed building. Offline inventories are unknown. Home is a coordinate, not shelter. Ground truth state and earned resources override all earlier plans.
-Keep the same goal ID while continuing the same objective. Change it only for an explained switch. dependsOn contains ONLY IDs in completedGoals. nextGoals is a bounded roadmap, not executable claims. The current action API cannot enter portals, trade supplies, deliver, or defeat the dragon: do not promise these actions. A future API extension is a blocker, not an imaginary implemented skill. Address each bot's hunger/health before long journeys or building; they cannot borrow another bot's inventory. Prefer held or nearby supported wood species, achievable batches and exposed blocks. A failed resource search is a precondition problem, not evidence to retry the identical request forever.
+Keep the same goal ID AND unchanged success criteria while continuing an objective. Changing criteria requires an explained switch with a new goal ID. Only evidence.totals.meals counts verified server consumption. unverifiedMealEvents and older narrative meal claims are not confirmed meals. dependsOn contains ONLY IDs in completedGoals. nextGoals is a bounded roadmap, not executable claims. The current action API cannot enter portals, trade supplies, deliver, or defeat the dragon: do not promise these actions. A future API extension is a blocker, not an imaginary implemented skill. Address each bot's hunger/health before long journeys or building; they cannot borrow another bot's inventory. Use short urgent food batches, not a large hunting quota that prevents later preparation. After immediate food, acquire and explicitly equip a personal weapon: stone_sword when stone/pickaxe is available, otherwise wooden_sword from earned wood. Existing suitable swords/axes may be equipped rather than crafting a weaker duplicate. Put ensure_item then equip in the actual program before distant regrouping/exploration; never rely on prose promising weapons. Local threat assessment handles fight versus bounded retreat without model calls per hit. Prefer held or nearby supported wood species, achievable batches and exposed blocks. A failed resource search is a precondition problem, not evidence to retry the identical request forever.
 Use sinceReview, current-vs-baseline goal scores, repeated blocker context and intervention history to continue or change strategy. Three unchanged-context failures with no goal progress require a changed intervention or an explicit concrete reason. Verified programs are examples checked by the existing controller; reuse only when their controller revision and relevant preconditions still apply, and recheck the same postconditions. Never generate JavaScript. Four bots' fast navigation/combat/eating remain local code; you plan missions, not individual ticks.`;
 
 function validateCriterion(value, evidence) {
@@ -107,9 +108,13 @@ export function validateReview(answer, previous, evidence, observed) {
     nextGoals: card.nextGoals.map(value => words(value, 'next objective', 180)),
     reviewedAt: observed.updatedAt, completedGoals: completedGoals.slice(-16),
     blockerBaseline: Object.fromEntries(evidence.blockers.map(blocker => [blocker.key, blocker.count])),
-    history: [...(previous?.history ?? []), ...(previous ? [{
+    history: [...(previous?.history ?? []).map(entry => entry.mealEvidence === MEAL_EVIDENCE_VERSION ? entry : {
+      ...entry, mealEvidence: MEAL_EVIDENCE_VERSION, unverifiedMealEvents: entry.counters.meals,
+      counters: { ...entry.counters, meals: 0 },
+    }), ...(previous ? [{
       goalId: previous.goal.id, intervention: previous.adaptation, reviewedAt: previous.reviewedAt,
       outcome: evaluateGoal(previous.goal, evidence, observed), counters: evidence.sinceReview.counters,
+      mealEvidence: evidence.mealEvidence,
       changes: evidence.sinceReview.foodEquipmentChanges,
     }] : [])].slice(-4),
   };

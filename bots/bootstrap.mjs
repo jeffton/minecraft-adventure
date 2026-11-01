@@ -11,6 +11,7 @@ import { patchViewerHeightClient } from './viewer-height.mjs';
 import { patchViewerRevisionClient } from './viewer-revisions.mjs';
 import { createObserver, atomicJson, getHome, OBS } from './runtime.mjs';
 import { join } from 'node:path';
+import { configureFood, patchSurvivalSource, withSafetyAction } from './survival.mjs';
 
 const extensionUrl = new URL('./extensions.mjs', import.meta.url).href;
 
@@ -27,7 +28,9 @@ registerHooks({
     let source = result.source;
     if (source == null) return result;
     source = String(source);
-    if (url.endsWith('/src/agent/commands/actions.js')) {
+    if (url.endsWith('/src/agent/agent.js') || url.endsWith('/src/agent/modes.js') || url.endsWith('/src/agent/library/skills.js')) {
+      source = patchSurvivalSource(source, url, new URL('./survival.mjs', import.meta.url).href);
+    } else if (url.endsWith('/src/agent/commands/actions.js')) {
       source += `\nimport { registerAdventure } from ${JSON.stringify(extensionUrl)};\nregisterAdventure(actionsList);\n`;
 
     } else if (url.endsWith('/node_modules/prismarine-viewer/lib/mineflayer.js')) {
@@ -46,6 +49,9 @@ const { Agent } = await import('/opt/minecraft-mindcraft/src/agent/agent.js');
 const { ActionManager } = await import('/opt/minecraft-mindcraft/src/agent/action_manager.js');
 const originalRunAction = ActionManager.prototype.runAction;
 ActionManager.prototype.runAction = function (label, action, options) {
+  if (['mode:self_preservation', 'mode:cowardice', 'mode:self_defense'].includes(label)) {
+    return originalRunAction.call(this, label, () => withSafetyAction(this.agent.bot, action), options);
+  }
   const authored = label.startsWith('adventure:') || ['action:buildNetherPortal', 'action:enterPortal', 'action:throwEnderEye', 'action:fillEndPortal', 'action:fightEnd'].includes(label);
   if (!authored) return originalRunAction.call(this, label, action, options);
   return originalRunAction.call(this, label, async () => {
@@ -164,9 +170,7 @@ Agent.prototype.startEvents = function (...args) {
   originalStartEvents.apply(this, args);
   if (this.bot.game.gameMode !== 'survival') throw new Error('Adventure bots require survival mode');
   this.bot.modes.setOn('cheat', false);
-  // Natural regeneration requires at least 18 food. Waiting until 14 leaves
-  // wounded bots carrying food without ever starting to heal.
-  this.bot.autoEat.options.startAt = 19;
+  configureFood(this.bot);
   this.adventure = createObserver(this, {
     programMode: active => setProgramMode(this.name, active),
     cancelChat: () => { for (const request of modelRequests.get(this.name) ?? []) request.abort(); },

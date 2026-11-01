@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync, renameSync, mkdirSync, existsSync } from '
 import { join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { observedInventory } from './program.mjs';
+import { observeMeals, interruptedProgramRetry, safeToResume } from './survival.mjs';
 import { BOT_ROLES, INITIAL_TASKS, missionPrompt, validateMission } from './blueprint.mjs';
 
 export const ROOT = process.env.ADVENTURE_ROOT ?? '/var/lib/minecraft-adventure';
@@ -9,7 +10,7 @@ export const OBS = join(ROOT, 'observations');
 export const CONTROL = join(ROOT, 'control');
 export const NAMES = Object.keys(BOT_ROLES);
 const controllerHash = createHash('sha256');
-for (const file of ['program.mjs', 'gather.mjs', 'navigation.mjs', 'extensions.mjs', 'compat-loader.mjs', 'inventory-controller.mjs', 'progression.mjs', 'scout.mjs', 'bootstrap.mjs']) {
+for (const file of ['program.mjs', 'gather.mjs', 'navigation.mjs', 'extensions.mjs', 'compat-loader.mjs', 'inventory-controller.mjs', 'progression.mjs', 'scout.mjs', 'bootstrap.mjs', 'survival.mjs']) {
   controllerHash.update(readFileSync(new URL(file, import.meta.url)));
 }
 export const CONTROLLER_REVISION = controllerHash.digest('hex');
@@ -100,7 +101,9 @@ export function createObserver(agent, controls = {}) {
   let programFailed = false;
   let finishedAt = 0;
   let programMessage = '';
+  let failureKind = null;
   const emit = (type, message, data = {}) => {
+    if (type === 'attempt_failed') failureKind = data.kind;
     if (type === 'error') { errorCount++; error = String(message); }
     events.push({ session, sequence: ++eventSequence, at: new Date().toISOString(), bot: agent.name, type, message: String(message).slice(0, 1200), data });
     if (events.length > 60) events.shift();
@@ -111,9 +114,9 @@ export function createObserver(agent, controls = {}) {
   let serverCorrections = 0;
   bot.on('physicsTick', () => { physicsTicks++; });
   bot.on('forcedMove', () => { serverCorrections++; });
-  bot.on('autoeat_finished', item => {
+  observeMeals(bot, data => {
     foodMissing = false;
-    emit('eat', `Ate earned ${item.name}; food ${bot.food}/20, health ${bot.health}/20.`, { item: item.name, count: 1, food: bot.food, health: bot.health });
+    emit('eat', `Ate earned ${data.item}; food ${data.food}/20, health ${data.health}/20.`, data);
   });
   bot.on('autoeat_error', error => {
     if (error.message !== 'No food found.') return recordError(error);
@@ -159,9 +162,14 @@ export function createObserver(agent, controls = {}) {
           agent.self_prompter.stop(false);
           controls.cancelChat();
         }
-        if (!programRunning && !repairRunning && programId !== mission.id && agent.isIdle()) {
+        if (programFailed && !programRunning && !repairRunning && agent.isIdle() && interruptedProgramRetry(failureKind, bot)) {
+          programId = null;
+          programFailed = false;
+        }
+        if (!programRunning && !repairRunning && programId !== mission.id && agent.isIdle() && safeToResume(bot)) {
           programId = mission.id;
           programRunning = true;
+          failureKind = null;
           const errorsBefore = errorCount;
           Promise.resolve(controls.runProgram()).then(message => {
             programMessage = String(message);
@@ -170,7 +178,7 @@ export function createObserver(agent, controls = {}) {
           }).catch(e => { programFailed = true; recordError(e); }).finally(() => {
             programRunning = false; finishedAt = Date.now();
           });
-        } else if (programFailed && !programRunning && !repairRunning && Date.now() - finishedAt >= 45000 && agent.isIdle()) {
+        } else if (programFailed && failureKind !== 'interrupted' && !programRunning && !repairRunning && Date.now() - finishedAt >= 45000 && agent.isIdle()) {
           repairRunning = true;
           agent.adventureThinking = true;
           controls.programMode(false);
