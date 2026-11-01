@@ -10,7 +10,7 @@ A cooperative survival expedition at **minecraft.roybot.se**, with a field journ
 - Codex Terra (`gpt-5.6-terra`) uses Pi Durable 1.4.0 and SQLite. Shared missions are reconsidered every five minutes. Model requests are serialized and paced at least twenty seconds apart.
 - Immediate movement, mining, combat, eating and retreat run locally. Terra selects actions and revises bounded declarative programs; arbitrary generated JavaScript and host commands are disabled.
 - A systemd timer publishes observed status and an actual bot-camera WebP every fifteen minutes. The live viewer switches between all four first-person cameras, with live inventory and main/off-hand labels. Only the selected camera is connected; rendering runs in visitors' browsers with eight public viewers per bot. Neither interface controls the bots.
-- Camera movement and look direction are smoothed locally. Captures wait for loaded chunks, terrain meshes and textures; fog bounds the 64-block viewing distance. The upstream renderer does not draw held equipment on character models. Its older entity models use base coat variants; unsupported species can still appear as placeholders.
+- Camera movement and look direction are smoothed locally. Captures wait for loaded chunks, terrain meshes and textures; fog bounds the 48-block viewing distance. Two meshing workers and a four-chunk radius bound browser memory. The upstream renderer does not draw held equipment on character models. Its older entity models use base coat variants; unsupported species can still appear as placeholders.
 
 ## Progression
 

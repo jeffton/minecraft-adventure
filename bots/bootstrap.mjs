@@ -185,7 +185,7 @@ Agent.prototype.startEvents = function (...args) {
     return result;
   };
   this.bot.adventureAction = () => this.actions.currentActionLabel || (this.adventureThinking ? 'planning' : 'idle');
-  viewer.mineflayer(this.bot, { port: 8931 + Object.keys(BOT_ROLES).indexOf(this.name), viewDistance: 5, firstPerson: true });
+  viewer.mineflayer(this.bot, { port: 8931 + Object.keys(BOT_ROLES).indexOf(this.name), viewDistance: 4, firstPerson: true });
   if (this.name === 'Roy') {
     const timer = setInterval(() => {
       try { sceneSnapshot(this); } catch (error) { this.adventure.recordError(error); }

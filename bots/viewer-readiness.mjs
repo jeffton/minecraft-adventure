@@ -1,6 +1,7 @@
 export function patchViewerClient(source, cameraMotionSource) {
   const edits = [
-    ['const u=new r(l);', `const u=new r(l);window.roycraftMotion=(${cameraMotionSource})();window.roycraftViewer=u;u.camera.far=64;u.camera.updateProjectionMatrix();u.scene.fog=new THREE.Fog(u.scene.background,32,60);o.on('adventureState',s=>{window.roycraftState=s});o.on('adventureChunks',chunks=>{window.roycraftChunks=chunks});`],
+    ['this.world=new a(this.scene)', 'this.world=new a(this.scene,2)'],
+    ['const u=new r(l);', `const u=new r(l);window.roycraftMotion=(${cameraMotionSource})();window.roycraftViewer=u;u.camera.far=48;u.camera.updateProjectionMatrix();u.scene.fog=new THREE.Fog(u.scene.background,24,44);o.on('adventureState',s=>{window.roycraftState=s});o.on('adventureChunks',chunks=>{window.roycraftChunks=chunks});`],
     ['u.setFirstPersonCamera(t,r,o)', '(window.roycraftMotion.receive(u,t,r,o),window.roycraftCameraApplied=true)'],
     ['u.update(),l.render', 'window.roycraftMotion.frame(u,performance.now()),window.roycraftChunksReady=!!window.roycraftChunks?.length&&window.roycraftChunks.every(k=>u.world.loadedChunks[k])&&u.world.sectionsOutstanding.size===0&&window.roycraftTexturesReady(u),u.update(),l.render']
   ];

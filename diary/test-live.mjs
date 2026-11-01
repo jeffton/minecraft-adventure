@@ -29,7 +29,7 @@ try {
       const actual = await frame.evaluate(() => ({ state: window.roycraftState, chunks: Object.keys(window.roycraftViewer.world.loadedChunks).length, pending: window.roycraftViewer.world.sectionsOutstanding.size, far: window.roycraftViewer.camera.far }));
       assert.equal(actual.state.name, name);
       assert.ok(Array.isArray(actual.state.inventory));
-      assert.equal(actual.far, 64);
+      assert.equal(actual.far, 48);
       assert.ok(actual.chunks > 25, `Loaded terrain for ${name}: ${actual.chunks}`);
       assert.ok((await page.locator('#camera-kit').textContent()).includes(actual.state.held ? actual.state.held.name.replaceAll('_', ' ') : 'Empty'));
       assert.equal(await page.locator('#live-feed').count(), 1);

@@ -41,9 +41,10 @@ test('camera and completed terrain meshes are both required before a snapshot', 
 });
 
 test('client integration installs one motion controller and waits for initial chunk meshing', () => {
-  const source = 'const u=new r(l);u.setFirstPersonCamera(t,r,o);u.update(),l.render';
+  const source = 'this.world=new a(this.scene);const u=new r(l);u.setFirstPersonCamera(t,r,o);u.update(),l.render';
   const result = patchViewerClient(source, createCameraMotion.toString());
   assert.match(result, /sectionsOutstanding.size===0/);
+  assert.match(result, /this.world=new a\(this.scene,2\)/);
   assert.match(result, /roycraftMotion.receive/);
   assert.match(result, /adventureState/);
   assert.throws(() => patchViewerClient('changed upstream'), /integration changed/);
