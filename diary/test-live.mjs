@@ -42,7 +42,13 @@ for (const width of widths) {
       assert.equal(actual.far, 48);
       assert.equal(actual.purple, 0, `Purple placeholder meshes remain for ${name}`);
       assert.ok(actual.chunks > 25, `Loaded terrain for ${name}: ${actual.chunks}`);
-      assert.ok((await page.locator('#camera-kit').textContent()).includes(actual.state.held ? actual.state.held.name.replaceAll('_', ' ') : 'Empty'));
+      // Equipment may change between the frame sample and the HUD's next poll.
+      // Compare both current values in one browser turn, including stack count.
+      await page.waitForFunction(() => {
+        const state = document.querySelector('#live-feed').contentWindow.roycraftState;
+        const expected = `Main hand: ${state.held ? `${state.held.name.replaceAll('_', ' ')} ×${state.held.count}` : 'Empty'}`;
+        return document.querySelector('#camera-kit [aria-label^="Main hand:"]')?.getAttribute('aria-label') === expected;
+      }, undefined, { timeout: 10000 });
       assert.equal(await page.locator('#live-feed').count(), 1);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
       if (name === 'Moss') await page.screenshot({ path: `${process.env.SCREENSHOT_DIR || '/tmp'}/roycraft-live-${name}-${width}.png` });
