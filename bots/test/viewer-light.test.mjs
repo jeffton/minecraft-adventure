@@ -172,7 +172,7 @@ test('server coalesces actual column light after partial/empty masks, including 
   assert.equal(receiver.getSkyLight(new Vec3(1, -48, 1)), 15);
 });
 
-test('server discards queued stale/unloaded/respawned columns and disconnect removes subscriptions', async t => {
+test('server discards queued stale/unloaded columns and disconnect removes only viewer subscriptions', async t => {
   const f = fixture(t);
   const update = () => f.bot._client.emit('update_light', packet(-1, { blockLightMask: [[0, 2]] }));
   f.bot._client.emit('map_chunk', { x: -1, z: 0 });
@@ -186,32 +186,66 @@ test('server discards queued stale/unloaded/respawned columns and disconnect rem
   assert.equal(f.worldView.loadedChunks['-16,0'], undefined);
   await pause();
   assert.equal(f.packets.length, 0);
-  f.worldView.loadedChunks['-16,0'] = true;
-  update();
-  f.bot._client.emit('respawn');
-  assert.equal(f.bot.roycraftLightColumns.size, 0);
-  assert.deepEqual(f.worldView.loadedChunks, {});
-  await pause();
-  assert.equal(f.packets.length, 0);
+  assert.equal(f.bot.roycraftLightColumns.has('-16,0'), false);
   f.socket.emit('disconnect');
   assert.equal(f.bot._client.listenerCount('update_light'), 0);
-  assert.equal(f.bot.listenerCount('chunkColumnUnload'), 0);
-  assert.equal(f.bot._client.listenerCount('respawn'), 1, 'Only global column readiness listener remains');
+  assert.equal(f.bot.listenerCount('chunkColumnUnload'), 1, 'Global column readiness listener remains');
+  assert.equal(f.bot._client.listenerCount('respawn'), 0);
   await pause();
   assert.equal(f.packets.length, 0);
 });
 
-test('in-flight chunk loads are rejected after dimension reset, unload, movement and disconnect', async t => {
+test('same-dimension respawn preserves loaded columns, readiness and pending light updates', async t => {
   const f = fixture(t);
-  for (const reason of ['respawn', 'unload', 'movement', 'disconnect']) {
+  f.bot._client.emit('map_chunk', { x: -1, z: 0 });
+  const column = f.columns.get('-1,0');
+  column.setBlockLight(new Vec3(1, -64, 1), 12);
+  f.bot._client.emit('update_light', packet(-1, { blockLightMask: [[0, 2]] }));
+  f.bot._client.emit('respawn', { dimension: 'overworld' });
+  assert.equal(f.bot.roycraftLightColumns.has('-16,0'), true);
+  assert.equal(f.worldView.loadedChunks['-16,0'], true);
+  await pause();
+  assert.equal(f.packets.length, 1);
+  const receiver = new Chunk();
+  loadLight(receiver, f.packets[0].light);
+  assert.equal(receiver.getBlockLight(new Vec3(1, -64, 1)), 12);
+  f.bot._client.emit('update_light', packet(-1, { blockLightMask: [[0, 2]] }));
+  await pause();
+  assert.equal(f.packets.length, 2, 'Light subscription survives same-dimension respawn');
+});
+
+test('real dimension switch unloads each old column before accepting replacement map chunks', async t => {
+  const f = fixture(t);
+  f.bot._client.emit('map_chunk', { x: -1, z: 0 });
+  f.bot._client.emit('map_chunk', { x: 0, z: 0 });
+  f.bot._client.emit('update_light', packet(-1, { blockLightMask: [[0, 2]] }));
+  // Mineflayer emits one unload per retained column on an actual switch.
+  for (const pos of [{ x: -16, z: 0 }, { x: 0, z: 0 }]) f.bot.emit('chunkColumnUnload', pos);
+  f.bot._client.emit('respawn', { dimension: 'the_nether' });
+  assert.equal(f.bot.roycraftLightColumns.size, 0);
+  assert.deepEqual(f.worldView.loadedChunks, {});
+  await pause();
+  assert.equal(f.packets.length, 0, 'Old dimension pending light was discarded');
+  await f.worldView.loadChunk({ x: -16, z: 0 });
+  assert.equal(f.loaded.length, 0, 'Replacement must wait for a new map chunk');
+  f.bot._client.emit('map_chunk', { x: -1, z: 0 });
+  await f.worldView.loadChunk({ x: -16, z: 0 });
+  assert.equal(f.loaded.length, 1);
+  assert.equal(f.worldView.loadedChunks['-16,0'], true);
+});
+
+test('in-flight chunk loads are rejected after dimension unload, unload, movement and disconnect', async t => {
+  const f = fixture(t);
+  for (const reason of ['dimension-switch', 'unload', 'movement', 'disconnect']) {
     let resolve;
     f.bot.world.getColumnAt = () => new Promise(done => { resolve = done; });
     f.bot._client.emit('map_chunk', { x: -1, z: 0 });
     f.worldView.lastPos = new Vec3(0, 64, 0);
     const loading = f.worldView.loadChunk({ x: -16, z: 0 });
-    if (reason === 'respawn') {
-      f.bot._client.emit('respawn');
-      // A replacement dimension can have the same coordinates ready again.
+    if (reason === 'dimension-switch') {
+      for (const pos of [{ x: -16, z: 0 }, { x: 0, z: 0 }]) f.bot.emit('chunkColumnUnload', pos);
+      f.bot._client.emit('respawn', { dimension: 'the_nether' });
+      // The replacement dimension can have the same coordinates ready again.
       f.bot._client.emit('map_chunk', { x: -1, z: 0 });
     } else if (reason === 'unload') {
       f.bot._client.emit('unload_chunk', { chunkX: -1, chunkZ: 0 });
