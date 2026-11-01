@@ -1,5 +1,6 @@
 import { registerHooks } from 'node:module';
 import { createInventoryController } from './inventory-controller.mjs';
+import { patchChunkLightSource } from './chunk-light.mjs';
 
 // Paper 26.3 validates client-tick boundaries. Mineflayer 4.39 supports this
 // packet in its protocol registry but omits it from physics/teleport responses.
@@ -66,14 +67,15 @@ export function patchPathfinderGoals(source) {
 registerHooks({
   load(url, context, nextLoad) {
     const result = nextLoad(url, context);
+    const chunkLight = url.endsWith('/node_modules/prismarine-chunk/src/pc/1.18/ChunkColumn.js');
     const physics = url.endsWith('/node_modules/mineflayer/lib/plugins/physics.js');
     const bot = url.endsWith('/minecraft-mindcraft/src/utils/mcdata.js');
     const inventory = url.endsWith('/node_modules/mineflayer/lib/plugins/inventory.js');
     const craft = url.endsWith('/node_modules/mineflayer/lib/plugins/craft.js');
     const goals = url.endsWith('/node_modules/mineflayer-pathfinder/lib/goals.js');
-    if (!physics && !bot && !inventory && !craft && !goals) return result;
+    if (!chunkLight && !physics && !bot && !inventory && !craft && !goals) return result;
     if (result.source == null) throw new Error('Minecraft compatibility source unavailable');
     const source = String(result.source);
-    return { ...result, source: physics ? patchPhysics(source) : bot ? patchBotSource(source) : inventory ? patchInventorySource(source) : craft ? patchCraftSource(source) : patchPathfinderGoals(source) };
+    return { ...result, source: chunkLight ? patchChunkLightSource(source) : physics ? patchPhysics(source) : bot ? patchBotSource(source) : inventory ? patchInventorySource(source) : craft ? patchCraftSource(source) : patchPathfinderGoals(source) };
   }
 });

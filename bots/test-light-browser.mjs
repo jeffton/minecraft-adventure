@@ -1,7 +1,7 @@
 // Run as minecraft-diary inside a bounded transient systemd service. Fixture
 // values are explicit test data, never injected into the live Minecraft world.
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { chromium } from '/opt/minecraft-adventure/diary/node_modules/playwright-core/index.mjs';
 import { attachGeometryLight, createViewerLightMaterial } from './viewer-light.mjs';
@@ -30,8 +30,9 @@ try {
     if (!message.text().startsWith('Failed to load resource:')) errors.push(message.text());
   });
   if (process.argv.includes('--public')) {
+    await page.addInitScript(() => { window.roycraftCaptureRequested = true; });
     await page.goto('https://minecraft.roybot.se/live/', { waitUntil: 'domcontentloaded' });
-    await page.waitForFunction(() => window.roycraftCameraApplied && window.roycraftReady && Object.values(window.roycraftViewer.world.sectionMeshs).some(mesh => mesh.geometry.getAttribute('minecraftLight')?.count), undefined, { timeout: 60000 });
+    await page.waitForFunction(() => window.roycraftCameraApplied && window.roycraftReady && typeof window.roycraftCapture === 'string' && Object.values(window.roycraftViewer.world.sectionMeshs).some(mesh => mesh.geometry.getAttribute('minecraftLight')?.count), undefined, { timeout: 60000 });
     const actual = await page.evaluate(() => {
       const viewer = window.roycraftViewer;
       const channels = [new Set(), new Set()];
@@ -48,8 +49,11 @@ try {
     assert.ok(actual.chunks > 0);
     assert.equal(actual.workers, 1);
     assert.ok([...actual.blockLevels, ...actual.skyLevels].every(value => Number.isFinite(value) && value >= 0 && value <= 15));
-    await page.screenshot({ path: `${output}/public-light.png` });
-    console.log(JSON.stringify({ public: actual, errors, resourceErrors }));
+    const completedFrame = await page.evaluate(() => window.roycraftCapture);
+    writeFileSync(`${output}/public-light.webp`, Buffer.from(completedFrame.split(',')[1], 'base64'));
+    console.log(JSON.stringify({ publicObservation: actual,
+      completedFrame: { path: `${output}/public-light.webp`, relation: 'First completed frame; telemetry sampled separately afterwards' },
+      errors, resourceErrors }));
   } else {
     const column = new Chunk({ minY: -64, worldHeight: 384 });
     const levels = [[0, 0], [14, 0], [13, 0], [0, 15]];

@@ -1,3 +1,5 @@
+import '../compat-loader.mjs';
+import { patchChunkLightWorker } from '../chunk-light.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
@@ -170,7 +172,7 @@ test('real bundled mesher attaches finite water lighting and applies light-only 
     postMessage(message) { messages.push(message); }
   });
   const upstream = readFileSync(`${root}/node_modules/prismarine-viewer/public/worker.js`, 'utf8');
-  vm.runInContext(patchViewerLightWorker(patchViewerHeightWorker(upstream)), context);
+  vm.runInContext(patchChunkLightWorker(patchViewerLightWorker(patchViewerHeightWorker(upstream))), context);
   const send = data => {
     context.messageJson = JSON.stringify(data);
     vm.runInContext('self.onmessage({ data: JSON.parse(messageJson) })', context);
