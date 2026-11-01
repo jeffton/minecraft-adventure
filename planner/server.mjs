@@ -2,7 +2,7 @@ import http from 'node:http';
 import { timingSafeEqual, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { MODEL, MISSION_INSTRUCTIONS, HttpError, validateChat, validatePlan, validateObservation } from './contracts.mjs';
+import { MODEL, MODEL_ROLES, MISSION_INSTRUCTIONS, HttpError, validateChat, validatePlan, validateObservation } from './contracts.mjs';
 import { ModelQueue } from './queue.mjs';
 import { openEngine } from './engine.mjs';
 
@@ -79,7 +79,7 @@ export async function startPlanner({
         const result = await engine.complete([
           { role: 'system', content: MISSION_INSTRUCTIONS },
           { role: 'user', content: JSON.stringify({ observed: pending.observed, previousMission: pending.previousMission }) },
-        ], 'mission-' + pending.id);
+        ], 'mission-' + pending.id, { role: 'mission' });
         // A recovered cached answer is not relabeled as a current observation.
         validateObservation(pending.observed);
         return result;
@@ -112,7 +112,7 @@ export async function startPlanner({
     });
     try {
       if (request.method === 'GET' && request.url === '/healthz') {
-        return send(200, { ok: !stopping, model: MODEL, pending: queue.pending, ...status, missionId: mission?.id ?? null });
+        return send(200, { ok: !stopping, models: MODEL_ROLES, pending: queue.pending, ...status, missionId: mission?.id ?? null });
       }
       if (!authorized(request, token)) throw new HttpError(401, 'Unauthorized');
       if (request.method === 'GET' && request.url === '/mission') return send(200, mission);
@@ -124,7 +124,7 @@ export async function startPlanner({
       const answer = await queue.run(() => engine.complete([
         ...body.messages,
         ...(mission ? [{ role: 'system', content: 'Shared mission (historical world observations take precedence): ' + JSON.stringify(mission) }] : []),
-      ], 'chat-' + body.user + '-' + id, { signal: controller.signal }), { signal: controller.signal });
+      ], 'chat-' + body.user + '-' + id, { signal: controller.signal, role: 'repair' }), { signal: controller.signal });
       console.info(JSON.stringify({ event: 'chat', user: body.user, id, usage: answer.usage }));
       return send(200, {
         id: 'chatcmpl-' + id,

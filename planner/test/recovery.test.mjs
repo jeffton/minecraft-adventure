@@ -6,33 +6,43 @@ import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { createModels } from '@earendil-works/pi-ai/models';
 import { fauxProvider, fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux';
-import { MODEL } from '../contracts.mjs';
+import { MODEL, MODEL_ROLES } from '../contracts.mjs';
 import { openEngine } from '../engine.mjs';
 import { startPlanner } from '../server.mjs';
 import { ModelQueue } from '../queue.mjs';
 
 test('an interrupted actual pi-durable model run resumes from SQLite after reopening', async () => {
   const stateDir = await mkdtemp(path.join(tmpdir(), 'minecraft-planner-recovery-'));
-  const slow = fauxProvider({ provider: 'openai-codex', models: [{ id: MODEL }], tokensPerSecond: 5 });
+  const slow = fauxProvider({ provider: 'openai-codex', models: Object.values(MODEL_ROLES).map(role => ({ id: role.model, reasoning: true })), tokensPerSecond: 5 });
   slow.setResponses([fauxAssistantMessage('a long partial answer that cannot finish before shutdown')]);
   const models = createModels();
   models.setProvider(slow.provider);
   let engine = await openEngine({ stateDir, models, intervalMs: 100 });
-  const pending = engine.complete([{ role: 'user', content: 'persist this admitted turn' }], 'interrupted');
+  const pending = engine.complete([{ role: 'user', content: 'persist this admitted turn' }], 'interrupted', { role: 'mission' });
   const interrupted = pending.catch(error => error);
   while (slow.state.callCount === 0) await sleep(5);
   await engine.close();
   await interrupted;
-  const fast = fauxProvider({ provider: 'openai-codex', models: [{ id: MODEL }], tokensPerSecond: 100000 });
+  const fast = fauxProvider({ provider: 'openai-codex', models: Object.values(MODEL_ROLES).map(role => ({ id: role.model, reasoning: true })), tokensPerSecond: 100000 });
   const starts = [];
   fast.setResponses([
-    () => { starts.push(Date.now()); return fauxAssistantMessage('resumed durable answer'); },
-    () => { starts.push(Date.now()); return fauxAssistantMessage('next answer'); },
+    (_context, options, _state, model) => {
+      starts.push(Date.now());
+      assert.equal(model.id, MODEL_ROLES.mission.model);
+      assert.equal(options.reasoning, 'medium');
+      return fauxAssistantMessage('resumed durable answer');
+    },
+    (_context, options, _state, model) => {
+      starts.push(Date.now());
+      assert.equal(model.id, MODEL);
+      assert.equal(options.reasoning, 'low');
+      return fauxAssistantMessage('next answer');
+    },
   ]);
   models.setProvider(fast.provider);
   engine = await openEngine({ stateDir, models, intervalMs: 100 });
   try {
-    const result = await engine.complete([{ role: 'user', content: 'persist this admitted turn' }], 'interrupted');
+    const result = await engine.complete([{ role: 'user', content: 'persist this admitted turn' }], 'interrupted', { role: 'mission' });
     assert.equal(result.text, 'resumed durable answer');
     assert.equal(fast.state.callCount, 1, 'restart resumes once, repeated request reads persisted result');
     await engine.complete([{ role: 'user', content: 'next request after recovery' }], 'next');

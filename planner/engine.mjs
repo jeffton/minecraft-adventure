@@ -6,7 +6,7 @@ import { createModels } from '@earendil-works/pi-ai/models';
 import { openaiCodexProvider } from '@earendil-works/pi-ai/providers/openai-codex';
 import { AssistantEntry, Harness, createRegistry } from '@earendil-works/pi-durable';
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
-import { MODEL, MAX_OUTPUT_TOKENS } from './contracts.mjs';
+import { MODEL_ROLES, MAX_OUTPUT_TOKENS } from './contracts.mjs';
 import { admittedModels } from './admission.mjs';
 
 export function readBrokerAuth(socketPath) {
@@ -33,19 +33,21 @@ export function readBrokerAuth(socketPath) {
 export function brokerModels(socketPath) {
   const models = createModels({ identity: { attribution: { name: 'Minecraft Adventure' } } });
   const codex = openaiCodexProvider();
-  const terra = codex.getModels().find(model => model.id === MODEL);
-  if (!terra) throw new Error('Configured Terra model is absent from the SDK registry');
+  const configured = Object.values(MODEL_ROLES).map(role => {
+    const model = codex.getModels().find(model => model.id === role.model);
+    if (!model) throw new Error('Configured model is absent from the SDK registry: ' + role.model);
+    return { ...model, maxTokens: MAX_OUTPUT_TOKENS };
+  });
   models.setProvider({
     ...codex,
     auth: { apiKey: {
       name: 'Local Codex credential broker',
       resolve: async () => readBrokerAuth(socketPath),
     } },
-    getModels: () => [{ ...terra, maxTokens: MAX_OUTPUT_TOKENS }],
+    getModels: () => configured,
     streamSimple: (model, context, options) => codex.streamSimple(model, context, {
       ...options,
       maxTokens: MAX_OUTPUT_TOKENS,
-      reasoning: 'low',
       maxRetries: 0,
     }),
   });
@@ -71,8 +73,8 @@ export async function openEngine({ stateDir, socketPath, models = brokerModels(s
     context,
   );
   const root = await harness.root(context, { agent: {
-    model: { provider: 'openai-codex', modelId: MODEL },
-    thinkingLevel: 'low',
+    model: { provider: 'openai-codex', modelId: MODEL_ROLES.repair.model },
+    thinkingLevel: MODEL_ROLES.repair.thinkingLevel,
     tools: [],
     instructions: 'You are the model component of Minecraft Adventure. Follow the supplied Minecraft task and conversation. Return the requested textual response only. You have no shell, files, network tools or authority outside the game. Never invent completed game actions.',
   } });
@@ -80,8 +82,15 @@ export async function openEngine({ stateDir, socketPath, models = brokerModels(s
   await root.waitForIdle(context);
 
   return {
-    async complete(messages, requestId, { signal } = {}) {
+    async complete(messages, requestId, { signal, role = 'repair' } = {}) {
       signal?.throwIfAborted();
+      if (!Object.hasOwn(MODEL_ROLES, role)) throw new Error('Unknown planner model role: ' + role);
+      // The shared HTTP queue owns serialization; configure only between completed runs.
+      const selected = MODEL_ROLES[role];
+      await root.configure({
+        model: { provider: 'openai-codex', modelId: selected.model },
+        thinkingLevel: selected.thinkingLevel,
+      }, context);
       // Mindcraft supplies its complete current context. Do not append it to a second growing native chat.
       // Reset hides old entries from the next model input, but preserves originals in durable storage.
       await root.reset(undefined, context);
@@ -103,10 +112,10 @@ export async function openEngine({ stateDir, socketPath, models = brokerModels(s
         if (settled.status !== 'done' || settled.type !== 'input') throw new Error('Model run did not finish: ' + settled.reason);
         const answer = await root.commit(tx => tx.entry(AssistantEntry, settled.answer), context);
         const message = answer?.model?.find(item => item.role === 'assistant');
-        if (!message || ['error', 'aborted'].includes(message.stopReason)) throw new Error('Model response failed');
+        if (!message || message.stopReason !== 'stop') throw new Error('Model response failed or incomplete: ' + message?.stopReason);
         const text = message.content.filter(item => item.type === 'text').map(item => item.text).join('');
         if (!text.trim()) throw new Error('Model returned no textual answer');
-        return { text, usage: message.usage, finishReason: message.stopReason === 'length' ? 'length' : 'stop' };
+        return { text, usage: message.usage, finishReason: 'stop' };
       } finally {
         clearTimeout(deadline);
         signal?.removeEventListener('abort', abort);

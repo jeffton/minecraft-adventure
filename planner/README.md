@@ -1,13 +1,13 @@
 # Minecraft Adventure planner
 
-A dedicated Pi Durable 1.4.0 Harness runs Codex Terra (`openai-codex/gpt-5.6-terra`, verified in the installed provider registry). Mindcraft retains its gameplay/skill loop; this component provides bounded model access and a shared mission.
+A dedicated Pi Durable 1.4.0 Harness uses Codex Sol (`gpt-6.1-sol`, medium reasoning) for shared missions and Terra (`gpt-5.6-terra`, low reasoning) for individual repair decisions. Mindcraft retains its local gameplay/skill loop.
 
-- `POST http://127.0.0.1:8766/v1/chat/completions`: non-streaming OpenAI chat, text messages, `user` equal to Roy/Spruce/Flint/Moss, bearer credential from `PLANNER_RELAY_TOKEN`. Model/output budget are fixed server-side at Terra/2048 tokens, low reasoning. Model tools are not accepted.
+- `POST http://127.0.0.1:8766/v1/chat/completions`: non-streaming OpenAI chat, text messages, `user` equal to Roy/Spruce/Flint/Moss, bearer credential from `PLANNER_RELAY_TOKEN`. Repair model/output budget are fixed server-side at Terra/2048 tokens, low reasoning; client model names cannot change routing. Model tools are not accepted.
 - `GET /mission`: authenticated latest shared mission. The same JSON is published to `/var/lib/minecraft-adventure/control/mission.json`.
-- `GET /healthz`: local status, queue and mission error; no credentials.
+- `GET /healthz`: local status, queue and mission error; `models.mission` and `models.repair` report their model and thinking level. No credentials. This replaces the singular `model` field.
 - Globally one generation at a time, starts at least 20 seconds apart, queue capacity eight, 120-second model deadline and no automatic provider retries.
 - Mindcraft submits full context; each request resets the Harness model view rather than duplicating history. Original turns and idempotent request results remain in SQLite. Optional `X-Request-ID` reuses a persisted result after restart.
-- Every five minutes Terra rewrites each bot’s bounded declarative program from fresh world state, previous progress and controller failures. Local skills handle combat and survival reflexes without model calls. Mission programs and coordinates are validated before atomic publication; stale/offline observations do not trigger inference.
+- Every five minutes Sol rewrites each bot’s bounded declarative program from fresh world state, previous progress and controller failures. The same serialized Harness switches model configuration between requests and resets its model view; both roles share SQLite, the credential broker and admission pacing. Incomplete or failed generations are rejected without replacing the mission. Local skills handle combat and survival reflexes without model calls. Mission programs and coordinates are validated before atomic publication; stale/offline observations do not trigger inference.
 
 ## State and permissions
 
