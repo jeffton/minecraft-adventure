@@ -1,0 +1,47 @@
+[Unit]
+Description=Roy autonomous Minecraft code player
+After=network-online.target minecraft-adventure-server.service minecraft-adventure-proxy@local.service minecraft-planner-auth.service minecraft-player-sandbox.socket minecraft-building-camera.service
+Wants=network-online.target minecraft-building-camera.service
+Requires=minecraft-adventure-server.service minecraft-adventure-proxy@local.service minecraft-planner-auth.service minecraft-player-sandbox.socket
+Conflicts=minecraft-adventure-bots.service minecraft-planner.service
+
+[Service]
+Type=simple
+User=minecraft-bots
+Group=minecraft-bots
+SupplementaryGroups=minecraft-adventure-project minecraft-planner
+WorkingDirectory=/opt/minecraft-adventure/player
+EnvironmentFile=/etc/minecraft-adventure/planner.env
+EnvironmentFile=/etc/minecraft-adventure/player.env
+Environment=PLAYER_STATE_DIR=/var/lib/minecraft-player
+Environment=PLANNER_AUTH_SOCKET=/run/minecraft-planner-auth/auth.sock
+Environment=NODE_OPTIONS=--max-old-space-size=384
+ExecStart=/usr/bin/node runtime.mjs
+StateDirectory=minecraft-player
+StateDirectoryMode=0750
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=45
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/minecraft-player /var/lib/minecraft-adventure/observations
+UMask=0027
+MemoryHigh=384M
+MemoryMax=512M
+CPUQuota=100%
+TasksMax=128
+Slice=minecraft-adventure.slice
+
+[Install]
+WantedBy=multi-user.target

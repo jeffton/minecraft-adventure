@@ -1,54 +1,42 @@
 # Roycraft
 
-A cooperative survival expedition at **minecraft.roybot.se**, with a field journal and read-only live bot camera at **https://minecraft.roybot.se/**.
+An autonomous Minecraft player at **https://minecraft.roybot.se/**, with a live first-person camera, explored-world 3D map and a subjective field diary.
 
-## Runtime
+## Player
 
-- Paper 26.3 / Java 25: ordinary world generation, survival, normal difficulty, enforced historical whitelist.
-- Public Velocity requires Microsoft authentication. A separate loopback-only Velocity admits the four offline bot identities. Both use secret-authenticated modern forwarding to the loopback backend.
-- Mineflayer/Mindcraft: Roy builds, Spruce supplies timber, Flint mines and smiths, Moss supplies food. Client protocol 1.21.4 is translated by ViaBackwards and matches the renderer's actual block definitions.
-- Codex 6.1 Sol (medium) reviews persistent objectives every five minutes and on observed completion or repeated stagnation; 6.1 Terra (low) selects short repair actions. One Pi Durable 1.4.0 harness stores strategy, measured outcomes, blocker context and verified declarative programs alongside its transcript. Both models share SQLite, a credential broker and a serialized queue paced at least twenty seconds apart. Strategic reviews pass queued repairs without interrupting active inference. Completion detection runs every five seconds; idle evidence persistence keeps its thirty-second cadence.
-- Immediate movement, mining, combat, eating and retreat run locally. Threat assessment uses health, food, weapons, shields and enemy numbers/type; retreats last at most six seconds and preserve emergency safety. Emergency raw chicken is allowed without safer food, and meals require server consumption evidence. Sol supplies a bounded current program and one concrete lookahead per bot. A successful bot starts its lookahead locally while strategic planning continues; failure, death or a changed mission prevents stale continuation. Sol revises these declarative programs; arbitrary generated JavaScript and host commands are disabled. Inventory clicks wait for authoritative server state rather than optimistic client predictions.
-- A systemd timer publishes observed status and an actual bot-camera WebP every fifteen minutes. The live viewer switches between all four first-person cameras, with live inventory and main/off-hand labels. Only the selected camera is connected; rendering runs in visitors' browsers with eight public viewers per bot. Neither interface controls the bots.
-- Camera movement and look direction are smoothed locally. Captures wait for loaded chunks, terrain meshes and textures; fog bounds the 48-block viewing distance. Two meshing workers and a four-chunk radius bound browser memory. The upstream renderer does not draw held equipment on character models. Its older entity models use base coat variants; unsupported species can still appear as placeholders.
+Roy is a single Pi Durable codeagent using Sol medium. He observes server-backed inventory, blocks, entities and current camera images; writes JavaScript skills; runs them asynchronously; inspects their actual effects; and stores reusable skills. The Minecraft API exposes navigation, digging, crafting, placement, combat, containers, furnaces and other composable low-level operations. There is no fixed house blueprint or mission-action menu.
 
-## Progression
+One agent-authored next skill can start locally after a successful action. Failure, death and emergency reflexes discard queued work. Eating, surfacing and immediate combat/escape run locally while model calls are pending. Runtime telemetry distinguishes time with an active program from time without one; neither a returned program nor an active handle proves useful progress.
 
-Immediate food and defence → reachable shelter, shared chest and personal beds → timber-and-stone lodge → renewable supplies and iron equipment → diamond pickaxe and obsidian → Nether supplies → Eyes of Ender and stronghold → crystals and dragon.
+Goals: survive, acquire tools and food, establish an attractive home with a bed and storage, then prepare for the Ender Dragon. This is an experiment, not a claim of competent autonomous completion.
 
-The lodge uses an explicit survival-built blueprint: stone skirt, timber posts, recessed windows, pitched roof, overhangs, porch and lighting. Compatible local timber can be mixed with existing building blocks. Small verified building batches count as progress without claiming a completed house. The shared mission API covers gathering, equipment, lodge-building, regrouping, shared chest deposits/withdrawals and owned beds. Container transfers require confirmed changes on both sides; personal spawn requires a server acknowledgement, not merely a placed bed. Portals and dragon combat require additional mission actions. Milestones are based on observed inventory, blocks, dimensions or entity-death events, not a model claiming success. A completed dragon run is an expedition objective, not an integration-test assertion.
+## World and presentation
 
-Strategy: [main adventure](https://minecraft.wiki/w/Tutorial:Complete_main_adventure), [Nether survival](https://minecraft.wiki/w/Tutorial:Nether_survival), [dragon combat](https://minecraft.wiki/w/Tutorial:Defeating_the_ender_dragon).
+Paper 26.3 / Java 25 provides ordinary normal-difficulty survival. The public Velocity proxy requires Microsoft authentication and the existing human whitelist. Roy connects through a loopback-only offline proxy using Mineflayer protocol 1.21.4, translated by ViaBackwards.
+
+The public site keeps one automatic read-only camera, compact live inventory, BlueMap's saved explored chunks and a Terra-written English diary every fifteen minutes. Camera images are also real image blocks in the player's perception loop, with capture age metadata. The separate renderer permits one capture browser at a time under a 768 MiB limit. The journal keeps previous worlds under its archive navigation.
+
+Fresh worlds have distinct directories, map storage, observation identity, durable conversations and world notes. Reusable skill source is shared; verification records retain the world where the effects were observed. Prior coordinates, inventories and achievements are not imported as facts.
 
 ## Isolation
 
-| Component | User | Listener |
-| --- | --- | --- |
-| Paper | `minecraft-adventure` | `127.0.0.1:25566` |
-| Public Velocity | `minecraft-adventure` | TCP `25565` |
-| Local bot Velocity | `minecraft-adventure` | `127.0.0.1:25567` |
-| Bots / private Mindcraft UI / viewers | `minecraft-bots` | loopback `8930` / `8931–8934` |
-| Sol/Terra planner | `minecraft-planner` | `127.0.0.1:8766` |
-| Diary / capture browser | `minecraft-diary` | no listener |
+Generated JavaScript runs as a transient nonroot DynamicUser in a runtime-only filesystem, with an empty environment, no IP networking, read-only runtime files and CPU/memory/time limits. Bounded pipe RPC exposes explicit Minecraft methods, not host objects, files, shell or provider credentials. A root-owned Unix-socket broker starts the isolated process; it does not evaluate generated source itself. Killing an action also stops its host-side navigation, digging and controls.
 
-The narrow root credential broker only resolves Codex access authentication through Batty's canonical credential lock. It runs no gameplay or model harness. Bots cannot read the OAuth store, forwarding secret or planner database. A separate shared project group carries observations and mission files; the diary has read-only observation ACLs.
-
-Gameplay state lives under `/var/lib/minecraft-adventure/`; the Pi database under `/var/lib/minecraft-planner/`; public journal files under `/var/www/roybot.se/minecraft/`. Deployed code is root-owned under `/opt/minecraft-adventure/` and `/opt/minecraft-mindcraft/`.
-
-The shared `minecraft-adventure.slice` has a 4 GiB ceiling and low CPU/I/O priority. Only TCP 25565 is opened publicly. Batty's service, data and existing scheduled jobs are independent.
+Provider authentication uses the existing narrow credential broker and canonical locked Codex store. Gameplay, Paper, proxies, model harness and capture browser run unprivileged. Only TCP 25565 is public. Batty's service and data are independent.
 
 ## Operations
 
 ```sh
+systemctl status minecraft-player minecraft-player-sandbox.socket minecraft-planner-auth
 systemctl status minecraft-adventure-server minecraft-adventure-proxy@public minecraft-adventure-proxy@local
-systemctl status minecraft-adventure-bots minecraft-planner minecraft-planner-auth
 systemctl list-timers minecraft-adventure-diary.timer
-journalctl -u minecraft-adventure-bots -u minecraft-planner -n 80
+journalctl -u minecraft-player -n 80
 curl -fsS http://127.0.0.1:8766/healthz
+cd player && npm test && npm run check
 ```
 
-Install order: `server/`, `planner/`, `bots/`, then `diary/`. Each component contains its installer and tests. The diary installer requires the existing Let's Encrypt certificate for `minecraft.roybot.se`; HTTP renewal challenges use `/var/www/roybot.se`. The legacy `/minecraft/` route redirects to the subdomain.
+`player/install.sh` installs reviewed code without starting services or changing a world. `player/fresh-world.py --world-id <identity> --activate` performs an explicit stopped-state transition: full backup, retained original world, fresh map/world identity, removal of obsolete offline bot whitelist entries, and root-only rollback instructions. It leaves services stopped for coordinated activation.
 
-The Mineflayer compatibility hook closes real client ticks and teleport responses with `tick_end`. Mindcraft's separate delayed-movement wrapper is disabled because it breaks those packet boundaries. Source hooks verify unique upstream anchors and fail visibly if the pinned upstream source changes.
+Runtime state: `/var/lib/minecraft-player/`. Server and archives: `/var/lib/minecraft-adventure/`. Public diary: `/var/www/roybot.se/minecraft/`. Root-owned code: `/opt/minecraft-adventure/`. The retained `bots/` files supply protocol compatibility and read-only renderer patches; the retired four-player planner and its data are not the active gameplay controller.
 
-Server-side Java processes, bots, planner and renderers all run unprivileged. Old Minecraft worlds and their immutable Storage Box archive are not used or modified by this expedition.
+Research: [Mine AI MCP](https://github.com/aibengineering/mine-ai-mcp), [Voyager](https://voyager.minedojo.org/), [programmable Minecraft agents](https://arxiv.org/html/2610.22319v1). These motivate reusable code and observed feedback; they do not establish pro-gamer performance.
