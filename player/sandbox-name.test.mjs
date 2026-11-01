@@ -4,7 +4,7 @@ import { createServer } from 'node:net';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { SkillSandbox } from './sandbox.mjs';
+import { SkillSandbox, validateSkillRequest } from './sandbox.mjs';
 import { readFrames, sendFrame } from './sandbox-protocol.mjs';
 
 const rpc = {
@@ -12,6 +12,24 @@ const rpc = {
   call: async () => ({ collected: 3 }),
   cancel() {}
 };
+
+test('shared request validation normalizes queue labels and applies the broker input budget without allocating an action', () => {
+  const result = validateSkillRequest('return input;', { name: '  Gather oak logs  ', worldId: 'fresh' });
+  assert.deepEqual(result, {
+    name: 'Gather oak logs',
+    request: { type: 'start', code: 'return input;', input: {}, worldId: 'fresh' }
+  });
+  for (const invoke of [
+    (code, options) => validateSkillRequest(code, options),
+    (code, options) => new SkillSandbox({ rpc }).start(code, options)
+  ]) {
+    assert.throws(() => invoke('return input;', { name: 'Gather logs', worldId: 'fresh', input: 'x'.repeat(16_384) }), /16 KiB/);
+    assert.throws(() => invoke('\n'.repeat(32_768), { name: 'Gather logs', worldId: 'fresh' }), /frame limit/);
+    const circular = {};
+    circular.self = circular;
+    assert.throws(() => invoke('return input;', { name: 'Gather logs', worldId: 'fresh', input: circular }), /circular/i);
+  }
+});
 
 test('names reject missing, blank, oversized and control-character labels before creating an action', () => {
   const sandbox = new SkillSandbox({ rpc });
