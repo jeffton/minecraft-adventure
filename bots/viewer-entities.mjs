@@ -32,6 +32,18 @@ export function viewerEntityModel(models, type) {
     return { ...llama, identifier: `minecraft:${type}`, geometry, textures };
   }
   const entity = models[type];
+  if (type === 'horse') {
+    // The legacy model includes donkey ears, chests and saddle parts in its base
+    // geometry. The name-only stream carries no equipment: render the bare horse.
+    return {
+      ...entity,
+      geometry: { default: {
+        ...entity.geometry.default,
+        bones: entity.geometry.default.bones.map(bone => /^(MuleEar|Bag|Saddle|HeadSaddle)/.test(bone.name) ? { ...bone, cubes: [] } : bone)
+      } },
+      textures: { default: entity.textures.base_brown }
+    };
+  }
   if (skins[type]) {
     return { ...entity, textures: { ...entity.textures, default: entity.textures[skins[type]] } };
   }

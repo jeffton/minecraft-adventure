@@ -40,6 +40,9 @@ test('base skins and modern wooden boats resolve to real installed textures', ()
     'oak_boat', 'spruce_boat', 'birch_boat', 'jungle_boat', 'acacia_boat', 'dark_oak_boat']) {
     verifyTextures(viewerEntityModel(models, name));
   }
+  const horse = viewerEntityModel(models, 'horse');
+  assert.ok(horse.geometry.default.bones.some(bone => bone.name === 'Body' && bone.cubes.length));
+  assert.ok(horse.geometry.default.bones.filter(bone => /^(MuleEar|Bag|Saddle|HeadSaddle)/.test(bone.name)).every(bone => bone.cubes.length === 0), 'Name-only horse must not invent donkey ears, chests or saddles');
   assert.equal(viewerEntityModel(models, 'cow'), models.cow);
   for (const name of ['oak_chest_boat', 'bamboo_raft', 'armadillo', 'camel']) {
     assert.equal(viewerEntityModel(models, name), undefined, 'Do not disguise unsupported species');
