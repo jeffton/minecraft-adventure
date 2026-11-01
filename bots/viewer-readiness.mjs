@@ -47,7 +47,7 @@ export function applyViewerDaylight(viewer, state) {
 
 export function patchViewerClient(source, cameraMotionSource) {
   const edits = [
-    ['this.world=new a(this.scene)', 'this.world=new a(this.scene,2)'],
+    ['this.world=new a(this.scene)', 'this.world=new a(this.scene,1)'],
     ['const u=new r(l);', `const u=new r(l);THREE.ShaderChunk.fog_vertex=window.roycraftRadialFogVertex(THREE.ShaderChunk.fog_vertex);window.roycraftMotion=(${cameraMotionSource})();window.roycraftViewer=u;u.camera.far=48;u.camera.updateProjectionMatrix();u.scene.fog=new THREE.Fog(u.scene.background,24,44);o.on('adventureState',s=>{window.roycraftState=s;window.roycraftApplyDaylight(u,s)});o.on('adventureChunks',chunks=>{window.roycraftChunks=chunks});`],
     ['u.setFirstPersonCamera(t,r,o)', '(window.roycraftMotion.receive(u,t,r,o),window.roycraftCameraApplied=true)'],
     ['u.update(),l.render(u.scene,u.camera)', 'window.roycraftMotion.frame(u,performance.now()),u.update(),window.roycraftChunksReady=!!window.roycraftChunks?.length&&window.roycraftChunks.every(k=>u.world.loadedChunks[k])&&window.roycraftVisibleSectionsReady(u,THREE,0.425,44)&&window.roycraftTexturesReady(u),l.render(u.scene,u.camera),window.roycraftFrameRendered(l)']

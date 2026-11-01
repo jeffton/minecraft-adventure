@@ -127,7 +127,7 @@ test('wide diagonal views stay within radial coverage, and a teleport cannot cap
 test('client integration updates camera before culling and exports only after rendering', () => {
   const source = 'this.world=new a(this.scene);const u=new r(l);u.setFirstPersonCamera(t,r,o);u.update(),l.render(u.scene,u.camera)';
   const result = patchViewerClient(source, createCameraMotion.toString());
-  assert.match(result, /this.world=new a\(this.scene,2\)/);
+  assert.match(result, /this.world=new a\(this.scene,1\)/);
   assert.ok(result.indexOf('u.update()') < result.indexOf('roycraftVisibleSectionsReady'));
   assert.ok(result.indexOf('l.render(u.scene,u.camera)') < result.indexOf('roycraftFrameRendered(l)'));
   assert.match(result, /roycraftMotion.receive/);

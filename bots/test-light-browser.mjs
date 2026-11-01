@@ -32,12 +32,14 @@ try {
         for (let i = 0; i < values.length; i++) channels[i % 2].add(values[i]);
       }
       return { state: window.roycraftState, chunks: Object.keys(viewer.world.loadedChunks).length,
-        material: viewer.world.material.type, skyDarken: viewer.world.material.userData.skyDarken.value,
-        blockLevels: [...channels[0]].sort((a, b) => a - b), skyLevels: [...channels[1]].sort((a, b) => a - b),
-        programs: viewer.renderer?.info?.programs?.length ?? null };
+        material: viewer.world.material.type, workers: viewer.world.workers.length,
+        skyDarken: viewer.world.material.userData.skyDarken.value,
+        blockLevels: [...channels[0]].sort((a, b) => a - b), skyLevels: [...channels[1]].sort((a, b) => a - b) };
     });
     assert.equal(actual.material, 'MeshBasicMaterial');
     assert.ok(actual.chunks > 0);
+    assert.equal(actual.workers, 1);
+    assert.ok([...actual.blockLevels, ...actual.skyLevels].every(value => Number.isFinite(value) && value >= 0 && value <= 15));
     await page.screenshot({ path: `${output}/public-light.png` });
     console.log(JSON.stringify({ public: actual, errors }));
   } else {

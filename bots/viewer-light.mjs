@@ -167,7 +167,7 @@ export function installViewerLightClient(viewer, socket) {
 export function patchViewerLightServer(source, installerSource) {
   const before = 'worldView.init(bot.entity.position)';
   if (source.split(before).length !== 2) throw new Error('Upstream light stream integration changed');
-  return source.replace(before, `(${installerSource})(bot, worldView, socket);\n    ${before}`);
+  return source.replace(before, `;(${installerSource})(bot, worldView, socket);\n    ${before}`);
 }
 
 export function patchViewerLightClient(source, materialSource, clientSource) {
