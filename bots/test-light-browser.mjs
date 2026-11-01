@@ -19,8 +19,16 @@ const browser = await chromium.launch({
 try {
   const page = await browser.newPage({ viewport: { width: 480, height: 240 } });
   const errors = [];
+  const resourceErrors = [];
   page.on('pageerror', error => errors.push(String(error)));
-  page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+  page.on('requestfailed', request => errors.push(`${request.url()}: ${request.failure()?.errorText}`));
+  page.on('response', response => { if (response.status() >= 400) resourceErrors.push({ url: response.url(), status: response.status() }); });
+  page.on('console', message => {
+    if (message.type() !== 'error') return;
+    // HTTP failures are asserted with their URLs below, separately from shader
+    // and JavaScript errors; a missing browser icon is not terrain failure.
+    if (!message.text().startsWith('Failed to load resource:')) errors.push(message.text());
+  });
   if (process.argv.includes('--public')) {
     await page.goto('https://minecraft.roybot.se/live/', { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => window.roycraftCameraApplied && window.roycraftReady && Object.values(window.roycraftViewer.world.sectionMeshs).some(mesh => mesh.geometry.getAttribute('minecraftLight')?.count), undefined, { timeout: 60000 });
@@ -41,7 +49,7 @@ try {
     assert.equal(actual.workers, 1);
     assert.ok([...actual.blockLevels, ...actual.skyLevels].every(value => Number.isFinite(value) && value >= 0 && value <= 15));
     await page.screenshot({ path: `${output}/public-light.png` });
-    console.log(JSON.stringify({ public: actual, errors }));
+    console.log(JSON.stringify({ public: actual, errors, resourceErrors }));
   } else {
     const column = new Chunk({ minY: -64, worldHeight: 384 });
     const levels = [[0, 0], [14, 0], [13, 0], [0, 15]];
@@ -100,9 +108,10 @@ try {
     assert.equal(removed.values[1], removed.values[0], 'Removed source must become dark after light update');
     assert.equal(removed.values[2], night.values[2], 'Other sources must remain lit');
     assert.ok(day.programs.length && day.programs.every(program => program.runnable));
-    console.log(JSON.stringify({ fixture: { labels: ['unlit cave', 'torch', 'furnace', 'open sky'], day, night, removed }, errors }));
+    console.log(JSON.stringify({ fixture: { labels: ['unlit cave', 'torch', 'furnace', 'open sky'], day, night, removed }, errors, resourceErrors }));
   }
   assert.deepEqual(errors, []);
+  assert.ok(resourceErrors.every(error => error.status === 404 && new URL(error.url).pathname === '/favicon.ico'), JSON.stringify(resourceErrors));
 } finally {
   await browser.close();
 }
