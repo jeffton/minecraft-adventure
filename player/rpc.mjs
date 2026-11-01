@@ -5,7 +5,9 @@ Await every call. Returned values are observations, not proof that your whole ob
 observe() → health, food, oxygen, position, dimension, inventory, nearby entities/blocks.
 blockAt({x,y,z}), findBlocks({names:[name],radius:32,count:16}), itemInfo(name), blockInfo(name).
 recipesAll(itemName,table=true) shows named ingredients including unmet requirements; recipesFor(itemName,minOutputCount=1,tablePosition=null) returns indexed currently available recipes; craft(itemName,repetitions=1,tablePosition=null,recipeIndex=0) applies a recipe N times (one plank recipe yields four planks).
-goto({x,y,z},range=1), follow(entityId,range=2), lookAt({x,y,z}), control(state,boolean), clearControls(), waitTicks(ticks<=200).
+goto({x,y,z},range=1,{canDig:false,allow1by1towers:false,allowSprinting:false}), follow(entityId,range=2), lookAt({x,y,z}), control(state,boolean), clearControls(), waitTicks(ticks<=200).
+Navigation walks without digging, placing or sprinting by default: a failed path is NOT permission to excavate a shelter. goto options explicitly enable digging/towering/sprinting for that call only. Clear a deliberate exit with dig/place rather than asking navigation to tunnel blindly.
+harvest(position) approaches one observed resource block, selects the best available tool, breaks it, and collects nearby item drops using nondestructive movement. Returns actual inventoryDelta and remainingDrops: breaking a block is not collecting its drops. Compose harvest in bounded loops and stop/replan on missing resources or inaccessible drops.
 dig({x,y,z}), placeBlock(referencePosition,{x,y,z} unit face), activateBlock(position), activateEntity(id), attack(id), equip(itemName,destination='hand'), unequip(destination), consume(), activateItem(offhand=false), deactivateItem(), toss(itemName,count).
 openContainer(position) → {handle,items}; containerItems(handle), deposit(handle,itemName,count), withdraw(handle,itemName,count), closeContainer(handle).
 openFurnace(position) → {handle,input,fuel,output}; furnaceItems(handle), furnacePutInput(handle,itemName,count), furnacePutFuel(handle,itemName,count), furnaceTakeInput(handle), furnaceTakeFuel(handle), furnaceTakeOutput(handle).
@@ -112,6 +114,30 @@ export function createMinecraftRpc(bot, { Vec3, goals, onEvent = () => {} }) {
     windowKind = undefined;
   }
 
+  async function navigate(goal, options = {}) {
+    const keys = ['canDig', 'allow1by1towers', 'allowSprinting'];
+    if (!options || typeof options !== 'object' || Array.isArray(options) ||
+        Object.keys(options).some(key => !keys.includes(key)) ||
+        Object.values(options).some(value => typeof value !== 'boolean')) throw new Error('Invalid navigation options');
+    const movements = bot.pathfinder.movements;
+    const previous = movements && Object.fromEntries([...keys, 'scafoldingBlocks'].map(key => [key, movements[key]]));
+    if (movements) {
+      for (const key of keys) movements[key] = options[key] ?? false;
+      movements.scafoldingBlocks = options.allow1by1towers
+        ? ['dirt', 'cobblestone', 'netherrack'].map(name => bot.registry.itemsByName[name]?.id).filter(id => id !== undefined)
+        : [];
+      bot.pathfinder.setMovements(movements);
+    }
+    try { await bot.pathfinder.goto(goal); }
+    finally {
+      if (movements) {
+        Object.assign(movements, previous);
+        bot.pathfinder.setMovements(movements);
+      }
+    }
+    return packPosition(bot.entity.position);
+  }
+
   const methods = {
     observe,
     blockAt: p => packBlock(bot.blockAt(vector(p))),
@@ -156,14 +182,58 @@ export function createMinecraftRpc(bot, { Vec3, goals, onEvent = () => {} }) {
       await bot.craft(recipe, count, tableBlock);
       return observe();
     },
-    async goto(p, range = 1) {
+    async goto(p, range = 1, options = {}) {
       const goal = position(p);
-      await bot.pathfinder.goto(new goals.GoalNear(goal.x, goal.y, goal.z, number(range, 'range', 0, 16)));
-      return packPosition(bot.entity.position);
+      return navigate(new goals.GoalNear(goal.x, goal.y, goal.z, number(range, 'range', 0, 16)), options);
     },
     async follow(id, range = 2) {
-      await bot.pathfinder.goto(new goals.GoalFollow(entity(id), number(range, 'range', 1, 16)));
-      return packPosition(bot.entity.position);
+      return navigate(new goals.GoalFollow(entity(id), number(range, 'range', 1, 16)));
+    },
+    async harvest(p) {
+      const started = epoch;
+      const active = () => { if (started !== epoch) throw new Error('Harvest was cancelled'); };
+      const target = block(p);
+      if (!target.diggable) throw new Error(`Cannot harvest ${target.name}`);
+      const before = observe();
+      await navigate(new goals.GoalLookAtBlock(target.position, bot.world, { reach: 4 }));
+      active();
+      const current = block(p);
+      if (current.type !== target.type) throw new Error('Harvest target changed before digging');
+      const tool = bot.pathfinder.bestHarvestTool(current);
+      if (current.harvestTools && !Object.hasOwn(current.harvestTools, tool?.type)) {
+        throw new Error(`No suitable harvesting tool for ${current.name}`);
+      }
+      if (tool) { await bot.equip(tool, 'hand'); active(); }
+      await bot.dig(current);
+      active();
+      await bot.waitForTicks(8);
+      active();
+      const drops = () => Object.values(bot.entities).filter(value => value.name === 'item' &&
+        value.position.distanceTo(target.position) <= 6).sort((a, b) =>
+        a.position.distanceTo(bot.entity.position) - b.position.distanceTo(bot.entity.position));
+      const visited = new Set();
+      for (let i = 0; i < 8; i++) {
+        const drop = drops().find(value => !visited.has(value.id));
+        if (!drop) break;
+        visited.add(drop.id);
+        await navigate(new goals.GoalNear(drop.position.x, drop.position.y, drop.position.z, 0.5));
+        active();
+        await bot.waitForTicks(8);
+        active();
+      }
+      const after = observe();
+      const counts = inventory => inventory.reduce((result, item) => {
+        result[item.name] = (result[item.name] ?? 0) + item.count; return result;
+      }, {});
+      const start = counts(before.inventory);
+      const end = counts(after.inventory);
+      return {
+        block: target.name, position: packPosition(target.position),
+        inventoryDelta: Object.fromEntries([...new Set([...Object.keys(start), ...Object.keys(end)])]
+          .map(name => [name, (end[name] ?? 0) - (start[name] ?? 0)]).filter(([, count]) => count)),
+        remainingDrops: drops().map(value => ({ id: value.id, position: packPosition(value.position) })),
+        observation: after,
+      };
     },
     lookAt: p => bot.lookAt(vector(p), true),
     control(state, value) {

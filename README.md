@@ -8,6 +8,8 @@ Roy is a single Pi Durable codeagent using Sol medium. He observes server-backed
 
 One named agent-authored next skill can start locally after a successful action, including when its predecessor finishes during model inference. Failure, death and emergency reflexes invalidate continuations. Fresh completion feedback reaches the current native conversation before it yields; readable skill names identify work in the UI while UUIDs remain in structured records. Eating, surfacing and immediate combat/escape run locally while model calls are pending. Runtime telemetry distinguishes time with an active program from time without one; neither a returned program nor an active handle proves useful progress.
 
+Navigation is nondestructive walking by default; deliberate digging, scaffolding and sprinting require explicit per-call options. `harvest(position)` handles approach, tool selection, breaking and pickup while returning actual inventory changes. A persistent host-owned outcome history distinguishes waiting and resource-free travel from acquired supplies and placed blocks; a placed block does not certify a usable home.
+
 Goals: survive, acquire tools and food, establish an attractive home with a bed and storage, then prepare for the Ender Dragon. This is an experiment, not a claim of competent autonomous completion.
 
 ## World and presentation
