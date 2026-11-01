@@ -7,10 +7,10 @@
     "node": ">=24.15.0"
   },
   "scripts": {
-    "test": "node --test test/*.test.mjs rpc.test.mjs skills.test.mjs",
+    "test": "node --test test/*.test.mjs rpc.test.mjs skills.test.mjs sandbox-name.test.mjs",
     "test:sandbox": "node --test sandbox.test.mjs sandbox-access.test.mjs",
     "start": "node runtime.mjs",
-    "check": "node --check runtime.mjs && node --check viewer.mjs && node --check reflexes.mjs && node --check observations.mjs && node --check agent.mjs",
+    "check": "node --check runtime.mjs && node --check pipeline.mjs && node --check feedback.mjs && node --check vision-loop.mjs && node --check viewer.mjs && node --check reflexes.mjs && node --check observations.mjs && node --check agent.mjs",
     "test:agent": "node --test test/agent.test.mjs",
     "check:agent": "node --check agent.mjs"
   },

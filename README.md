@@ -6,7 +6,7 @@ An autonomous Minecraft player at **https://minecraft.roybot.se/**, with a live 
 
 Roy is a single Pi Durable codeagent using Sol medium. He observes server-backed inventory, blocks, entities and current camera images; writes JavaScript skills; runs them asynchronously; inspects their actual effects; and stores reusable skills. The Minecraft API exposes navigation, digging, crafting, placement, combat, containers, furnaces and other composable low-level operations. There is no fixed house blueprint or mission-action menu.
 
-One agent-authored next skill can start locally after a successful action. Failure, death and emergency reflexes discard queued work. Eating, surfacing and immediate combat/escape run locally while model calls are pending. Runtime telemetry distinguishes time with an active program from time without one; neither a returned program nor an active handle proves useful progress.
+One named agent-authored next skill can start locally after a successful action, including when its predecessor finishes during model inference. Failure, death and emergency reflexes invalidate continuations. Fresh completion feedback reaches the current native conversation before it yields; readable skill names identify work in the UI while UUIDs remain in structured records. Eating, surfacing and immediate combat/escape run locally while model calls are pending. Runtime telemetry distinguishes time with an active program from time without one; neither a returned program nor an active handle proves useful progress.
 
 Goals: survive, acquire tools and food, establish an attractive home with a bed and storage, then prepare for the Ender Dragon. This is an experiment, not a claim of competent autonomous completion.
 
@@ -14,7 +14,7 @@ Goals: survive, acquire tools and food, establish an attractive home with a bed 
 
 Paper 26.3 / Java 25 provides ordinary normal-difficulty survival. The public Velocity proxy requires Microsoft authentication and the existing human whitelist. Roy connects through a loopback-only offline proxy using Mineflayer protocol 1.21.4, translated by ViaBackwards.
 
-The public site keeps one automatic read-only camera, compact live inventory, BlueMap's saved explored chunks and a Terra-written English diary every fifteen minutes. Camera images are also real image blocks in the player's perception loop, with capture age metadata. The separate renderer permits one capture browser at a time under a 768 MiB limit. The journal keeps previous worlds under its archive navigation.
+The public site keeps one automatic read-only camera, compact live inventory, BlueMap's saved explored chunks and a Terra-written English diary every fifteen minutes. Camera images are real image blocks in the player's perception loop, with capture age metadata. A fifty-second background capture loop prepares views independently of model inference; only matching-session/life/dimension images under ninety seconds old are eligible. The separate renderer permits one capture browser at a time under a 768 MiB limit. The journal keeps previous worlds under its archive navigation.
 
 Fresh worlds have distinct directories, map storage, observation identity, durable conversations and world notes. Reusable skill source is shared; verification records retain the world where the effects were observed. Prior coordinates, inventories and achievements are not imported as facts.
 
