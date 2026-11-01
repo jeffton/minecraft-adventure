@@ -4,11 +4,11 @@ import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
 import { BOT_ROLES } from './blueprint.mjs';
 import { viewerAllowed } from './viewer-policy.mjs';
+import { readyScript, patchViewerClient } from './viewer-readiness.mjs';
 import { createObserver, atomicJson, getHome, OBS } from './runtime.mjs';
 import { join } from 'node:path';
 
 const extensionUrl = new URL('./extensions.mjs', import.meta.url).href;
-const readyScript = `<script>window.roycraftReady=false;window.roycraftConnected=false;(()=>{let draws=0,lastTraffic=0;const Native=window.WebSocket;window.WebSocket=class extends Native{constructor(...args){super(...args);this.addEventListener('message',()=>{lastTraffic=Date.now();window.roycraftConnected=true});this.addEventListener('close',()=>{lastTraffic=0;window.roycraftConnected=false;window.roycraftReady=false})}};for(const C of [window.WebGLRenderingContext,window.WebGL2RenderingContext]){if(!C)continue;const draw=C.prototype.drawElements;C.prototype.drawElements=function(mode,count,...args){const result=draw.call(this,mode,count,...args);if(count>2048)draws++;window.roycraftReady=draws>=3&&lastTraffic>0&&Date.now()-lastTraffic<35000;return result}}setInterval(()=>{if(Date.now()-lastTraffic>35000){window.roycraftReady=false;window.roycraftConnected=false}},1000)})();</script>`;
 
 function replaceExactly(source, oldText, newText, file) {
   const parts = source.split(oldText);
@@ -28,10 +28,11 @@ registerHooks({
 
     } else if (url.endsWith('/node_modules/prismarine-viewer/lib/mineflayer.js')) {
       source = replaceExactly(source, 'http.listen(port, () => {', "http.listen(port, '127.0.0.1', () => {", url);
+      source = replaceExactly(source, "bot.on('move', botPosition)", "bot.on('move', botPosition)\n    botPosition()", url);
       source = replaceExactly(source, "io.on('connection', (socket) => {", `io.on('connection', (socket) => {\n    const isPublic = socket.handshake.headers['x-roycraft-public-viewer'] === '1';\n    socket.data.roycraftPublic = isPublic;\n    if (!(${viewerAllowed.toString()})(isPublic, sockets.map(s => s.data.roycraftPublic))) { socket.disconnect(true); return }`, url);
     } else if (url.endsWith('/node_modules/prismarine-viewer/lib/common.js')) {
       const index = '/opt/minecraft-mindcraft/node_modules/prismarine-viewer/public/index.html';
-      source = replaceExactly(source, "app.use(compression())", `app.use(compression())\n  app.get(prefix + '/', (req, res) => res.type('html').send(require('fs').readFileSync(${JSON.stringify(index)}, 'utf8').replace('<body>', '<body>' + ${JSON.stringify(readyScript)})))`, url);
+      source = replaceExactly(source, "app.use(compression())", `app.use(compression())\n  app.get(prefix + '/', (req, res) => res.type('html').send(require('fs').readFileSync(${JSON.stringify(index)}, 'utf8').replace('<body>', '<body>' + ${JSON.stringify(readyScript)})))\n  app.get(prefix + '/index.js', (req, res) => res.type('js').send((${patchViewerClient.toString()})(require('fs').readFileSync(${JSON.stringify(index.replace('index.html', 'index.js'))}, 'utf8'))))`, url);
     }
     return { ...result, source };
   }
