@@ -401,6 +401,21 @@ test('feedback continuation preserves tool budget headroom instead of requesting
   } finally { await agent.close(); }
 });
 
+test('large-window player history compacts at a tactical working set instead of growing to the provider maximum', async () => {
+  const f = await fixture(Array.from({ length: 20 }, () => answer('Persistent tactical summary: keep the tools and known home.')), [], 262144);
+  const agent = await f.open();
+  try {
+    for (let step = 0; step < 8; step++) {
+      await agent.step({ step, terrain: 'historical-block-data '.repeat(2000) });
+    }
+    await agent.step({ health: 20, inventory: ['pickaxe'] });
+    const requests = f.calls.map(call => JSON.stringify(call.context));
+    assert.ok(requests.some(request => /summari|compact/i.test(request)));
+    assert.ok(requests.some((request, index) => index > 0 && request.length < requests[index - 1].length / 2), 'old block telemetry is replaced by a summary');
+    assert.match(requests.at(-1), /known home/);
+  } finally { await agent.close(); }
+});
+
 test('automatic compaction passes through the same bounded and sanitized model boundary', async () => {
   const secret = 'SYNTHETIC_COMPACTION_SECRET_MARKER';
   const f = await fixture([

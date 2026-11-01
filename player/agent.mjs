@@ -225,7 +225,16 @@ export async function openPlayerAgent({
       retry: { enabled: false, maxRetries: 0 },
       afterFailedRun: 'withdraw',
       toolExecution: 'sequential',
-      compaction: { enabled: true, reserveTokens: 16384, keepRecentTokens: 12000, backgroundTokens: 0 },
+      compaction: {
+        enabled: true, reserveTokens: 16384, keepRecentTokens: 12000, backgroundTokens: 0,
+        // Tactical decisions need recent game state and learned skills, not
+        // hundreds of thousands of cached tokens from earlier block operations.
+        modelOverrides: {
+          [`openai-codex/${PLAYER_MODEL}`]: {
+            reserveTokens: Math.max(16384, models.getModel('openai-codex', PLAYER_MODEL).contextWindow - 65536),
+          },
+        },
+      },
     },
     onReport: (_error, info) => emit({ type: 'harness_report', category: info.type }),
   }, context);
