@@ -1,0 +1,24 @@
+# Deploy
+
+Existing installation, Node 24+, root access and `trash` are required. Run from a reviewed checkout; the scripts do not pull or commit code.
+
+```sh
+bash player/deploy.sh
+bash diary/publish-ui.sh
+```
+
+`player/deploy.sh` tests the player and viewer, stages locked production dependencies and builds the viewer worker before stopping `minecraft-player.service`. It installs player modules, viewer/compatibility modules and the built worker, refreshes the sandbox runtime, then starts only the player. Paper, proxies, map, diary timer and world data remain running and untouched. Initial user/unit/static-asset provisioning remains in the installers.
+
+Early health returns HTTP 503 with phase `starting`, `recovering` or `blocked` and Durable task IDs/reasons; HTTP 200 with `ready:true` requires completed recovery and a fresh observation. SIGTERM during startup closes cleanly without aborting/deleting persisted tasks; blocked recovery requires explicit diagnosis/`retryTask`, not automatic retries.
+
+The final check waits up to two minutes for ready health and a fresh online observation from a new player session, then checks feed HTTP and live Socket.IO state. Blocked recovery fails immediately with the health diagnostics. No browser or model call is needed. Failures exit visibly; there is no automatic rollback/restart recovery. A failure after stopping can leave the player stopped; inspect the reported command/error before starting it.
+
+Static publication syntax-checks JavaScript, runs inventory/clock tests and copies only the eight UI files. It does not install dependencies, rebuild item assets, alter journal data, install units or reload services. Publisher/capture/service changes still use `diary/install.sh`.
+
+Test path overrides: `PLAYER_DEPLOY_ROOT`, `PLAYER_OBSERVATION_FILE`, `DIARY_UI_ROOT`. Staging directories, including replaced dependencies, go to trash on exit. Deploying interrupts in-memory actions/continuations; world state, inventory and Durable history remain persisted, and the player observes its current situation after reconnecting.
+
+```sh
+node --test player/test/deploy.test.mjs
+```
+
+The deploy sequence tests use a temporary fake installation and command fakes; they never restart a service. The readiness tests cover parked startup, old/stale observations and feed disconnection.
