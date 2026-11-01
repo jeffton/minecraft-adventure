@@ -31,10 +31,24 @@ export function radialFogVertex(source) {
   return source.replace(marker, 'fogDepth = length(mvPosition.xyz);');
 }
 
+// Prismarine's renderer has fixed daylight. Apply the observed overworld cycle
+// to sky, fog and Lambert lighting; this is not vanilla's per-block light engine.
+export function applyViewerDaylight(viewer, state) {
+  if (!state.time) return;
+  const angle = (state.time.timeOfDay - 6000) * Math.PI / 12000;
+  const daylight = state.dimension === 'overworld'
+    ? Math.max(0, Math.min(1, (Math.cos(angle) + 0.15) / 0.3))
+    : 1; // Other dimensions have no day/night cycle; clear any previous night.
+  viewer.scene.background.setRGB(0.012 + 0.666 * daylight, 0.018 + 0.829 * daylight, 0.055 + 0.847 * daylight);
+  viewer.scene.fog.color.copy(viewer.scene.background);
+  viewer.ambientLight.intensity = 0.22 + 0.78 * daylight;
+  viewer.directionalLight.intensity = 0.05 + 0.45 * daylight;
+}
+
 export function patchViewerClient(source, cameraMotionSource) {
   const edits = [
     ['this.world=new a(this.scene)', 'this.world=new a(this.scene,2)'],
-    ['const u=new r(l);', `const u=new r(l);THREE.ShaderChunk.fog_vertex=window.roycraftRadialFogVertex(THREE.ShaderChunk.fog_vertex);window.roycraftMotion=(${cameraMotionSource})();window.roycraftViewer=u;u.camera.far=48;u.camera.updateProjectionMatrix();u.scene.fog=new THREE.Fog(u.scene.background,24,44);o.on('adventureState',s=>{window.roycraftState=s});o.on('adventureChunks',chunks=>{window.roycraftChunks=chunks});`],
+    ['const u=new r(l);', `const u=new r(l);THREE.ShaderChunk.fog_vertex=window.roycraftRadialFogVertex(THREE.ShaderChunk.fog_vertex);window.roycraftMotion=(${cameraMotionSource})();window.roycraftViewer=u;u.camera.far=48;u.camera.updateProjectionMatrix();u.scene.fog=new THREE.Fog(u.scene.background,24,44);o.on('adventureState',s=>{window.roycraftState=s;window.roycraftApplyDaylight(u,s)});o.on('adventureChunks',chunks=>{window.roycraftChunks=chunks});`],
     ['u.setFirstPersonCamera(t,r,o)', '(window.roycraftMotion.receive(u,t,r,o),window.roycraftCameraApplied=true)'],
     ['u.update(),l.render(u.scene,u.camera)', 'window.roycraftMotion.frame(u,performance.now()),u.update(),window.roycraftChunksReady=!!window.roycraftChunks?.length&&window.roycraftChunks.every(k=>u.world.loadedChunks[k])&&window.roycraftVisibleSectionsReady(u,THREE,0.425,44)&&window.roycraftTexturesReady(u),l.render(u.scene,u.camera),window.roycraftFrameRendered(l)']
   ];
@@ -55,6 +69,7 @@ window.roycraftBuildEntity = (${buildViewerEntity.toString()});
 window.roycraftDisposeEntity = (${disposeViewerEntity.toString()});
 window.roycraftVisibleSectionsReady = (${visibleSectionsReady.toString()});
 window.roycraftRadialFogVertex = (${radialFogVertex.toString()});
+window.roycraftApplyDaylight = (${applyViewerDaylight.toString()});
 window.roycraftTexturesReady = viewer => {
   let ready = true;
   viewer.scene.traverse(object => {

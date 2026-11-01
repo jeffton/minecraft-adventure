@@ -5,7 +5,9 @@ export function viewerState(bot, action) {
     name: bot.username, at: Date.now(), health: bot.health, food: bot.food,
     status: bot._client.ended ? 'offline' : bot._client.state === 'play' ? 'online' : bot._client.state,
     position: { x: bot.entity.position.x, y: bot.entity.position.y, z: bot.entity.position.z },
-    action, held: item(bot.heldItem), offhand: item(bot.inventory.slots[45]),
+    action, time: bot.time ? { timeOfDay: bot.time.timeOfDay, isDay: bot.time.isDay } : null,
+    dimension: bot.game?.dimension ?? null,
+    held: item(bot.heldItem), offhand: item(bot.inventory.slots[45]),
     inventory: bot.inventory.items().map(item),
     moving: Math.hypot(bot.entity.velocity.x, bot.entity.velocity.z) > 0.05 || (!bot.entity.onGround && Math.abs(bot.entity.velocity.y) > 0.1),
     digging: bot.targetDigBlock?.name ?? null
