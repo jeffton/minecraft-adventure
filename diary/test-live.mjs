@@ -34,7 +34,7 @@ try {
       assert.ok((await page.locator('#camera-kit').textContent()).includes(actual.state.held ? actual.state.held.name.replaceAll('_', ' ') : 'Empty'));
       assert.equal(await page.locator('#live-feed').count(), 1);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
-      await page.screenshot({ path: `${process.env.SCREENSHOT_DIR || '/tmp'}/roycraft-live-${name}-${width}.png`, fullPage: true });
+      if (name === 'Moss') await page.screenshot({ path: `${process.env.SCREENSHOT_DIR || '/tmp'}/roycraft-live-${name}-${width}.png` });
       positions[name] = actual.state.position;
       console.log(`${width}px ${name}: ${JSON.stringify(actual)}`);
     }
