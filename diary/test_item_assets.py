@@ -99,6 +99,11 @@ class ItemAssetsTests(unittest.TestCase):
         with Image.open(INSTALLED / "entity" / "chest" / "normal.png") as atlas:
             self.assertEqual(image.getpixel((0, 0)), atlas.convert("RGBA").getpixel((14, 14)))
             self.assertEqual(image.getpixel((0, 13)), atlas.convert("RGBA").getpixel((14, 42)))
+        shield, kind = ASSETS.item_icon(INSTALLED, models, {"name": "shield"}, states)
+        self.assertEqual(kind, "entity-texture-preview")
+        self.assertEqual(shield.size, (12, 22))
+        with Image.open(INSTALLED / "entity" / "shield" / "shield_base_nopattern.png") as atlas:
+            self.assertEqual(shield.tobytes(), atlas.convert("RGBA").crop((1, 1, 13, 23)).tobytes())
         for name in ("stone_pickaxe", "mutton", "stick"):
             _, kind = ASSETS.item_icon(INSTALLED, models, {"name": name})
             self.assertEqual(kind, "sprite")

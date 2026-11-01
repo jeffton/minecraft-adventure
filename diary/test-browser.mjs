@@ -23,7 +23,7 @@ try {
       if (name.startsWith('live/')) {
         const nameParts = name.split('/');
         const bot = nameParts[1] || 'Roy';
-        return route.fulfill({ contentType: 'text/html', body: `<canvas></canvas><script>window.roycraftConnected=true;window.roycraftState=${JSON.stringify({ name: bot, status: 'online', at: Date.now(), health: 20, food: 18, position: { x: 1, y: 80, z: 3 }, action: 'idle', moving: false, digging: null, held: { name: bot === 'Roy' ? 'stone_sword' : 'iron_pickaxe', count: 1 }, offhand: null, inventory: [{ name: bot === 'Roy' ? 'oak_log' : 'coal', count: 7 }] })};</script>` });
+        return route.fulfill({ contentType: 'text/html', body: `<canvas></canvas><script>window.roycraftConnected=true;window.roycraftState=${JSON.stringify({ name: bot, status: 'online', at: Date.now(), health: 20, food: 18, position: { x: 1, y: 80, z: 3 }, action: 'idle', moving: false, digging: null, held: { name: bot === 'Roy' ? 'stone_sword' : 'iron_pickaxe', count: 1 }, offhand: bot === 'Roy' ? null : { name: 'shield', count: 1 }, inventory: [{ name: bot === 'Roy' ? 'oak_log' : 'coal', count: 7 }] })};</script>` });
       }
       if (name.startsWith('map/')) return route.fulfill({ contentType: 'text/html', body: '<p>Map fixture</p>' });
       const extension = name.split('.').at(-1);
@@ -47,6 +47,10 @@ try {
     assert.equal(await page.locator('#camera-vitals .mc-meter-cell').count(), 20);
     await page.locator('#camera-bot').selectOption('Moss');
     await page.getByRole('img', { name: 'Main hand: iron pickaxe ×1', exact: true }).waitFor();
+    const shield = page.getByRole('img', { name: 'Off hand: shield ×1', exact: true });
+    await shield.waitFor();
+    assert.equal(await shield.locator('img').getAttribute('src'), 'item-assets/shield.png');
+    assert.equal(await shield.locator('.mc-unmapped').count(), 0);
     assert.equal(await page.locator('#live-feed').count(), 1);
     await page.locator('details').evaluate(element => { element.open = true; });
     await page.getByRole('img', { name: 'coal ×7', exact: true }).waitFor();

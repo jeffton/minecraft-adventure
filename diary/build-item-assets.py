@@ -140,6 +140,15 @@ def chest_preview(source, name):
         return front
 
 
+def shield_preview(source):
+    """Unpatterned shield plate's front face from the vanilla entity atlas."""
+    with Image.open(source / "entity" / "shield" / "shield_base_nopattern.png") as atlas:
+        scale = atlas.width // 64
+        # The 12×22×1 plate has UV origin (0,0); its front begins after
+        # the one-pixel depth strip in both dimensions.
+        return atlas.convert("RGBA").crop((scale, scale, 13 * scale, 23 * scale))
+
+
 def item_icon(source, models, item, states=None):
     name = item["name"]
     if name == "air":
@@ -151,6 +160,8 @@ def item_icon(source, models, item, states=None):
         return load_texture(source / "items" / f"{name}_00.png"), "sprite-first-frame"
     if name in ("chest", "trapped_chest", "ender_chest"):
         return chest_preview(source, name), "entity-texture-preview"
+    if name == "shield":
+        return shield_preview(source), "entity-texture-preview"
     selected = select_model(models, states or {}, item)
     if selected is not None:
         model = resolve_model(models, selected)
