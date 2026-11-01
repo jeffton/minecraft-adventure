@@ -66,6 +66,61 @@ test('real Pi registry dispatches native tool calls, validates plain schemas and
   } finally { await agent.close(); }
 });
 
+test('accepted execution and ahead queueing finish native turns without a narration request, retaining real tool results', async () => {
+  const f = await fixture([
+    call('execute', { code: 'gather' }),
+    call('queue_next', { code: 'craft' }),
+    answer('Observed both completed programs.'),
+  ], ['execute', 'queue_next'].map(name => ({
+    name, description: 'Schedule real work.', parameters: schema,
+    execute: async () => ({ actionId: name === 'execute' ? 'gather-handle' : 'craft-handle', queued: name === 'queue_next' }),
+  })));
+  const agent = await f.open();
+  try {
+    assert.equal((await agent.step({ action: null })).modelCalls, 1);
+    assert.equal((await agent.step({ action: { id: 'gather-handle', state: 'running' } })).modelCalls, 1);
+    assert.equal(f.calls.length, 2, 'no additional final-answer model requests');
+    await agent.step({ action: { id: 'craft-handle', state: 'completed' } });
+    assert.match(JSON.stringify(f.calls[2].context), /gather-handle/);
+    assert.match(JSON.stringify(f.calls[2].context), /craft-handle/);
+  } finally { await agent.close(); }
+});
+
+test('mixed remember and action rounds skip narration in either order, but failed admission still permits correction', async () => {
+  const mixed = order => fauxAssistantMessage(order.map(name => fauxToolCall(name, { code: name })), { stopReason: 'toolUse' });
+  const f = await fixture([
+    mixed(['remember', 'execute']), mixed(['queue_next', 'remember']),
+    mixed(['remember', 'execute']), answer('Correct the failed action.'),
+  ], ['remember', 'execute', 'queue_next'].map(name => ({
+    name, description: 'A player tool.', parameters: schema,
+    execute: async () => {
+      if (name === 'execute' && failAdmission) throw new Error('Fresh life changed');
+      return { accepted: true };
+    },
+  })));
+  let failAdmission = false;
+  const agent = await f.open();
+  try {
+    assert.equal((await agent.step({})).modelCalls, 1);
+    assert.equal((await agent.step({})).modelCalls, 1);
+    failAdmission = true;
+    assert.equal((await agent.step({})).modelCalls, 2);
+    assert.match(JSON.stringify(f.calls[3].context), /Fresh life changed/);
+  } finally { await agent.close(); }
+});
+
+test('a failed action admission still reaches the model for correction rather than terminating the turn', async () => {
+  const f = await fixture([call('execute', { code: 'invalid' }), answer('I will correct the prerequisites.')], [{
+    name: 'execute', description: 'Start work.', parameters: schema,
+    execute: async () => { throw new Error('Player context changed'); },
+  }]);
+  const agent = await f.open();
+  try {
+    assert.equal((await agent.step({})).modelCalls, 2);
+    assert.match(JSON.stringify(f.calls[1].context), /Player context changed/);
+  } finally { await agent.close(); }
+});
+
 test('conversation survives reopen, and another world cannot inherit observations or prior answers', async () => {
   const f = await fixture([answer('I remember the old oak tree.'), answer('Continue here.'), answer('A fresh start.')]);
   let agent = await f.open();
@@ -238,13 +293,13 @@ test('completion during model thinking continues the same native step with persi
   let starts = 0;
   const image = { type: 'image', mimeType: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6S8sAAAAASUVORK5CYII=' };
   const f = await fixture([
-    call('execute', { code: 'first useful local program' }),
+    call('begin_skill', { code: 'first useful local program' }),
     async () => { waiting.resolve(); await release.promise; return answer('The first program is still running.'); },
-    call('execute', { code: 'next useful local program' }),
+    call('begin_skill', { code: 'next useful local program' }),
     answer('The next program is working.'),
     answer('I remember the actual completion.'),
   ], [{
-    name: 'execute', description: 'Start useful asynchronous work.', parameters: schema,
+    name: 'begin_skill', description: 'Start useful asynchronous work without ending the turn.', parameters: schema,
     execute: async () => {
       const id = `action-${++starts}`;
       feedback = { key: `${id}:running`, needsAction: false, observation: { action: { id, state: 'running' }, reflexOwner: null } };

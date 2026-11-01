@@ -1,5 +1,23 @@
 # Deploy
 
+## Pause and resume
+
+Stop autonomous model use without stopping Paper, the map or the website:
+
+```sh
+systemctl stop minecraft-adventure-diary.timer minecraft-adventure-diary.service minecraft-player.service
+```
+
+Resume explicitly:
+
+```sh
+systemctl start minecraft-player.service minecraft-adventure-diary.timer
+```
+
+The timer may publish one catch-up diary entry on resume. World/inventory, agent history, notes and saved skills persist; in-memory programs and their queued continuations do not.
+
+## Publish code
+
 Existing installation, Node 24+, root access and `trash` are required. Run from a reviewed checkout; the scripts do not pull or commit code.
 
 ```sh

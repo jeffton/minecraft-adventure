@@ -41,6 +41,27 @@ test('an already-prepared continuation starts synchronously when predecessor cle
   assert.equal(f.events.find(event => event[0] === 'pipeline')[2].lateContinuation, false);
 });
 
+test('execute can install two agent-written stages atomically and hand off without another model request', () => {
+  const f = fixture();
+  const first = f.pipeline.start({ ...f.program('Gather wood'), next: f.program('Craft tools') });
+  assert.equal(first.nextSkill, 'Craft tools');
+  assert.equal(f.actions.size, 1);
+  f.pipeline.completed(f.finish());
+  assert.equal(f.pipeline.current().name, 'Craft tools');
+  assert.equal(f.pipeline.next, null);
+  assert.equal(f.events.at(-1)[2].afterAction, first.actionId);
+});
+
+test('invalid continuation is rejected before physical work starts, and failure discards an admitted pair', () => {
+  const f = fixture();
+  assert.throws(() => f.pipeline.start({ ...f.program(), next: { ...f.program(), name: '' } }), /Skill name/);
+  assert.equal(f.actions.size, 0);
+  f.pipeline.start({ ...f.program(), next: f.program('Build') });
+  f.pipeline.completed(f.finish('failed'));
+  assert.equal(f.actions.size, 1);
+  assert.equal(f.pipeline.next, null);
+});
+
 test('a continuation arriving after successful completion starts directly without an error/replan round', () => {
   const f = fixture();
   const first = f.pipeline.start(f.program('Gather wood'));

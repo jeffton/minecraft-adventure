@@ -6,7 +6,7 @@ import { AssistantMessageEventStream, Type } from '@earendil-works/pi-ai';
 import { createModels } from '@earendil-works/pi-ai/models';
 import { openaiCodexProvider } from '@earendil-works/pi-ai/providers/openai-codex';
 import {
-  AssistantEntry, GenerationTask, Harness, createRegistry, defineDoc, defineExtension, defineTool, hook,
+  AssistantEntry, GenerationTask, Harness, LiveDoc, createRegistry, defineDoc, defineExtension, defineTool, hook,
 } from '@earendil-works/pi-durable';
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
 
@@ -118,6 +118,13 @@ export async function openPlayerAgent({
       emit({ type: 'tool_start', name: tool.name, callId: api.callId, taskId: api.taskId });
       try {
         const result = nativeResult(await tool.execute(args, api, callContext));
+        // Pi terminates only when every call in a round requests it. Read the
+        // persisted round so remember+execute works too, including after replay.
+        // Any failed admission/tool leaves its control unset and permits repair.
+        const round = await api.snapshot(LiveDoc, api.conversationId, callContext);
+        if (!result.isError && round?.tools?.some(call => ['execute', 'queue_next'].includes(call.name))) {
+          result.control = { ...result.control, terminate: true };
+        }
         emit({ type: 'tool_end', name: tool.name, callId: api.callId, isError: result.isError === true });
         return result;
       } catch (error) {
@@ -264,7 +271,9 @@ export async function openPlayerAgent({
       if (settled.status !== 'done' || settled.type !== 'input') throw new Error(`Player model run failed: ${settled.reason}`);
       const answer = await conversation.commit(tx => tx.entry(AssistantEntry, settled.answer), context);
       const message = answer?.model?.find(item => item.role === 'assistant');
-      if (!message || message.stopReason !== 'stop') throw new Error(`Player model response incomplete: ${message?.stopReason}`);
+      if (!message || (message.stopReason !== 'stop' && !(model === PLAYER_MODEL && message.stopReason === 'toolUse'))) {
+        throw new Error(`Player model response incomplete: ${message?.stopReason}`);
+      }
       return {
         text: message.content.filter(block => block.type === 'text').map(block => block.text).join(''),
         model, answerEntryId: settled.answer, worldId, usage: message.usage,

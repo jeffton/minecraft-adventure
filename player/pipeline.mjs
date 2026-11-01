@@ -23,7 +23,9 @@ export class ActionPipeline {
     return { ...program, name, input: program.input ?? {} };
   }
 
-  start(program) {
+  start({ next, ...program }) {
+    // Validate the whole pair before starting any physical work.
+    const continuation = next ? this.validate({ ...next, session: program.session, life: program.life }) : null;
     if (this.next) throw new Error('A next skill is already queued');
     const ready = this.validate(program);
     const previous = this.current();
@@ -35,7 +37,8 @@ export class ActionPipeline {
       previousActionId: previous?.id,
       gapMs: previous?.settled ? Date.now() - Date.parse(previous.completedAt) : null,
     });
-    return { actionId: id, name: ready.name, worldId: this.worldId, life: ready.life };
+    if (continuation) this.next = { ...continuation, afterAction: id };
+    return { actionId: id, name: ready.name, worldId: this.worldId, life: ready.life, nextSkill: continuation?.name ?? null };
   }
 
   queue({ afterAction, ...program }) {
