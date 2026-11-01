@@ -10,11 +10,11 @@ All connected players, including the four local bots, have live server-sourced m
 
 ## Installation and deployment
 
-Run `python3 map/install.py` as root. It checks the official release SHA-256, installs the Paper plugin and configuration, and **does not restart Paper or alter world files**. Coordinate one graceful Paper restart with bot workers to activate it. The plugin inherits the existing nonroot Minecraft service user, 2304 MiB heap, 3 GiB memory ceiling and low-priority Minecraft slice.
+Run `python3 map/install.py` as root after Paper has generated its configuration. It checks the official release SHA-256, installs the Paper plugin/configuration and updates only `chunks.auto-save-interval` in Paper’s world defaults. It **does not restart Paper, generate chunks or alter terrain**. Coordinate one graceful Paper restart with bot workers to activate it. The plugin inherits the existing nonroot Minecraft service user, 2304 MiB heap, 3 GiB memory ceiling and low-priority Minecraft slice.
 
 Run `bash map/deploy.sh` to publish the map section, CSS and HTTPS proxy. It reloads nginx but never restarts Minecraft. The map listener binds `127.0.0.1:8100`; nginx exposes only GET/HEAD map assets and live data under `/map/`. No server directory, credentials, chat or command API is published.
 
-Rendering uses one lowest-priority thread. Terrain refresh follows saved world changes with a 60-second regional cooldown; position updates use BlueMap's live stream. Initial rendering costs CPU and disk; subsequent updates are incremental. The client renders the isometric map with WebGL and supports pan, zoom, player following, separate dimensions and a full-screen page. Overworld caves below the surface are omitted to keep the map economical. Nether and End retain their geometry with ambient light so underground terrain stays visible.
+Rendering uses one lowest-priority thread. Paper saves chunks incrementally every 600 ticks (30 seconds at 20 TPS); BlueMap uses a 10-second regional cooldown and a minute-level incremental update pass. The pass checks existing region/chunk timestamps, not a forced full re-render, so busy region files cannot indefinitely postpone terrain updates. Player positions use BlueMap's live stream. Initial rendering costs CPU and disk; subsequent updates are incremental. The client renders the isometric map with WebGL and supports pan, zoom, player following, separate dimensions and a full-screen page. Overworld caves below the surface are omitted to keep the map economical. Nether and End retain their geometry with ambient light so underground terrain stays visible.
 
 ## Verification
 

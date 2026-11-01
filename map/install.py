@@ -7,6 +7,7 @@ import hashlib
 import os
 from pathlib import Path
 import pwd
+import re
 import urllib.request
 
 from marker_icons import install as install_marker_icons
@@ -23,9 +24,9 @@ def configurations():
 data: "bluemap"
 render-thread-count: 1
 render-thread-priority: 1
-update-cooldown: 60
-full-update-interval: 1440
-region-file-check-interval: 5
+update-cooldown: 10
+full-update-interval: 1
+region-file-check-interval: 1
 metrics: false
 """,
         "plugin.conf": """live-player-markers: true
@@ -85,6 +86,19 @@ storage: "file"
        if dimension == "minecraft:the_nether" else "")
 
 
+def configure_chunk_saving(server):
+    """Use native incremental saving so visited terrain reaches the map promptly."""
+    path = server / "config/paper-world-defaults.yml"
+    text, count = re.subn(
+        r"(?m)^(  auto-save-interval:) [^\n]+$",
+        r"\g<1> 600",
+        path.read_text(),
+    )
+    if count != 1:
+        raise ValueError("Expected one Paper chunk auto-save-interval setting")
+    path.write_text(text)
+
+
 def install():
     account = pwd.getpwnam("minecraft-adventure")
     url = f"https://github.com/BlueMap-Minecraft/BlueMap/releases/download/v{VERSION}/bluemap-{VERSION}-paper.jar"
@@ -92,6 +106,7 @@ def install():
         jar = response.read()
     if hashlib.sha256(jar).hexdigest() != SHA256:
         raise ValueError("BlueMap download SHA256 mismatch")
+    configure_chunk_saving(SERVER)
     entries = configurations()
     # Paper 26.3 stores all vanilla dimensions below the primary world directory.
     entries["maps/overworld.conf"] = map_config("world", "minecraft:overworld", "Overworld", 0)

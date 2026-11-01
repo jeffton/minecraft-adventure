@@ -1,6 +1,7 @@
 import importlib.util
 from pathlib import Path
 import unittest
+from tempfile import TemporaryDirectory
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("map_install", ROOT / "map/install.py")
@@ -35,6 +36,18 @@ class MapBoundaryTests(unittest.TestCase):
         self.assertIn("proxy_buffering off;", section)
         self.assertNotIn("/var/lib/", section)
         self.assertNotIn("alias", section)
+
+    def test_chunk_save_profile_preserves_unrelated_paper_settings(self):
+        with TemporaryDirectory() as directory:
+            server = Path(directory)
+            (server / "config").mkdir()
+            path = server / "config/paper-world-defaults.yml"
+            path.write_text("chunks:\n  auto-save-interval: default\n  max-auto-save-chunks-per-tick: 24\nentities:\n  markers:\n    tick: true\n")
+            installer.configure_chunk_saving(server)
+            expected = "chunks:\n  auto-save-interval: 600\n  max-auto-save-chunks-per-tick: 24\nentities:\n  markers:\n    tick: true\n"
+            self.assertEqual(path.read_text(), expected)
+            installer.configure_chunk_saving(server)
+            self.assertEqual(path.read_text(), expected)
 
     def test_map_embed_does_not_start_another_game_camera(self):
         html = (ROOT / "diary/index.html").read_text()
