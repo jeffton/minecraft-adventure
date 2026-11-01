@@ -54,7 +54,7 @@ function nearestResource(bot, names, home) {
         matching: block => names.includes(block.name),
         // Palette probes have no position; site filtering needs a world block.
         useExtraInfo: block => !protectedHome(block, home, bot),
-        maxDistance: 32
+        maxDistance: 64
     });
 }
 
@@ -123,7 +123,7 @@ export async function executeProgram(agent, skills, helpers) {
             check();
             const home = helpers.getHome();
             const block = nearestResource(bot, names, home);
-            if (!block) throw new Error(`No loaded unprotected ${names.join('/')} within 32 blocks for ${item}. Explore or change the program.`);
+            if (!block) throw new Error(`No loaded unprotected ${names.join('/')} within 64 blocks for ${item}. Explore or change the program.`);
             if (++gathered > 64) throw new Error('Program reached its 64-block gathering budget.');
             const before = inventoryCount(bot, item);
             await operation(() => helpers.gatherResource(agent, names, home));
@@ -135,9 +135,11 @@ export async function executeProgram(agent, skills, helpers) {
         const home = helpers.getHome();
         const cost = recipe => recipeIngredients(recipe, bot.registry).reduce((sum, ingredient) => {
             if (inventoryCount(bot, ingredient.name) >= ingredient.count) return sum;
-            const log = PLANKS.has(ingredient.name) ? ingredient.name.replace('_planks', '_log') : ingredient.name;
+            const planks = PLANKS.has(ingredient.name);
+            const log = planks ? ingredient.name.replace('_planks', '_log') : ingredient.name;
+            const held = planks ? inventoryCount(bot, log) * 4 : 0;
             const local = LOGS.has(log) && nearestResource(bot, [log], home);
-            return sum + (local ? 1 : 10) * Math.max(0, ingredient.count - inventoryCount(bot, ingredient.name));
+            return sum + (local ? 1 : 10) * Math.max(0, ingredient.count - inventoryCount(bot, ingredient.name) - held);
         }, 0);
         return recipes.filter(recipe => recipe.result.id === bot.registry.itemsByName[item].id && recipeIngredients(recipe, bot.registry).every(ingredient =>
             ingredient.name !== item && (inventoryCount(bot, ingredient.name) >= ingredient.count || LOGS.has(ingredient.name) || RAW[ingredient.name] || CRAFTED.has(ingredient.name) || ['iron_ingot', 'stone'].includes(ingredient.name))))

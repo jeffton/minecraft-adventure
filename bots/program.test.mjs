@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { craftExecutions, recipeIngredients, registerPrograms, validateProgram } from './program.mjs';
 
 function fixture(program, initial = {}, name = 'Roy') {
-    const names = ['oak_log', 'oak_planks', 'stick', 'crafting_table', 'wooden_pickaxe', 'cobblestone', 'stone_pickaxe', 'coal', 'raw_iron', 'iron_ingot', 'furnace', 'diamond', 'torch', 'iron_helmet', 'mutton', 'cooked_mutton'];
+    const names = ['oak_log', 'oak_planks', 'stick', 'crafting_table', 'wooden_pickaxe', 'cobblestone', 'stone_pickaxe', 'coal', 'raw_iron', 'iron_ingot', 'furnace', 'diamond', 'torch', 'iron_helmet', 'mutton', 'cooked_mutton', 'acacia_log', 'acacia_planks', 'pale_oak_log', 'pale_oak_planks'];
     const items = names.map((name, id) => ({ name, id }));
     const registry = { items, itemsByName: Object.fromEntries(items.map(item => [item.name, item])) };
     const inventory = new Map(Object.entries(initial));
@@ -43,11 +43,11 @@ function fixture(program, initial = {}, name = 'Roy') {
         entity: { position: { x: 0, y: 64, z: 0, distanceTo: p => Math.hypot(p.x, p.y - 64, p.z) } },
         pathfinder: { setGoal: () => {} }, clearControlStates: () => {},
         _syncWindow: async () => {},
-        findBlock: ({ matching, useExtraInfo }) => {
+        findBlock: ({ matching, useExtraInfo, maxDistance }) => {
             // Mineflayer first matches the section palette, without coordinates.
             const possible = [...resources.values()].some(block => matching({ name: block.name, position: null }));
             if (!possible) return null;
-            return [...resources.values()].find(block => matching(block) && (!useExtraInfo || useExtraInfo(block))) ?? null;
+            return [...resources.values()].find(block => matching(block) && bot.entity.position.distanceTo(block.position) <= maxDistance && (!useExtraInfo || useExtraInfo(block))) ?? null;
         },
         findBlocks: ({ matching }) => [...resources.values()].filter(matching).map(b => b.position),
         recipesAll: id => recipes[items[id].name] ?? [],
@@ -89,7 +89,7 @@ function fixture(program, initial = {}, name = 'Roy') {
     } } };
     const actions = [];
     registerPrograms(actions, skills, helpers);
-    return { bot, calls, events, skills, helpers, amount, add, resources, block, equipment,
+    return { bot, calls, events, skills, helpers, amount, add, resources, block, equipment, recipes,
         setMission: next => { mission = next; }, setHome: next => { home = next; },
         run: () => actions[0].perform(agent) };
 }
@@ -219,6 +219,23 @@ test('survival interruption also cancels a pending post-craft fence without star
     await Promise.resolve();
     assert.ok(!f.calls.some(call => call[0] === 'equip'));
 });
+
+for (const held of [true, false]) {
+    test(`crafting chooses available wood instead of the registry's first pale-oak recipe (${held ? 'inventory' : '40 blocks away'})`, async () => {
+        const f = fixture([ensure('crafting_table', 1)], held ? { acacia_log: 1 } : {});
+        const id = name => f.bot.registry.itemsByName[name].id;
+        const recipe = (result, count, ingredient, consumed) => ({ requiresTable: false,
+            result: { id: id(result), count }, delta: [{ id: id(ingredient), count: -consumed }, { id: id(result), count }] });
+        f.recipes.crafting_table = [recipe('crafting_table', 1, 'pale_oak_planks', 4), recipe('crafting_table', 1, 'acacia_planks', 4)];
+        f.recipes.pale_oak_planks = [recipe('pale_oak_planks', 4, 'pale_oak_log', 1)];
+        f.recipes.acacia_planks = [recipe('acacia_planks', 4, 'acacia_log', 1)];
+        if (!held) f.resources.set('tree', f.block('acacia_log', 40));
+        await f.run();
+        assert.equal(f.amount('crafting_table'), 1);
+        assert.deepEqual(f.calls.filter(call => call[0] === 'craft'), [['craft', 'acacia_planks', 1], ['craft', 'crafting_table', 1]]);
+        assert.equal(f.calls.some(call => call[0] === 'gather'), !held);
+    });
+}
 
 test('recursive sticks use earned logs and correct plank/stick yields', async () => {
     const f = fixture([ensure('stick', 8)], { oak_log: 1 });
