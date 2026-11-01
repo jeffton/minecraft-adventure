@@ -21,6 +21,11 @@ export function patchBotSource(source) {
   const marker = 'export function initBot(username) {';
   if (source.split(marker).length !== 2) throw new Error('Mindcraft initBot integration point changed');
   source = source.replace(marker, marker + '\n    mc_version = settings.minecraft_version;');
+  const hostile = "return  (mob.type === 'mob' || mob.type === 'hostile') && mob.name !== 'iron_golem' && mob.name !== 'snow_golem';";
+  if (source.split(hostile).length !== 2) throw new Error('Mindcraft hostile-entity integration point changed');
+  // Endermen are neutral until their 1.21.4 `creepy` metadata flag is set.
+  // Proximity alone must not provoke one during unarmoured gathering.
+  source = source.replace(hostile, hostile.replace("mob.name !== 'snow_golem'", "mob.name !== 'snow_golem' && (mob.name !== 'enderman' || mob.metadata?.[17] === true)"));
   const start = source.indexOf('    // Throttle position packets');
   const end = source.indexOf('    // Suppress PartialReadError');
   if (start < 0 || end <= start) throw new Error('Upstream movement throttle integration point changed');

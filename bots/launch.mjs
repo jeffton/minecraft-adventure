@@ -31,7 +31,7 @@ for (const [name, role] of Object.entries(BOT_ROLES)) {
     profile: {
       name, role, cooldown: 20000, conversing: conversation,
       model: { api: 'openai', model: 'gpt-5.6-terra', url: 'http://127.0.0.1:8766/v1', params: { user: name } },
-      modes: { self_preservation: true, unstuck: true, cowardice: false, self_defense: true,
+      modes: { self_preservation: true, unstuck: true, cowardice: true, self_defense: true,
         hunting: false, item_collecting: true, torch_placing: true, elbow_room: false, idle_staring: false, cheat: false }
     }
   };
