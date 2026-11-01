@@ -292,7 +292,7 @@ test('light packets ignore a missing column even when viewer readiness is stale'
   assert.equal(f.packets.length, 0);
 });
 
-test('client darkens only sky uniformly and updates loaded adjacent sections after real column updates', () => {
+test('client darkens only sky uniformly and updates loaded adjacent sections after real column updates', async () => {
   const socket = new EventEmitter();
   const material = createViewerLightMaterial(THREE);
   const shader = { uniforms: {}, vertexShader: '#include <begin_vertex>', fragmentShader: '#include <color_fragment>' };
@@ -323,7 +323,33 @@ test('client darkens only sky uniformly and updates loaded adjacent sections aft
   assert.equal(workerMessages.length, 1, 'Late unloaded-column packet is ignored');
   dirty.length = 0;
   socket.emit('unloadChunk', { x: 0, z: 0 });
+  await Promise.resolve();
   assert.equal(dirty.length, 24);
   assert.ok(dirty.every(p => p.x === -16 && p.z === 0));
   material.dispose();
+});
+
+test('adjacent remesh messages follow upstream unload even when light listener is registered first', async () => {
+  const socket = new EventEmitter();
+  const messages = [];
+  const worker = { postMessage: message => messages.push(message) };
+  const world = {
+    loadedChunks: { '0,0': true, '-16,0': true },
+    workers: [worker],
+    setSectionDirty(position) { worker.postMessage({ type: 'dirty', ...position }); }
+  };
+  installViewerLightClient({ world }, socket);
+  // Upstream registers removeColumn after our light integration. Its unload
+  // must reach the mesher before neighboring geometry is marked dirty.
+  socket.on('unloadChunk', ({ x, z }) => {
+    delete world.loadedChunks[`${x},${z}`];
+    worker.postMessage({ type: 'unloadChunk', x, z });
+  });
+  socket.emit('unloadChunk', { x: 0, z: 0 });
+  assert.deepEqual(messages, [{ type: 'unloadChunk', x: 0, z: 0 }]);
+  await Promise.resolve();
+  assert.equal(messages.length, 25);
+  assert.deepEqual(messages.slice(1), Array.from({ length: 24 }, (_, i) => ({
+    type: 'dirty', x: -16, y: -64 + i * 16, z: 0
+  })));
 });
