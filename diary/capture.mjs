@@ -1,19 +1,25 @@
-import { writeFileSync } from 'node:fs';
-import { chromium } from 'playwright-core';
+import { readFileSync, writeFileSync } from 'node:fs';
 
-const browser = await chromium.launch({
-  executablePath: '/opt/google/chrome/chrome',
-  headless: true,
-  args: ['--no-sandbox', '--disable-dev-shm-usage', '--enable-unsafe-swiftshader'],
-});
-try {
-  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-  page.setDefaultTimeout(30_000);
-  await page.addInitScript(() => { window.roycraftCaptureRequested = true; });
-  await page.goto('http://127.0.0.1:8931/', { waitUntil: 'domcontentloaded' });
-  await page.waitForFunction(() => typeof window.roycraftCapture === 'string');
-  const frame = await page.evaluate(() => window.roycraftCapture);
-  writeFileSync(process.argv[2], Buffer.from(frame.split(',')[1], 'base64'), { mode: 0o644 });
-} finally {
-  await browser.close();
+export async function captureDiary(output, {
+  statePath = '/var/lib/minecraft-adventure/observations/state.json',
+  url = 'http://127.0.0.1:8935/capture',
+} = {}) {
+  const state = JSON.parse(readFileSync(statePath, 'utf8'));
+  const observations = {
+    updatedAt: state.updatedAt,
+    bots: state.bots.map(({ name, status, session, dimension, position }) => ({ name, status, session, dimension, position })),
+    povBot: 'Roy',
+    includeBase: false,
+  };
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(observations),
+    signal: AbortSignal.timeout(60_000),
+  });
+  if (!response.ok) throw new Error(`Diary camera returned ${response.status}: ${await response.text()}`);
+  const { frames } = await response.json();
+  writeFileSync(output, Buffer.from(frames[0].image.data, 'base64'), { mode: 0o644 });
 }
+
+if (import.meta.url === 'file://' + process.argv[1]) await captureDiary(process.argv[2]);

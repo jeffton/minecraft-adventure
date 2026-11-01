@@ -98,25 +98,34 @@ export async function capturePlanning(state, capture = captureOne) {
 }
 
 export async function startCaptureServer({ capture = capturePlanning, port = 8935 } = {}) {
-  let busy = false;
+  let pending = 0;
+  let tail = Promise.resolve();
   const server = http.createServer(async (request, response) => {
     response.setHeader('Content-Type', 'application/json');
     response.setHeader('Cache-Control', 'no-store');
     if (request.method !== 'POST' || request.url !== '/capture') return response.writeHead(404).end();
-    if (busy) return response.writeHead(409).end(JSON.stringify({ error: 'Building capture already running' }));
-    busy = true;
+    if (pending >= 2) return response.writeHead(409).end(JSON.stringify({ error: 'Capture queue is full' }));
+    pending++;
+    const previous = tail;
+    let release;
+    tail = new Promise(resolve => { release = resolve; });
     try {
       let body = '';
       for await (const chunk of request) {
         body += chunk;
         if (Buffer.byteLength(body) > 16384) throw new Error('Building camera observations exceed 16 KiB');
       }
-      response.end(JSON.stringify(await capture(JSON.parse(body))));
+      const state = JSON.parse(body);
+      await previous;
+      response.end(JSON.stringify(await capture(state)));
     } catch (error) {
       console.error('Building capture failed:', error.message);
       response.writeHead(502).end(JSON.stringify({ error: error.message }));
     } finally {
-      busy = false;
+      // A failed request body must not let its successor pass an active capture.
+      await previous;
+      pending--;
+      release();
     }
   });
   await new Promise((resolve, reject) => {
