@@ -7,6 +7,7 @@ import path from 'node:path';
 import { createModels } from '@earendil-works/pi-ai/models';
 import { fauxProvider, fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux';
 import { MODEL, MISSION_INSTRUCTIONS } from '../contracts.mjs';
+import { STRATEGY_INSTRUCTIONS } from '../strategy.mjs';
 import { openEngine } from '../engine.mjs';
 import { startPlanner } from '../server.mjs';
 import { ModelQueue } from '../queue.mjs';
@@ -177,10 +178,16 @@ test('provider dispatch rejects stale persisted mission content even outside the
   models.setProvider(faux.provider);
   const engine = await openEngine({ stateDir, models, intervalMs: 0 });
   try {
-    await assert.rejects(engine.complete([
-      { role: 'system', content: MISSION_INSTRUCTIONS },
-      { role: 'user', content: JSON.stringify({ observed: observed(600000), previousMission: null }) },
-    ], 'stale-dispatch'), /did not finish/);
+    const instructions = [
+      MISSION_INSTRUCTIONS + '\n\n' + STRATEGY_INSTRUCTIONS,
+      MISSION_INSTRUCTIONS.split('\n', 1)[0] + '\nEarlier persisted instruction body.',
+    ];
+    for (const [index, content] of instructions.entries()) {
+      await assert.rejects(engine.complete([
+        { role: 'system', content },
+        { role: 'user', content: JSON.stringify({ observed: observed(600000), previousMission: null }) },
+      ], 'stale-dispatch-' + index), /did not finish/);
+    }
     assert.equal(faux.state.callCount, 0);
   } finally { await engine.close(); }
 });

@@ -104,12 +104,21 @@ function fixture(program, initial = {}, name = 'Roy') {
     } } };
     const actions = [];
     registerPrograms(actions, skills, helpers);
-    return { bot, calls, events, skills, helpers, amount, add, resources, block, equipment, recipes,
+    return { agent, bot, calls, events, skills, helpers, amount, add, resources, block, equipment, recipes,
         setMission: next => { mission = next; }, setHome: next => { home = next; },
         run: () => actions[0].perform(agent) };
 }
 
 const ensure = (item, count) => ({ action: 'ensure_item', item, count });
+
+test('action-manager interruption or failure is not a successful program return', async () => {
+    for (const result of [{ interrupted: true, message: 'Interrupted' }, { success: false, message: 'Rejected' }]) {
+        const t = fixture([ensure('oak_log', 1)], { oak_log: 1 });
+        t.agent.actions.runAction = async () => result;
+        await assert.rejects(t.run(), /Program action did not complete/);
+        assert.equal(t.events.some(event => event[1] === 'attempt_completed'), false);
+    }
+});
 
 test('mission revision after authored gathering stops the remaining program', async () => {
     const t = fixture([ensure('oak_log', 1), ensure('oak_planks', 4)]);

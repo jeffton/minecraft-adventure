@@ -46,7 +46,7 @@ function authorized(request, token) {
 export async function startPlanner({
   engine, token, stateDir, missionFile, observedFile,
   host = '127.0.0.1', port = 8766,
-  queue = new ModelQueue({ intervalMs: 0 }), missionIntervalMs = 300000, pollMs = 30000,
+  queue = new ModelQueue({ intervalMs: 0 }), missionIntervalMs = 300000, pollMs = 5000,
 }) {
   if (!token || token.length < 24) throw new Error('PLANNER_RELAY_TOKEN must contain at least 24 characters');
   let adventure = await engine.getAdventureState();
@@ -68,6 +68,7 @@ export async function startPlanner({
   const status = await optionalJson(statusFile) ?? { lastMissionAttempt: 0, lastMissionError: null };
   let missionRunning = false;
   let stopping = false;
+  let lastEvidenceRecordedAt = Date.now();
 
   async function readObserved() {
     const raw = await readFile(observedFile, 'utf8');
@@ -84,6 +85,7 @@ export async function startPlanner({
       context: strategyContext(recorded, evidence, observed, trigger),
     };
     await writeJson(pendingFile, pending);
+    lastEvidenceRecordedAt = Date.now();
     return pending;
   }
 
@@ -107,12 +109,17 @@ export async function startPlanner({
         const evidence = observeEvidence(adventure.evidence, observed);
         const trigger = reviewTrigger(adventure, evidence, observed, Date.now(), status.lastMissionAttempt, missionIntervalMs);
         if (!trigger) {
-          adventure = await engine.recordEvidence({ expectedRevision: adventure.revision, evidence });
+          // Notice completed bots promptly without increasing idle SQLite writes.
+          if (Date.now() - lastEvidenceRecordedAt >= 30000) {
+            adventure = await engine.recordEvidence({ expectedRevision: adventure.revision, evidence });
+            lastEvidenceRecordedAt = Date.now();
+          }
           return;
         }
         pending = await prepareReview(adventure, observed, trigger);
       }
       status.lastMissionAttempt = Date.now();
+      const queuedAt = Date.now();
       await writeJson(statusFile, status);
       const answer = await queue.run(async () => {
         // A queued or crash-persisted request retains its ID/input while fresh.
@@ -125,11 +132,12 @@ export async function startPlanner({
         validateObservation(pending.observed);
         pending.dispatchedAt = Date.now();
         await writeJson(pendingFile, pending);
+        console.info(JSON.stringify({ event: 'mission_started', id: pending.id, trigger: pending.trigger.kind, queuedMs: pending.dispatchedAt - queuedAt, observedAt: pending.observed.updatedAt }));
         return engine.complete([
           { role: 'system', content: MISSION_INSTRUCTIONS + '\n\n' + STRATEGY_INSTRUCTIONS },
           { role: 'user', content: JSON.stringify({ observed: pending.observed, previousMission: pending.previousMission, ...pending.context }) },
         ], 'mission-' + pending.id, { role: 'mission' });
-      });
+      }, { priority: 1 });
       const latest = await readObserved();
       const reviewed = validateReview(JSON.parse(answer.text), pending.previousStrategy, pending.evidence, pending.observed);
       const proposedMission = {
@@ -146,7 +154,7 @@ export async function startPlanner({
       await writeJson(missionFile, mission);
       await writeJson(pendingFile, null);
       status.lastMissionError = null;
-      console.info(JSON.stringify({ event: 'mission', id: mission.id, phase: mission.phase, goal: reviewed.strategy.goal.id, decision: reviewed.strategy.decision, trigger: pending.trigger.kind }));
+      console.info(JSON.stringify({ event: 'mission', id: mission.id, phase: mission.phase, goal: reviewed.strategy.goal.id, decision: reviewed.strategy.decision, trigger: pending.trigger.kind, queuedMs: pending.dispatchedAt - queuedAt, planningMs: Date.now() - pending.dispatchedAt }));
     } catch (error) {
       // The durable document remains authoritative even if its file projection fails.
       status.lastMissionError = error.message;

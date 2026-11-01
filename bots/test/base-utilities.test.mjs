@@ -101,6 +101,40 @@ test('earned chest placement and exact authoritative deposit/withdraw observatio
     assert.deepEqual(f.calls.filter(c => typeof c === 'string').slice(-5), ['open', 'sync', 'withdraw', 'sync', 'close']);
 });
 
+test('program stages have distinct transfer receipts while retries within each stage are idempotent', async t => {
+    const f = await fixture(t);
+    f.put(site, 'chest', { type: 'single' });
+    const previousRoot = process.env.ADVENTURE_ROOT;
+    process.env.ADVENTURE_ROOT = f.directory;
+    const step = { action: 'deposit', ...site, item: 'oak_planks', count: 3 };
+    const mission = { id: 'stage-transfer', bots: { Roy: { program: [step], nextProgram: [step] } } };
+    const agent = { name: 'Roy', bot: f.bot, adventureProgram: { missionId: mission.id, stage: 0, life: 0 } };
+    const run = () => executeProgram(agent, { log() {} }, {
+        getMission: () => mission, getHome: () => home,
+        navigateHome: async () => { f.bot.entity.position = new Vec3(home.x, home.y, home.z); }
+    });
+    try {
+        // Simulate a confirmed stage-0 transfer from the runtime before this feature.
+        // A deploy/restart of that same mission must still recognize its receipt.
+        const canonical = createBaseUtilities({ lockDirectory: join(f.directory, 'control', 'base-utilities') });
+        await canonical.transferChest(f.bot, home, site, {
+            direction: 'deposit', item: 'oak_planks', count: 3,
+            receiptKey: JSON.stringify([mission.id, agent.name, 0, step])
+        }, f.context);
+        await run();
+        await run();
+        assert.equal(f.items.find(item => item.name === 'oak_planks').count, 17);
+        agent.adventureProgram.stage = 1;
+        await run();
+        await run();
+        assert.equal(f.items.find(item => item.name === 'oak_planks').count, 14);
+        assert.equal(f.calls.filter(call => call === 'deposit').length, 2);
+    } finally {
+        if (previousRoot === undefined) delete process.env.ADVENTURE_ROOT;
+        else process.env.ADVENTURE_ROOT = previousRoot;
+    }
+});
+
 test('same-chest lock excludes another bot/process until window closes', async t => {
     const f = await fixture(t);
     f.put(site, 'chest', { type: 'single' });

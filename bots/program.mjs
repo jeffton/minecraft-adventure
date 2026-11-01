@@ -102,7 +102,12 @@ export async function executeProgram(agent, skills, helpers) {
     const bot = agent.bot;
     const mission = helpers.getMission();
     if (!mission || typeof mission.id !== 'string') throw new Error('No current versioned mission.');
-    const program = validateProgram(mission.bots?.[agent.name]?.program, bot, agent.name);
+    const stage = agent.adventureProgram?.stage ?? 0;
+    const life = agent.adventureProgram?.life;
+    const program = validateProgram(mission.bots?.[agent.name]?.[stage === 0 ? 'program' : 'nextProgram'], bot, agent.name);
+    const current = () => helpers.getMission()?.id === mission.id &&
+        (agent.adventureProgram?.stage ?? 0) === stage && agent.adventureProgram?.life === life &&
+        (!agent.adventureProgram || agent.adventureProgram.missionId === mission.id);
     requireSurvival(bot);
     const initialDimension = bot.game.dimension;
     const deadline = Date.now() + 120000;
@@ -110,7 +115,7 @@ export async function executeProgram(agent, skills, helpers) {
     let activeStep = { action: 'initialize' };
     let preconditions;
     let started = false;
-    const attempt = () => ({ attemptId, missionId: mission.id, controllerRevision: helpers.controllerRevision, preconditions, program });
+    const attempt = () => ({ attemptId, missionId: mission.id, stage, controllerRevision: helpers.controllerRevision, preconditions, program });
     const begin = inventoryConfirmed => {
         const home = helpers.getHome();
         preconditions = JSON.stringify({
@@ -129,7 +134,7 @@ export async function executeProgram(agent, skills, helpers) {
     const check = () => {
         if (timedOut || Date.now() >= deadline) throw new Error('Program reached its 120-second time budget; re-observe inventory before retrying.');
         if (bot.interrupt_code) throw new Error('Program interrupted by action manager or survival reflex.');
-        if (helpers.getMission()?.id !== mission.id) throw new Error('Mission revision changed; stopped the old program at an operation boundary.');
+        if (!current()) throw new Error('Mission revision changed, or program stage/life changed; stopped the old program at an operation boundary.');
         if (bot.game.dimension !== initialDimension) throw new Error('Dimension changed; old program stopped.');
         if (bot.health <= 0) throw new Error('Cannot execute a program while dead.');
         // Injured or hungry bots still need to forage, craft and equip recovery supplies.
@@ -361,7 +366,7 @@ export async function executeProgram(agent, skills, helpers) {
                 const p = { x: step.x, y: step.y, z: step.z };
                 let result;
                 if (step.action === 'place_chest') result = await base.ensureChest(bot, home, p, baseContext);
-                else if (['deposit', 'withdraw'].includes(step.action)) result = await base.transferChest(bot, home, p, { direction: step.action, item: step.item, count: step.count, receiptKey: JSON.stringify([mission.id, agent.name, index, step]) }, baseContext);
+                else if (['deposit', 'withdraw'].includes(step.action)) result = await base.transferChest(bot, home, p, { direction: step.action, item: step.item, count: step.count, receiptKey: JSON.stringify([mission.id, agent.name, stage === 0 ? index : `next:${index}`, step]) }, baseContext);
                 else if (step.action === 'place_bed') result = await base.placeBed(bot, home, p, step.item, step.facing, baseContext);
                 else result = await base.useBed(bot, home, p, baseContext);
                 const observation = { action: step.action, at: result.observedAt ?? new Date().toISOString(), dimension: bot.game.dimension, ...result };
@@ -391,7 +396,7 @@ export async function executeProgram(agent, skills, helpers) {
         return `Program ${mission.id} completed ${program.length} observed steps; ${operations} gameplay operations. No generated code executed.`;
     } catch (error) {
         if (!started) begin(false);
-        const interrupted = bot.interrupt_code || bot.health <= 0 || bot.game.dimension !== initialDimension || helpers.getMission()?.id !== mission.id;
+        const interrupted = bot.interrupt_code || bot.health <= 0 || bot.game.dimension !== initialDimension || !current();
         const kind = timedOut ? 'execution' : interrupted ? 'interrupted' : error instanceof PreconditionError ? 'precondition' : ['NoPath', 'Timeout'].includes(error.name) ? 'navigation' : 'execution';
         helpers.emit?.(agent, 'attempt_failed', error.message, { ...attempt(), action: activeStep.action, target: activeStep.item ?? (activeStep.action === 'regroup' ? JSON.stringify(helpers.getHome()) : activeStep.action), kind, reason: error.message });
         throw error;
@@ -446,7 +451,8 @@ export function registerPrograms(actionsList, skills, helpers = {}) {
                     agent.bot.clearControlStates();
                 }
             }, { timeout: 2.1 });
-            return result.interrupted || result.success === false ? result.message : message;
+            if (result.interrupted || result.success === false) throw new Error(`Program action did not complete: ${result.message}`);
+            return message;
         }
     });
 }

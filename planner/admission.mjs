@@ -26,7 +26,9 @@ export function admittedModels(models, { stateDir, intervalMs = 20000 }) {
           lastUser?.content?.filter(item => item.type === 'text').map(item => item.text).join('');
         if (text) {
           const envelope = JSON.parse(text);
-          if (envelope.conversation?.some(message => message.role === 'system' && message.content === MISSION_INSTRUCTIONS)) {
+          // The stable header also identifies recovered inputs whose instruction body predates a deploy.
+          const missionHeader = MISSION_INSTRUCTIONS.split('\n', 1)[0] + '\n';
+          if (envelope.conversation?.some(message => message.role === 'system' && message.content.startsWith(missionHeader))) {
             const missionInput = envelope.conversation.findLast(message => message.role === 'user');
             validateObservation(JSON.parse(missionInput.content).observed);
           }

@@ -5,6 +5,8 @@ export class ModelQueue {
   #tail = Promise.resolve();
   #pending = 0;
   #lastStart = 0;
+  #jobs = [];
+  #running = false;
 
   constructor({ intervalMs = 20000, capacity = 8, now = Date.now, wait = sleep } = {}) {
     this.intervalMs = intervalMs;
@@ -15,11 +17,11 @@ export class ModelQueue {
 
   get pending() { return this.#pending; }
 
-  run(operation, { signal } = {}) {
+  run(operation, { signal, priority = 0 } = {}) {
     signal?.throwIfAborted();
     if (this.#pending >= this.capacity) throw new HttpError(429, 'Planner queue is full');
     this.#pending++;
-    let started = false;
+    const job = { operation, signal, priority, started: false };
     let finished = false;
     let settle;
     const result = new Promise((resolve, reject) => {
@@ -33,23 +35,45 @@ export class ModelQueue {
     });
     const cancel = () => {
       // Active inference owns its abort/settlement. A queued disconnected caller frees capacity immediately.
-      if (!started) settle(signal.reason);
+      if (!job.started) {
+        this.#jobs.splice(this.#jobs.indexOf(job), 1);
+        settle(signal.reason);
+      }
     };
     signal?.addEventListener('abort', cancel, { once: true });
-    this.#tail = this.#tail.then(async () => {
-      if (finished) return;
-      started = true;
+    job.settle = settle;
+    const position = this.#jobs.findIndex(queued => queued.priority < priority);
+    if (position === -1) this.#jobs.push(job);
+    else this.#jobs.splice(position, 0, job);
+    if (!this.#running) {
+      this.#running = true;
+      this.#tail = Promise.resolve().then(() => this.#process());
+    }
+    return result;
+  }
+
+  async #process() {
+    while (this.#jobs.length) {
       try {
         const remaining = this.#lastStart + this.intervalMs - this.now();
         if (remaining > 0) await this.wait(remaining);
-        signal?.throwIfAborted();
-        this.#lastStart = this.now();
-        settle(null, await operation());
       } catch (error) {
-        settle(error);
+        this.#jobs.shift()?.settle(error);
+        continue;
       }
-    });
-    return result;
+      // Select after pacing, so higher-priority arrivals can still pass waiting jobs.
+      const job = this.#jobs.shift();
+      if (!job) continue;
+      job.started = true;
+      try {
+        job.signal?.throwIfAborted();
+        this.#lastStart = this.now();
+        job.settle(null, await job.operation());
+      } catch (error) {
+        job.settle(error);
+      }
+    }
+    this.#running = false;
   }
 
   async drain() { await this.#tail; }

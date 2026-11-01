@@ -26,6 +26,19 @@ test('validated mission retains bounded desired-state programs and Roy-only buil
   assert.deepEqual(validatePlan(plan), plan);
 });
 
+test('optional continuation uses the same bounded trusted action API', () => {
+  const plan = mission();
+  plan.bots.Roy.nextProgram = [{ action: 'build_lodge' }];
+  assert.deepEqual(validatePlan(plan), plan);
+  for (const nextProgram of [null, [], Array(7).fill({ action: 'regroup' }), [{ action: 'eval', code: 'execute' }], [{ action: 'ensure_item', item: 'oak_log', count: 65 }]]) {
+    plan.bots.Roy.nextProgram = nextProgram;
+    assert.throws(() => validatePlan(plan));
+  }
+  delete plan.bots.Roy.nextProgram;
+  plan.bots.Flint.nextProgram = [{ action: 'build_lodge' }];
+  assert.throws(() => validatePlan(plan), /Only Roy/);
+});
+
 test('home coordinates match the integer and height limits accepted by bot controllers', () => {
   for (const home of [
     { x: 12.5, y: 65, z: 18 },

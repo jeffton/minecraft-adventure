@@ -119,6 +119,8 @@ export function createObserver(agent, controls = {}) {
   let failureKind = null;
   let failureReason = null;
   let life = 0;
+  agent.adventureProgram = { missionId: null, stage: 0, life };
+  const repairRevision = () => JSON.stringify([getMission()?.id, agent.adventureProgram.stage, life]);
   const emit = (type, message, data = {}) => {
     if (type === 'attempt_failed') {
       failureKind = data.kind;
@@ -130,7 +132,7 @@ export function createObserver(agent, controls = {}) {
   };
   const recordError = e => { error = String(e.message ?? e); emit('error', error); console.error(`[${agent.name}]`, e); };
   const bot = agent.bot;
-  const repair = new RepairScheduler({ agent, session, missionId: () => getMission()?.id,
+  const repair = new RepairScheduler({ agent, session, missionId: repairRevision,
     cancel: () => controls.cancelChat?.(), now: () => Date.now() });
   const invalidateRepair = () => {
     repair.invalidate();
@@ -156,12 +158,15 @@ export function createObserver(agent, controls = {}) {
   });
   bot.on('death', () => {
     life++;
+    agent.adventureProgram = { missionId: getMission()?.id ?? null, stage: 0, life };
+    programId = null;
     invalidateRepair();
     emit('death', 'Died in survival; items remain in the world.', { position: { x: bot.entity.position.x, y: bot.entity.position.y, z: bot.entity.position.z } });
   });
   bot.on('respawn', () => {
     // Completed preparation cannot survive a death: tools and supplies were dropped.
     life++;
+    agent.adventureProgram = { missionId: getMission()?.id ?? null, stage: 0, life };
     invalidateRepair();
     programId = null;
     programFailed = false;
@@ -186,6 +191,9 @@ export function createObserver(agent, controls = {}) {
     try {
       const mission = getMission();
       const home = getHome();
+      if (agent.adventureProgram.missionId !== (mission?.id ?? null)) {
+        agent.adventureProgram = { missionId: mission?.id ?? null, stage: 0, life };
+      }
       const id = `${mission?.id ?? 'initial'}:${home ? `${home.x},${home.z}` : 'unsettled'}`;
       if (lastMissionId !== id) {
         invalidateRepair();
@@ -212,18 +220,30 @@ export function createObserver(agent, controls = {}) {
           failureReason = null;
           const errorsBefore = errorCount;
           const startedLife = life;
-          const current = () => life === startedLife && getMission()?.id === mission.id;
+          const startedStage = agent.adventureProgram.stage;
+          const current = () => life === startedLife && getMission()?.id === mission.id && agent.adventureProgram.stage === startedStage;
           Promise.resolve(controls.runProgram()).then(message => {
             if (!current()) return;
             programMessage = String(message);
             programFailed = errorCount !== errorsBefore || bot.interrupt_code;
-            emit('program_result', programMessage);
-          }).catch(e => { if (current()) { programFailed = true; recordError(e); } }).finally(() => {
+            emit('program_result', programMessage, { missionId: mission.id, stage: startedStage });
+            if (!programFailed && startedStage === 0 && mission.bots[agent.name].nextProgram) {
+              invalidateRepair();
+              agent.adventureProgram.stage = 1;
+              programId = null;
+            }
+          }).catch(e => {
+            if (current()) {
+              programFailed = true;
+              programMessage = String(e.message ?? e);
+              recordError(e);
+            }
+          }).finally(() => {
             programRunning = false;
           });
         } else if (programFailed && failureKind !== 'interrupted' && !programRunning) {
           const fingerprint = JSON.stringify([failureReason ?? programMessage, inventoryContext(bot)]);
-          const token = repair.begin(mission.id, fingerprint);
+          const token = repair.begin(repairRevision(), fingerprint);
           if (!token) return;
           const before = repairOutcomeContext(bot);
           agent.adventureThinking = true;
@@ -267,6 +287,7 @@ export function createObserver(agent, controls = {}) {
         dimension: bot.game.dimension,
         task: task(),
         shortPlan: mission?.bots[agent.name].task ?? INITIAL_TASKS[agent.name],
+        programStage: agent.adventureProgram.stage,
         ...agent.adventureSurvey,
         navigation: {
           moving: bot.pathfinder.isMoving(), mining: bot.pathfinder.isMining(), building: bot.pathfinder.isBuilding(),
