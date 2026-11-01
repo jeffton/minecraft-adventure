@@ -219,14 +219,14 @@ export async function runPlayer(env = process.env) {
   process.once('SIGTERM', () => void close().catch(fail));
   process.once('SIGINT', () => void close().catch(fail));
   emit('spawn', 'Roy entered a fresh survival world.', { worldId });
-  let lastStep = 0;
   while (!stopping) {
     try {
       const current = action();
       const active = current?.state === 'running';
-      if ((active && pipeline.next) || (!wake && active && Date.now() - lastStep < 15000) || bot.health <= 0 || reflexOwner) { await sleep(500); continue; }
+      // A final answer yields control to the running program. Reconsider on its
+      // completion/interruption, not on a timer that only produces status prose.
+      if ((active && pipeline.next) || (!wake && active) || bot.health <= 0 || reflexOwner) { await sleep(500); continue; }
       wake = false;
-      lastStep = Date.now();
       const visual = await vision.current();
       if (visual.life !== life) throw new Error('Life changed during vision capture');
       thinking = true;
