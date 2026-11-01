@@ -82,34 +82,65 @@ function reportError(error) {
 }
 
 const liveToggle = document.querySelector('#live-toggle');
+const cameraControls = document.querySelector('#camera-controls');
+const cameraBot = document.querySelector('#camera-bot');
 let liveMonitor;
+const itemLabel = item => item ? `${item.name.replaceAll('_', ' ')} ×${item.count}` : 'Empty';
+
+function startCamera() {
+  document.querySelector('#live-feed')?.remove();
+  clearInterval(liveMonitor);
+  document.querySelector('#camera-kit').replaceChildren();
+  document.querySelector('#camera-inventory').replaceChildren();
+  document.querySelector('#inventory-count').textContent = '';
+  document.querySelector('#camera-state').textContent = `Connecting to ${cameraBot.value}…`;
+  const feed = document.createElement('iframe');
+  feed.id = 'live-feed';
+  feed.title = `Live first-person camera: ${cameraBot.value}`;
+  feed.src = cameraBot.value === 'Roy' ? 'live/' : `live/${cameraBot.value}/`;
+  feed.allow = 'fullscreen';
+  document.querySelector('.hero').append(feed);
+  cameraControls.hidden = false;
+  liveToggle.textContent = 'Show latest snapshot';
+  liveToggle.setAttribute('aria-pressed', 'true');
+  document.querySelector('#camera-label').textContent = 'CONNECTING CAMERA…';
+  let connectedBefore = false;
+  liveMonitor = setInterval(() => {
+    const live = feed.contentWindow;
+    const state = live?.roycraftState;
+    const connected = live?.roycraftConnected === true && state && state.name === cameraBot.value && Date.now() - state.at < 5000;
+    connectedBefore ||= connected;
+    document.querySelector('#camera-label').textContent = connected
+      ? 'LIVE BOT CAMERA'
+      : connectedBefore ? 'CAMERA DISCONNECTED' : 'CONNECTING CAMERA…';
+    if (!connected) {
+      document.querySelector('#camera-state').textContent = `${cameraBot.value} · Waiting for live observations`;
+      document.querySelector('#camera-kit').replaceChildren();
+      document.querySelector('#camera-inventory').replaceChildren();
+      document.querySelector('#inventory-count').textContent = '';
+      return;
+    }
+    const p = state.position;
+    document.querySelector('#camera-state').textContent = `${state.name} · ${state.digging ? `Mining ${state.digging.replaceAll('_', ' ')}` : state.moving ? 'Moving' : 'Stationary'} · ${state.action.replaceAll('action:', '')} · ${Math.round(p.x)}, ${Math.round(p.y)}, ${Math.round(p.z)} · Health ${vital(state.health)}/20 · Food ${vital(state.food)}/20`;
+    document.querySelector('#camera-kit').replaceChildren(node('span', `Main hand: ${itemLabel(state.held)}`), node('span', `Off hand: ${itemLabel(state.offhand)}`));
+    document.querySelector('#inventory-count').textContent = `(${state.inventory.reduce((sum, item) => sum + item.count, 0)} items)`;
+    document.querySelector('#camera-inventory').replaceChildren(...(state.inventory.length ? state.inventory.map(item => node('span', itemLabel(item))) : [node('span', 'Inventory is empty')]));
+  }, 250);
+}
+
+cameraBot.addEventListener('change', startCamera);
 liveToggle.addEventListener('click', () => {
   const existing = document.querySelector('#live-feed');
   if (existing) {
     existing.remove();
+    cameraControls.hidden = true;
     clearInterval(liveMonitor);
     liveToggle.textContent = 'Watch live ↗';
     liveToggle.setAttribute('aria-pressed', 'false');
     document.querySelector('#camera-label').textContent = 'BOT CAMERA';
     return;
   }
-  const feed = document.createElement('iframe');
-  feed.id = 'live-feed';
-  feed.title = 'Live bot camera from Roycraft';
-  feed.src = 'live/';
-  feed.allow = 'fullscreen';
-  document.querySelector('.hero').append(feed);
-  liveToggle.textContent = 'Show latest snapshot';
-  liveToggle.setAttribute('aria-pressed', 'true');
-  document.querySelector('#camera-label').textContent = 'CONNECTING CAMERA…';
-  let connectedBefore = false;
-  liveMonitor = setInterval(() => {
-    const connected = feed.contentWindow?.roycraftConnected === true;
-    connectedBefore ||= connected;
-    document.querySelector('#camera-label').textContent = connected
-      ? 'LIVE BOT CAMERA'
-      : connectedBefore ? 'CAMERA DISCONNECTED' : 'CONNECTING CAMERA…';
-  }, 1000);
+  startCamera();
 });
 
 refresh().catch(reportError);

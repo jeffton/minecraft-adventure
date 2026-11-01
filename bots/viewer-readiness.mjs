@@ -1,13 +1,21 @@
-export function patchViewerClient(source) {
-  const call = 'u.setFirstPersonCamera(t,r,o)';
-  if (source.split(call).length !== 2) throw new Error('Upstream first-person camera integration changed');
-  return source.replace(call, `(window.roycraftCameraApplied ? ${call} : (u.camera.position.set(t.x,t.y+u.playerHeight,t.z),u.setFirstPersonCamera(null,r,o),window.roycraftCameraApplied=true))`);
+export function patchViewerClient(source, cameraMotionSource) {
+  const edits = [
+    ['const u=new r(l);', `const u=new r(l);window.roycraftMotion=(${cameraMotionSource})();window.roycraftViewer=u;u.camera.far=64;u.camera.updateProjectionMatrix();u.scene.fog=new THREE.Fog(u.scene.background,32,60);o.on('adventureState',s=>{window.roycraftState=s});o.on('adventureChunks',chunks=>{window.roycraftChunks=chunks});`],
+    ['u.setFirstPersonCamera(t,r,o)', '(window.roycraftMotion.receive(u,t,r,o),window.roycraftCameraApplied=true)'],
+    ['u.update(),l.render', 'window.roycraftMotion.frame(u,performance.now()),window.roycraftChunksReady=!!window.roycraftChunks?.length&&window.roycraftChunks.every(k=>u.world.loadedChunks[k])&&u.world.sectionsOutstanding.size===0&&!!u.world.material.map,u.update(),l.render']
+  ];
+  for (const [before, after] of edits) {
+    if (source.split(before).length !== 2) throw new Error('Upstream first-person camera integration changed');
+    source = source.replace(before, after);
+  }
+  return source;
 }
 
 export const readyScript = `<script>
 window.roycraftReady = false;
 window.roycraftConnected = false;
 window.roycraftCameraApplied = false;
+window.roycraftChunksReady = false;
 (() => {
   let draws = 0;
   let lastTraffic = 0;
@@ -25,6 +33,9 @@ window.roycraftCameraApplied = false;
         window.roycraftConnected = false;
         window.roycraftReady = false;
         window.roycraftCameraApplied = false;
+        window.roycraftChunksReady = false;
+        window.roycraftChunks = null;
+        window.roycraftState = null;
       });
     }
   };
@@ -34,7 +45,7 @@ window.roycraftCameraApplied = false;
     C.prototype.drawElements = function(mode, count, ...args) {
       const result = draw.call(this, mode, count, ...args);
       if (window.roycraftCameraApplied && count > 2048) draws++;
-      window.roycraftReady = window.roycraftCameraApplied && draws >= 3 && lastTraffic > 0 && Date.now() - lastTraffic < 35000;
+      window.roycraftReady = window.roycraftCameraApplied && window.roycraftChunksReady && draws >= 3 && lastTraffic > 0 && Date.now() - lastTraffic < 35000;
       return result;
     };
   }

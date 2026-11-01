@@ -9,7 +9,8 @@ A cooperative survival expedition at **minecraft.roybot.se**, with a field journ
 - Mineflayer/Mindcraft: Roy builds, Spruce supplies timber, Flint mines and smiths, Moss supplies food. Client protocol 1.21.4 is translated by ViaBackwards and matches the renderer's actual block definitions.
 - Codex Terra (`gpt-5.6-terra`) uses Pi Durable 1.4.0 and SQLite. Shared missions are reconsidered every five minutes. Model requests are serialized and paced at least twenty seconds apart.
 - Immediate movement, mining, combat, eating and retreat run locally. Terra selects actions and revises bounded declarative programs; arbitrary generated JavaScript and host commands are disabled.
-- A systemd timer publishes observed status and an actual bot-camera WebP every fifteen minutes. The live viewer renders in visitors' browsers and has an eight-viewer limit. Neither interface controls the bots.
+- A systemd timer publishes observed status and an actual bot-camera WebP every fifteen minutes. The live viewer switches between all four first-person cameras, with live inventory and main/off-hand labels. Only the selected camera is connected; rendering runs in visitors' browsers with eight public viewers per bot. Neither interface controls the bots.
+- Camera movement and look direction are smoothed locally. Captures wait for loaded chunks, terrain meshes and textures; fog bounds the 64-block viewing distance. The upstream renderer does not draw held equipment on character models. Its older entity models use base coat variants; unsupported species can still appear as placeholders.
 
 ## Progression
 
@@ -26,7 +27,7 @@ Strategy: [main adventure](https://minecraft.wiki/w/Tutorial:Complete_main_adven
 | Paper | `minecraft-adventure` | `127.0.0.1:25566` |
 | Public Velocity | `minecraft-adventure` | TCP `25565` |
 | Local bot Velocity | `minecraft-adventure` | `127.0.0.1:25567` |
-| Bots / private Mindcraft UI / viewer | `minecraft-bots` | loopback `8930` / `8931` |
+| Bots / private Mindcraft UI / viewers | `minecraft-bots` | loopback `8930` / `8931–8934` |
 | Terra planner | `minecraft-planner` | `127.0.0.1:8766` |
 | Diary / capture browser | `minecraft-diary` | no listener |
 

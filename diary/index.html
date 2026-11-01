@@ -12,6 +12,13 @@
   <main>
     <section class="intro"><p class="eyebrow">A LIVING MINECRAFT EXPERIMENT</p><h1>Four bots.<br>One world.</h1><p class="lede">From the first log to a home of their own.<br>And one day: the Ender Dragon.</p><div class="live"><i></i><span id="updated">Finding the expedition…</span></div></section>
     <section class="hero" aria-label="Views from the world"><img id="hero-image" alt="Bot camera from the Minecraft world" hidden><div id="image-empty">The camera follows the expedition.</div><button id="live-toggle" type="button" aria-pressed="false">Watch live ↗</button><div class="image-caption"><span id="camera-label">BOT CAMERA</span><span id="image-time"></span></div></section>
+    <section id="camera-controls" class="camera-controls" aria-label="Live camera" hidden>
+      <label>Follow <select id="camera-bot"><option>Roy</option><option>Spruce</option><option>Flint</option><option>Moss</option></select></label>
+      <span id="camera-state" role="status">Connecting…</span>
+      <div id="camera-kit" class="camera-kit"></div>
+      <details><summary>Inventory <span id="inventory-count"></span></summary><div id="camera-inventory" class="camera-inventory"></div></details>
+      <p class="camera-note">First-person view · Equipment is listed below; the renderer does not draw held items or armour on models. Fog marks the edge of the loaded world.</p>
+    </section>
     <section class="mission"><div><p class="eyebrow">THE NEXT MOVE</p><h2 id="objective">A shared home. A long adventure.</h2></div><div><p class="eyebrow">THE BIG PICTURE</p><p id="long-term">Survive together, build beautifully, and prepare for the End.</p></div></section>
     <section class="crew-section"><div class="section-heading"><h2>The crew</h2><span>Different roles. Shared resources.</span></div><div class="crew" id="crew"></div></section>
     <section class="route-section"><div class="section-heading"><h2>The road to the dragon</h2><span>Progress observed in the game. Not wishful thinking.</span></div><ol id="milestones" class="route"></ol></section>

@@ -2,8 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readyScript, patchViewerClient } from '../viewer-readiness.mjs';
+import { createCameraMotion } from '../viewer-stream.mjs';
 
-test('world draws cannot announce readiness before the first camera position is applied', () => {
+test('camera and completed terrain meshes are both required before a snapshot', () => {
   let socket;
   class WebSocket {
     constructor() { socket = this; this.listeners = {}; }
@@ -18,23 +19,22 @@ test('world draws cannot announce readiness before the first camera position is 
   for (let i = 0; i < 10; i++) gl.drawElements(4, 4096);
   assert.equal(window.roycraftReady, false);
   window.roycraftCameraApplied = true;
-  for (let i = 0; i < 3; i++) gl.drawElements(4, 4096);
+  for (let i = 0; i < 10; i++) gl.drawElements(4, 4096);
+  assert.equal(window.roycraftReady, false);
+  window.roycraftChunksReady = true;
+  gl.drawElements(4, 4096);
   assert.equal(window.roycraftReady, true);
   socket.listeners.close();
   assert.equal(window.roycraftReady, false);
   assert.equal(window.roycraftCameraApplied, false);
+  assert.equal(window.roycraftChunksReady, false);
 });
 
-test('initial camera is positioned synchronously; subsequent motion uses the original tween', () => {
-  const source = patchViewerClient('u.setFirstPersonCamera(t,r,o)');
-  const calls = [];
-  const window = {};
-  const u = { playerHeight: 1.6, camera: { position: { set: (...args) => calls.push(['position', ...args]) } }, setFirstPersonCamera: (...args) => calls.push(['camera', ...args]) };
-  const context = { window, u, t: { x: 5, y: 100, z: 9 }, r: 0.4, o: 0.2 };
-  vm.runInNewContext(source, context);
-  assert.deepEqual(calls, [['position', 5, 101.6, 9], ['camera', null, 0.4, 0.2]]);
-  assert.equal(window.roycraftCameraApplied, true);
-  vm.runInNewContext(source, context);
-  assert.deepEqual(calls[2], ['camera', context.t, 0.4, 0.2]);
+test('client integration installs one motion controller and waits for initial chunk meshing', () => {
+  const source = 'const u=new r(l);u.setFirstPersonCamera(t,r,o);u.update(),l.render';
+  const result = patchViewerClient(source, createCameraMotion.toString());
+  assert.match(result, /sectionsOutstanding.size===0/);
+  assert.match(result, /roycraftMotion.receive/);
+  assert.match(result, /adventureState/);
   assert.throws(() => patchViewerClient('changed upstream'), /integration changed/);
 });

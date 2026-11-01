@@ -9,23 +9,51 @@ const browser = await chromium.launch({
 try {
   for (const width of [1440, 390]) {
     const page = await browser.newPage({ viewport: { width, height: 1000 } });
-    let frames = 0;
-    page.on('websocket', socket => socket.on('framereceived', () => frames++));
+    const errors = [];
+    const activeSockets = new Set();
+    page.on('pageerror', error => errors.push(String(error)));
+    page.on('websocket', socket => {
+      activeSockets.add(socket);
+      socket.on('close', () => activeSockets.delete(socket));
+    });
     await page.goto('https://minecraft.roybot.se/', { waitUntil: 'domcontentloaded' });
     await page.getByRole('heading', { name: 'Roy', exact: true }).waitFor();
-    await page.locator('#hero-image').waitFor();
-    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     await page.getByRole('button', { name: 'Watch live' }).click();
-    const element = await page.locator('#live-feed').elementHandle();
-    const frame = await element.contentFrame();
-    await frame.waitForFunction(() => window.roycraftReady === true, undefined, { timeout: 45000 });
-    await page.getByText('LIVE BOT CAMERA', { exact: true }).waitFor();
-    assert.ok(frames > 3, `No actual live gameplay frames at viewport ${width}`);
-    await page.screenshot({ path: `/tmp/roycraft-public-live-${width}.png`, fullPage: true });
+    const positions = {};
+    for (const name of ['Roy', 'Spruce', 'Flint', 'Moss']) {
+      await page.locator('#camera-bot').selectOption(name);
+      const frame = await (await page.locator('#live-feed').elementHandle()).contentFrame();
+      await frame.waitForFunction(name => window.roycraftReady === true && window.roycraftState?.name === name, name, { timeout: 60000 });
+      await page.getByText('LIVE BOT CAMERA', { exact: true }).waitFor();
+      await page.waitForFunction(() => document.querySelector('#camera-kit').textContent.includes('Main hand:'));
+      const actual = await frame.evaluate(() => ({ state: window.roycraftState, chunks: Object.keys(window.roycraftViewer.world.loadedChunks).length, pending: window.roycraftViewer.world.sectionsOutstanding.size, far: window.roycraftViewer.camera.far }));
+      assert.equal(actual.state.name, name);
+      assert.ok(Array.isArray(actual.state.inventory));
+      assert.equal(actual.far, 64);
+      assert.ok(actual.chunks > 25, `Loaded terrain for ${name}: ${actual.chunks}`);
+      assert.ok((await page.locator('#camera-kit').textContent()).includes(actual.state.held ? actual.state.held.name.replaceAll('_', ' ') : 'Empty'));
+      assert.equal(await page.locator('#live-feed').count(), 1);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+      await page.screenshot({ path: `/tmp/roycraft-live-${name}-${width}.png`, fullPage: true });
+      positions[name] = actual.state.position;
+      console.log(`${width}px ${name}: ${JSON.stringify(actual)}`);
+    }
+    // Rapid switching must leave just the final actor's iframe/state, never an old inventory.
+    await page.locator('#camera-bot').selectOption('Roy');
+    await page.locator('#camera-bot').selectOption('Flint');
+    await page.locator('#camera-bot').selectOption('Spruce');
+    const finalFrame = await (await page.locator('#live-feed').elementHandle()).contentFrame();
+    await finalFrame.waitForFunction(() => window.roycraftState?.name === 'Spruce', undefined, { timeout: 45000 });
     await page.getByRole('button', { name: 'Show latest snapshot' }).click();
     assert.equal(await page.locator('#live-feed').count(), 0);
+    assert.equal(await page.locator('#camera-controls').isVisible(), false);
+    await page.waitForFunction(() => !document.querySelector('#live-feed'));
+    // A new browser round-trip lets transport teardown complete without keeping a renderer alive.
+    await page.goto('about:blank');
+    assert.equal(activeSockets.size, 0);
+    assert.deepEqual(errors, []);
+    assert.ok(new Set(Object.values(positions).map(p => JSON.stringify(p))).size > 1, 'Feeds must be genuine distinct bot positions');
     await page.close();
-    console.log(`Public HTTPS live feed ${width}px: ${frames} WebSocket frames, actual world rendered.`);
   }
 } finally {
   await browser.close();

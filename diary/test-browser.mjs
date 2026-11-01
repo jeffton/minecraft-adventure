@@ -19,7 +19,11 @@ try {
     await page.route('http://diary.test/**', async route => {
       const name = new URL(route.request().url()).pathname.slice(1) || 'index.html';
       if (name === 'data.json') return route.fulfill({ json: data });
-      if (name === 'live/') return route.fulfill({ contentType: 'text/html', body: '<canvas></canvas>' });
+      if (name.startsWith('live/')) {
+        const nameParts = name.split('/');
+        const bot = nameParts[1] || 'Roy';
+        return route.fulfill({ contentType: 'text/html', body: `<canvas></canvas><script>window.roycraftConnected=true;window.roycraftState=${JSON.stringify({ name: bot, at: Date.now(), health: 20, food: 18, position: { x: 1, y: 80, z: 3 }, action: 'idle', moving: false, digging: null, held: { name: bot === 'Roy' ? 'stone_sword' : 'iron_pickaxe', count: 1 }, offhand: null, inventory: [{ name: bot === 'Roy' ? 'oak_log' : 'coal', count: 7 }] })};</script>` });
+      }
       const types = { 'index.html': 'text/html', 'app.js': 'text/javascript', 'style.css': 'text/css' };
       await route.fulfill({ contentType: types[name], body: await readFile(new URL(name, import.meta.url)) });
     });
@@ -29,11 +33,23 @@ try {
     assert.equal(await page.evaluate(() => window.injected), undefined);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     await page.screenshot({ path: `/tmp/roycraft-diary-${width}.png`, fullPage: true });
+    assert.equal(await page.locator('#camera-controls').isVisible(), false);
     await page.getByRole('button', { name: 'Watch live' }).click();
     await page.locator('#live-feed').waitFor();
     assert.equal(await page.locator('#live-toggle').getAttribute('aria-pressed'), 'true');
+    await page.getByText('Main hand: stone sword ×1', { exact: true }).waitFor();
+    await page.locator('#camera-bot').selectOption('Moss');
+    await page.getByText('Main hand: iron pickaxe ×1', { exact: true }).waitFor();
+    assert.equal(await page.locator('#live-feed').count(), 1);
+    assert.equal(await page.locator('#camera-inventory').textContent(), 'coal ×7');
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    const liveFrame = await (await page.locator('#live-feed').elementHandle()).contentFrame();
+    await liveFrame.evaluate(() => { window.roycraftState.at = 0; });
+    await page.getByText('Moss · Waiting for live observations', { exact: true }).waitFor();
+    assert.equal(await page.locator('#camera-kit').textContent(), '');
     await page.getByRole('button', { name: 'Show latest snapshot' }).click();
     assert.equal(await page.locator('#live-feed').count(), 0);
+    assert.equal(await page.locator('#camera-controls').isVisible(), false);
     data.observedAt = '2020-01-01T00:00:00Z';
     await page.reload();
     await page.getByText(/Stale status/).waitFor();
