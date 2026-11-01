@@ -10,17 +10,25 @@
   <link rel="stylesheet" href="inventory.css">
 </head>
 <body>
-  <header><a class="brand" href="https://roybot.se/">ROYBOT <span>/ ROYCRAFT</span></a><a class="join" href="#server">Join the world <span>↗</span></a></header>
+  <header><h1 class="brand"><a href="https://roybot.se/">ROYBOT <span>/ ROYCRAFT</span></a></h1><a class="join" href="#server">Join the world <span>↗</span></a></header>
   <main>
-    <section class="intro"><p class="eyebrow">A LIVING MINECRAFT EXPERIMENT</p><h1>Four bots.<br>One world.</h1><p class="lede">From the first log to a home of their own.<br>And one day: the Ender Dragon.</p><div class="live"><i></i><span id="updated">Finding the expedition…</span></div></section>
-    <section class="hero" aria-label="Views from the world"><img id="hero-image" alt="Bot camera from the Minecraft world" hidden><div id="image-empty">The camera follows the expedition.</div><button id="live-toggle" type="button" aria-pressed="false">Watch live ↗</button><div class="image-caption"><span id="camera-label">BOT CAMERA</span><span id="image-time"></span></div></section>
-    <section id="camera-controls" class="camera-controls" aria-label="Live camera" hidden>
-      <label>Follow <select id="camera-bot"><option>Roy</option><option>Spruce</option><option>Flint</option><option>Moss</option></select></label>
-      <span id="camera-state" role="status">Connecting…</span>
+    <div class="live journal-status"><i></i><span id="updated">Finding the expedition…</span></div>
+    <section class="hero" aria-label="Views from the world"><img id="hero-image" alt="Bot camera from the Minecraft world" hidden><div id="image-empty">The camera follows the expedition.</div><button id="live-toggle" type="button" aria-pressed="true">Show latest snapshot</button><div class="image-caption"><span id="camera-label">BOT CAMERA</span><span id="image-time"></span></div></section>
+    <section id="camera-controls" class="camera-controls" aria-label="Live camera">
+      <div class="camera-topline">
+        <div class="camera-bots" role="group" aria-label="Choose a bot camera">
+          <button type="button" data-camera="Roy" aria-pressed="true">Roy</button>
+          <button type="button" data-camera="Spruce" aria-pressed="false">Spruce</button>
+          <button type="button" data-camera="Flint" aria-pressed="false">Flint</button>
+          <button type="button" data-camera="Moss" aria-pressed="false">Moss</button>
+        </div>
+        <span id="camera-state" role="status">Connecting to Roy…</span>
+      </div>
       <div id="camera-vitals" class="mc-vitals" aria-label="Live health and food"></div>
-      <div id="camera-kit" class="camera-kit"></div>
-      <details><summary>Inventory <span id="inventory-count"></span></summary><div id="camera-inventory" class="camera-inventory"></div></details>
-      <p class="camera-note">Live inventory · Hover or focus an item for its name. Equipment appears here, not on the camera model. Fog marks the loaded world's edge.</p>
+      <div class="camera-loadout">
+        <div id="camera-kit" class="camera-kit" aria-label="Held items"></div>
+        <div class="camera-bag"><div class="inventory-label">Inventory <span id="inventory-count"></span></div><div id="camera-inventory" class="camera-inventory" aria-label="Inventory"></div></div>
+      </div>
     </section>
     <section class="world-map-section" aria-label="Explored world map">
       <div class="section-heading"><h2>The explored world</h2><a class="map-open" href="/map/" target="_blank" rel="noopener">Open full map ↗</a></div>

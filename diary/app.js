@@ -10,6 +10,9 @@ try {
   const button = document.querySelector('#live-toggle');
   button.disabled = true;
   button.textContent = 'Item artwork could not load';
+  for (const camera of document.querySelectorAll('[data-camera]')) camera.disabled = true;
+  document.querySelector('#camera-state').textContent = 'Item artwork could not load';
+  clearInventory('Item artwork could not load');
 }
 
 const dateTime = value => new Intl.DateTimeFormat('en-GB', {
@@ -96,24 +99,37 @@ function reportError(error) {
 }
 
 const liveToggle = document.querySelector('#live-toggle');
-const cameraControls = document.querySelector('#camera-controls');
-const cameraBot = document.querySelector('#camera-bot');
+const cameraButtons = [...document.querySelectorAll('[data-camera]')];
+let cameraBot = 'Roy';
 let liveMonitor;
 let inventorySignature;
 
-function startCamera() {
+function cameraStatus(status) {
+  for (const button of cameraButtons) {
+    const selected = button.dataset.camera === cameraBot;
+    button.setAttribute('aria-pressed', String(selected));
+    button.dataset.status = selected ? status : '';
+    button.title = selected ? `${cameraBot} camera · ${status}` : `${button.dataset.camera} camera`;
+  }
+}
+
+function stopCamera(message) {
   document.querySelector('#live-feed')?.remove();
   clearInterval(liveMonitor);
-  clearInventory();
+  clearInventory(message);
   inventorySignature = undefined;
-  document.querySelector('#camera-state').textContent = `Connecting to ${cameraBot.value}…`;
+}
+
+function startCamera() {
+  stopCamera('Waiting for live inventory');
+  cameraStatus('connecting');
+  document.querySelector('#camera-state').textContent = `Connecting to ${cameraBot}…`;
   const feed = document.createElement('iframe');
   feed.id = 'live-feed';
-  feed.title = `Live first-person camera: ${cameraBot.value}`;
-  feed.src = cameraBot.value === 'Roy' ? 'live/' : `live/${cameraBot.value}/`;
+  feed.title = `Live first-person camera: ${cameraBot}`;
+  feed.src = cameraBot === 'Roy' ? 'live/' : `live/${cameraBot}/`;
   feed.allow = 'fullscreen';
   document.querySelector('.hero').append(feed);
-  cameraControls.hidden = false;
   document.querySelector('#image-time').hidden = true;
   liveToggle.textContent = 'Show latest snapshot';
   liveToggle.setAttribute('aria-pressed', 'true');
@@ -122,17 +138,20 @@ function startCamera() {
   liveMonitor = setInterval(() => {
     const live = feed.contentWindow;
     const state = live?.roycraftState;
-    const connected = live?.roycraftConnected === true && state?.status === 'online' && state.name === cameraBot.value && Date.now() - state.at < 5000;
+    const connected = live?.roycraftConnected === true && state?.status === 'online' && state.name === cameraBot && Date.now() - state.at < 5000;
     connectedBefore ||= connected;
     document.querySelector('#camera-label').textContent = connected
       ? 'LIVE BOT CAMERA'
       : connectedBefore ? 'CAMERA DISCONNECTED' : 'CONNECTING CAMERA…';
     if (!connected) {
-      document.querySelector('#camera-state').textContent = `${cameraBot.value} · ${state?.status === 'offline' ? 'Offline' : 'Waiting for live observations'}`;
-      clearInventory();
+      const status = state?.name === cameraBot && state.status === 'offline' ? 'offline' : 'waiting';
+      cameraStatus(status);
+      document.querySelector('#camera-state').textContent = `${cameraBot} · ${status === 'offline' ? 'Offline' : 'Waiting for live observations'}`;
+      clearInventory('Live inventory unavailable');
       inventorySignature = undefined;
       return;
     }
+    cameraStatus('live');
     const p = state.position;
     document.querySelector('#camera-state').textContent = `${state.name} · ${state.digging ? `Mining ${state.digging.replaceAll('_', ' ')}` : state.moving ? 'Moving' : 'Stationary'} · ${state.action.replaceAll('action:', '')} · ${Math.round(p.x)}, ${Math.round(p.y)}, ${Math.round(p.z)}`;
     const signature = JSON.stringify([state.health, state.food, state.held, state.offhand, state.inventory]);
@@ -143,16 +162,19 @@ function startCamera() {
   }, 250);
 }
 
-cameraBot.addEventListener('change', startCamera);
+for (const button of cameraButtons) {
+  button.addEventListener('click', () => {
+    if (button.dataset.camera === cameraBot && document.querySelector('#live-feed')) return;
+    cameraBot = button.dataset.camera;
+    startCamera();
+  });
+}
 liveToggle.addEventListener('click', () => {
-  const existing = document.querySelector('#live-feed');
-  if (existing) {
-    existing.remove();
-    cameraControls.hidden = true;
+  if (document.querySelector('#live-feed')) {
+    stopCamera('Live inventory paused');
+    cameraStatus('paused');
+    document.querySelector('#camera-state').textContent = `${cameraBot} · Snapshot view`;
     document.querySelector('#image-time').hidden = false;
-    clearInterval(liveMonitor);
-    clearInventory();
-    inventorySignature = undefined;
     liveToggle.textContent = 'Watch live ↗';
     liveToggle.setAttribute('aria-pressed', 'false');
     document.querySelector('#camera-label').textContent = 'BOT CAMERA';
@@ -163,3 +185,4 @@ liveToggle.addEventListener('click', () => {
 
 refresh().catch(reportError);
 setInterval(() => refresh().catch(reportError), 60_000);
+if (itemAssets) startCamera();

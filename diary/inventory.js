@@ -86,9 +86,10 @@ export function renderInventory(state, assets) {
   if (!state.inventory.length) inventory.append(element('p', 'mc-empty-message', 'Inventory is empty'));
 }
 
-export function clearInventory() {
+export function clearInventory(message) {
   for (const selector of ['#camera-vitals', '#camera-kit', '#camera-inventory']) {
     document.querySelector(selector).replaceChildren();
   }
   document.querySelector('#inventory-count').textContent = '';
+  if (message) document.querySelector('#camera-inventory').append(element('p', 'mc-empty-message', message));
 }
