@@ -1,4 +1,4 @@
-import './viewer.mjs';
+import { trackViewerLightColumns } from './viewer.mjs';
 import http from 'node:http';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { appendFile, mkdir } from 'node:fs/promises';
@@ -71,6 +71,7 @@ export async function runPlayer(env = process.env) {
   };
   const fail = failure => { error = failure.message; console.error(failure); };
   const bot = mineflayer.createBot({ host: '127.0.0.1', port: 25567, username: 'Roy', auth: 'offline', version: '1.21.4', viewDistance: 'short' });
+  trackViewerLightColumns(bot);
   bot.loadPlugin(pathfinder);
   bot.on('error', fail);
   bot.on('kicked', reason => { emit('error', `Disconnected: ${JSON.stringify(reason)}`); });
