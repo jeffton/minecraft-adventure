@@ -103,7 +103,7 @@ GPT.prototype.sendRequest = async function (turns, systemMessage) {
   try {
     const messages = [{ role: 'system', content: systemMessage }, ...turns.map(turn => ({ role: turn.role, content: turn.content }))];
     const completion = await this.openai.chat.completions.create({
-      model: 'gpt-5.6-terra', messages, user: agentName, max_tokens: 2048, stream: false
+      model: 'gpt-6.1-terra', messages, user: agentName, max_tokens: 2048, stream: false
     }, { timeout: 300000, maxRetries: 0, signal: controller.signal });
     if (completion.choices[0].finish_reason !== 'stop') throw new Error(`Model response incomplete: ${completion.choices[0].finish_reason}`);
     return completion.choices[0].message.content;

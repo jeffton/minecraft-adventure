@@ -30,7 +30,7 @@ for (const [name, role] of Object.entries(BOT_ROLES)) {
     blocked_actions: ['!newAction', '!setMode', '!attackPlayer', '!restart', '!stfu', '!endGoal', '!startConversation', '!endConversation'],
     profile: {
       name, role, cooldown: 20000, conversing: conversation,
-      model: { api: 'openai', model: 'gpt-5.6-terra', url: 'http://127.0.0.1:8766/v1', params: { user: name } },
+      model: { api: 'openai', model: 'gpt-6.1-terra', url: 'http://127.0.0.1:8766/v1', params: { user: name } },
       modes: { self_preservation: true, unstuck: true, cowardice: true, self_defense: true,
         hunting: false, item_collecting: true, torch_placing: true, elbow_room: false, idle_staring: false, cheat: false }
     }
