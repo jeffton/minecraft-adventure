@@ -60,7 +60,7 @@ test('raw chicken is emergency food, not preferred over available safe food', as
   bot.inventory.items = () => [{ name: 'chicken', count: 2 }, { name: 'beef', count: 1 }];
   assert.ok(bot.autoEat.options.bannedFood.includes('chicken'));
   bot.inventory.items = () => [{ name: 'chicken', count: 2 }];
-  bot.health = 6; bot.food = 10;
+  bot.health = 16; bot.food = 14;
   assert.ok(!bot.autoEat.options.bannedFood.includes('chicken'));
   bot.emit('end');
 });

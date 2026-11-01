@@ -211,6 +211,26 @@ test('completion triggers once, and unrelated monotonic progress cannot mask a s
   assert.equal(trigger(acknowledged, complete, next, 'cadence:later'), null, 'a later cadence cannot re-trigger an acknowledged completion');
 });
 
+test('a bot that finishes useful current work gets a replan without waiting for the team cadence', () => {
+  for (const [missionId, operations, expected] of [['current', 2, 'program_completed'], ['current', 0, null], ['superseded', 2, null]]) {
+    const { observed, evidence, strategy } = setup();
+    observed.bots[0].events = [{ session: observed.bots[0].session, sequence: 1, at: observed.updatedAt,
+      type: 'attempt_completed', data: {
+        attemptId: 'completed-once', missionId, operations, controllerRevision: 'actual-controller', preconditions: 'local-world',
+        program: [{ action: 'ensure_item', item: 'oak_log', count: 1 }], inventory: [{ name: 'oak_log', count: 1 }], food: 8, health: 16,
+      },
+    }];
+    const seen = observeEvidence(evidence, observed);
+    const state = { strategy, mission: { id: 'current' }, lastTriggerFingerprint: null };
+    const result = reviewTrigger(state, seen, observed, 1000, 999, 300000);
+    assert.equal(result?.kind ?? null, expected);
+    if (result) {
+      state.lastTriggerFingerprint = result.fingerprint;
+      assert.equal(reviewTrigger(state, seen, observed, 1001, 999, 300000), null, 'same completion cannot cause a request storm');
+    }
+  }
+});
+
 test('historical unconfirmed meal counters remain auditable without contaminating reviewed outcomes', () => {
   const { observed, evidence, strategy } = setup();
   strategy.history = [{ goalId: 'old-recovery', counters: { meals: 7, deaths: 1 } }];

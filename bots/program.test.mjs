@@ -522,6 +522,7 @@ test('verified execution emits one correlated terminal with actual crafting and 
     assert.equal(actual.inventory.find(item => item.name === 'stick').count, 4);
     assert.equal(actual.food, 20);
     assert.equal(actual.health, 20);
+    assert.equal(actual.operations, 2);
     assert.deepEqual(f.events.filter(event => event[1] === 'craft').map(event => event[3]), [{ item: 'oak_planks', count: 4 }, { item: 'stick', count: 4 }]);
 });
 
@@ -535,6 +536,29 @@ test('lodge windows and door resolve through earned sand, furnace fuel and plank
     assert.equal(f.amount('oak_planks'), 0);
     assert.ok(f.calls.some(call => call[0] === 'smelt' && call[1] === 'sand' && call[2] === 6));
     assert.deepEqual(f.calls.filter(call => call[0] === 'craft').map(call => call[1]), ['glass_pane', 'oak_door']);
+});
+
+test('autoeat moving hunted food into offhand is acquired food, not a failed hunt', async () => {
+    const f = fixture([ensure('mutton', 1)]);
+    f.bot.food = 4;
+    f.bot.entities[2] = { name: 'sheep', position: { x: 2, y: 64, z: 0 } };
+    f.skills.attackEntity = async () => {
+        f.equipment.set(45, { name: 'mutton', count: 1 });
+        return true;
+    };
+    await f.run();
+    const completed = f.events.find(event => event[1] === 'attempt_completed')[3];
+    assert.deepEqual(completed.inventory, [{ name: 'mutton', count: 1 }]);
+    assert.equal(completed.food, 4, 'owning a pending meal does not invent consumption');
+    assert.equal(f.events.filter(event => event[1] === 'attempt_failed').length, 0);
+});
+
+test('already held equipment is a zero-work desired-state check, not fresh programme progress', async () => {
+    const f = fixture([{ action: 'equip', item: 'wooden_pickaxe' }], { wooden_pickaxe: 1 });
+    f.bot.heldItem = f.bot.inventory.items()[0];
+    await f.run();
+    assert.equal(f.calls.filter(call => call[0] === 'equip').length, 0);
+    assert.equal(f.events.find(event => event[1] === 'attempt_completed')[3].operations, 0);
 });
 
 test('an optimistic equip result cannot enter verified program memory', async () => {

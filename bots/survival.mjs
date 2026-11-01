@@ -87,7 +87,7 @@ export function configureFood(bot) {
     get() {
       const items = [...bot.inventory.items(), bot.inventory.slots[45]].filter(Boolean);
       const safeFood = items.some(item => bot.registry.foodsByName[item.name] && !banned.includes(item.name));
-      const emergency = bot.food <= 6 || (bot.health < 10 && bot.food < 18);
+      const emergency = bot.food <= 6 || (bot.health < 20 && bot.food < 18);
       return emergency && !safeFood ? banned.filter(name => name !== 'chicken') : banned;
     }
   });

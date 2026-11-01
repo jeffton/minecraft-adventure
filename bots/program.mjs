@@ -25,12 +25,7 @@ export function observedInventory(bot) {
         .map(({ name, count }) => ({ name, count }));
 }
 
-const acquiredCount = (bot, name) => {
-    if (!/_(helmet|chestplate|leggings|boots)$/.test(name) && name !== 'shield') return inventoryCount(bot, name);
-    const usable = bot.inventory.items();
-    const equipment = [5, 6, 7, 8, 45].map(slot => bot.inventory.slots[slot]);
-    return inventoryCount(bot, name) + equipment.filter(item => item?.name === name && !usable.includes(item)).reduce((sum, item) => sum + item.count, 0);
-};
+const acquiredCount = (bot, name) => observedInventory(bot).filter(item => item.name === name).reduce((sum, item) => sum + item.count, 0);
 
 export function validateProgram(program, bot, name) {
     if (!Array.isArray(program) || program.length < 1 || program.length > 6) throw new Error('Program must contain one to six declarative steps.');
@@ -186,19 +181,19 @@ export async function executeProgram(agent, skills, helpers) {
         if (target > 64) throw new Error(`Bounded resolver cannot supply a batch larger than 64 ${item}.`);
         if (LOGS.has(item) || RAW[item]) return gather(item, target, RAW[item] ?? [item], depth);
         if (Object.hasOwn(MEAT, item)) {
-            while (inventoryCount(bot, item) < target) {
+            while (observedCount() < target) {
                 check();
                 const animal = Object.values(bot.entities).filter(entity => entity.name === MEAT[item] && bot.entity.position.distanceTo(entity.position) <= 96)
                     .sort((a, b) => bot.entity.position.distanceTo(a.position) - bot.entity.position.distanceTo(b.position))[0];
                 if (!animal) throw new PreconditionError(`No loaded ${MEAT[item]} within 96 blocks for earned ${item}.`);
                 if (bot.entity.position.distanceTo(animal.position) > 20) await operation(() => helpers.approachAnimal(agent, animal));
                 if (++gathered > 64) throw new Error('Program reached its 64-resource gathering budget.');
-                const before = inventoryCount(bot, item);
+                const before = observedCount();
                 const foodBefore = bot.food;
                 // Attack the observed passive animal directly. attackNearest disables
                 // cowardice; food gathering must remain interruptible by nearby hostiles.
                 await operation(() => skills.attackEntity(bot, animal, true));
-                if (inventoryCount(bot, item) <= before && bot.food <= foodBefore) throw new Error(`Hunting ${MEAT[item]} yielded no observed ${item} or eaten food; stop and re-observe.`);
+                if (observedCount() <= before && bot.food <= foodBefore) throw new Error(`Hunting ${MEAT[item]} yielded no observed ${item} or eaten food; stop and re-observe.`);
             }
             return;
         }
@@ -279,12 +274,14 @@ export async function executeProgram(agent, skills, helpers) {
             if (step.action === 'ensure_item') await ensure(step.item, step.count);
             else if (step.action === 'equip') {
                 if (!bot.inventory.slots.some(item => item?.name === step.item)) throw new PreconditionError(`Cannot equip missing earned ${step.item}.`);
-                await operation(() => skills.equip(bot, step.item));
-                await syncInventory();
                 const slot = step.item.endsWith('_helmet') ? 5 : step.item.endsWith('_chestplate') || step.item === 'elytra' ? 6 :
                     step.item.endsWith('_leggings') ? 7 : step.item.endsWith('_boots') ? 8 : step.item === 'shield' ? 45 : null;
-                const equipped = slot === null ? bot.heldItem : bot.inventory.slots[slot];
-                if (equipped?.name !== step.item) throw new Error(`Equip ${step.item} did not reach the observed equipment destination.`);
+                const equipped = () => slot === null ? bot.heldItem : bot.inventory.slots[slot];
+                if (equipped()?.name !== step.item) {
+                    await operation(() => skills.equip(bot, step.item));
+                    await syncInventory();
+                    if (equipped()?.name !== step.item) throw new Error(`Equip ${step.item} did not reach the observed equipment destination.`);
+                }
             } else if (step.action === 'build_lodge') {
                 if (!helpers.buildLodge) throw new Error('Direct authored lodge helper is not registered.');
                 const result = await operation(() => helpers.buildLodge(bot, helpers.getHome(), agent));
@@ -301,7 +298,7 @@ export async function executeProgram(agent, skills, helpers) {
             helpers.emit?.(agent, 'program', `${mission.id}: step ${index + 1}/${program.length} ${step.action} completed.`);
         }
         helpers.emit?.(agent, 'attempt_completed', `Completed program ${mission.id}.`, {
-            ...attempt(), inventory: observedInventory(bot), food: bot.food, health: bot.health
+            ...attempt(), operations, inventory: observedInventory(bot), food: bot.food, health: bot.health
         });
         return `Program ${mission.id} completed ${program.length} observed steps; ${operations} gameplay operations. No generated code executed.`;
     } catch (error) {

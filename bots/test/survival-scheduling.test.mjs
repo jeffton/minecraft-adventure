@@ -20,7 +20,7 @@ writeFileSync(join(root, 'control/mission.json'), JSON.stringify({
 const settle = () => new Promise(resolve => setImmediate(resolve));
 
 test('observer retries survival cancellation without model repair; genuine failures keep repair scheduling', async () => {
-  for (const kind of ['interrupted', 'navigation', 'precondition', 'execution']) {
+  for (const kind of ['completed', 'interrupted', 'navigation', 'precondition', 'execution']) {
     const bot = new EventEmitter();
     bot._client = new EventEmitter();
     bot._client.state = 'play';
@@ -53,34 +53,52 @@ test('observer retries survival cancellation without model repair; genuine failu
         runProgram: async () => {
           runs++;
           await settle();
-          observer.emit('attempt_failed', 'Observed failure', { kind });
-          observer.emit('error', 'Program: Observed failure');
+          if (kind !== 'completed') {
+            observer.emit('attempt_failed', 'Observed failure', { kind });
+            observer.emit('error', 'Program: Observed failure');
+          }
           return 'Observed failure';
         }
       });
       globalThis.setInterval = originalInterval;
       await settle(); await settle();
       assert.equal(runs, 1);
-      if (kind === 'interrupted') {
+      if (kind === 'completed') {
+        assert.equal(observer.task(), 'program completed');
+        intervals.get(1000)();
+        await settle();
+        assert.equal(runs, 1);
+        assert.equal(repairs, 0, 'a completed program is not repaired or rerun');
+      } else if (kind === 'interrupted') {
         bot.entities = { 2: { name: 'zombie', type: 'hostile', position: new Vec3(1, 64, 0) } };
         bot.adventureSafetyActions = 1;
-        intervals.get(15000)();
+        intervals.get(1000)();
         assert.equal(runs, 1);
         bot.entities = {};
         bot.adventureSafetyActions = 0;
-        intervals.get(15000)();
+        intervals.get(1000)();
         await settle(); await settle();
         assert.equal(runs, 2);
         assert.equal(repairs, 0);
       } else {
-        intervals.get(15000)();
+        assert.equal(observer.task(), 'waiting after failure');
+        intervals.get(1000)();
+        assert.equal(observer.task(), 'repair planning');
+        agent.actions.currentActionLabel = 'mode:cowardice';
+        assert.equal(observer.task(), 'mode:cowardice', 'actual actions take status priority');
+        agent.actions.currentActionLabel = '';
+        await settle();
+        assert.equal(observer.task(), 'waiting after failure');
         assert.equal(runs, 1);
-        assert.equal(repairs, 0);
+        assert.equal(repairs, 1, 'first genuine failure is repaired on the next local tick');
+        intervals.get(1000)();
+        await settle();
+        assert.equal(repairs, 1, 'identical failure is backed off, without rerunning failed work');
         const later = Date.now() + 46000;
         Date.now = () => later;
-        intervals.get(15000)();
+        intervals.get(1000)();
         await settle();
-        assert.equal(repairs, 1);
+        assert.equal(repairs, 2);
       }
     } finally {
       globalThis.setInterval = originalInterval;

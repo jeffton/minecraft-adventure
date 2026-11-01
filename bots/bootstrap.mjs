@@ -9,9 +9,10 @@ import { patchViewerServer, viewerState, createCameraMotion } from './viewer-str
 import { patchViewerEntities, viewerEntityModel } from './viewer-entities.mjs';
 import { patchViewerHeightClient } from './viewer-height.mjs';
 import { patchViewerRevisionClient } from './viewer-revisions.mjs';
-import { createObserver, atomicJson, getHome, OBS } from './runtime.mjs';
+import { createObserver, atomicJson, getHome, getMission, OBS } from './runtime.mjs';
 import { join } from 'node:path';
 import { configureFood, patchSurvivalSource, withSafetyAction } from './survival.mjs';
+import { canExecuteRepair, canStartRepairAction, hasRepairContext, patchRepairCommands, repairIsCurrent } from './repair.mjs';
 
 const extensionUrl = new URL('./extensions.mjs', import.meta.url).href;
 
@@ -30,6 +31,8 @@ registerHooks({
     source = String(source);
     if (url.endsWith('/src/agent/agent.js') || url.endsWith('/src/agent/modes.js') || url.endsWith('/src/agent/library/skills.js')) {
       source = patchSurvivalSource(source, url, new URL('./survival.mjs', import.meta.url).href);
+    } else if (url.endsWith('/src/agent/commands/index.js')) {
+      source = patchRepairCommands(source, new URL('./repair.mjs', import.meta.url).href);
     } else if (url.endsWith('/src/agent/commands/actions.js')) {
       source += `\nimport { registerAdventure } from ${JSON.stringify(extensionUrl)};\nregisterAdventure(actionsList);\n`;
 
@@ -52,9 +55,16 @@ ActionManager.prototype.runAction = function (label, action, options) {
   if (['mode:self_preservation', 'mode:cowardice', 'mode:self_defense'].includes(label)) {
     return originalRunAction.call(this, label, () => withSafetyAction(this.agent.bot, action), options);
   }
+  if (!label.startsWith('mode:') && !canExecuteRepair(this.agent)) {
+    return Promise.resolve({ success: false, message: null, interrupted: true, timedout: false });
+  }
   const authored = label.startsWith('adventure:') || ['action:buildNetherPortal', 'action:enterPortal', 'action:throwEnderEye', 'action:fillEndPortal', 'action:fightEnd'].includes(label);
-  if (!authored) return originalRunAction.call(this, label, action, options);
+  // Upstream awaits stop() before invoking the callback. Ownership may change
+  // during that await; executing=true here belongs to this action, not a conflict.
+  const perform = () => canStartRepairAction(this.agent) ? action() : undefined;
+  if (!authored) return originalRunAction.call(this, label, perform, options);
   return originalRunAction.call(this, label, async () => {
+    if (!canStartRepairAction(this.agent)) return;
     this.agent.bot.modes.pause('unstuck');
     try { return await action(); }
     finally { this.agent.bot.modes.unpause('unstuck'); }
@@ -81,7 +91,7 @@ Prompter.prototype.promptConvo = async function (...args) {
   const result = await originalPromptConvo.apply(this, args);
   // The HTTP response may already have arrived while its log was being saved.
   // Recheck ownership at the actual command handoff, not just request start.
-  return programOwned.has(this.agent.name) ? '' : result;
+  return programOwned.has(this.agent.name) || !repairIsCurrent() ? '' : result;
 };
 
 const originalReplaceStrings = Prompter.prototype.replaceStrings;
@@ -103,7 +113,7 @@ Prompter.prototype.initExamples = async function () {
 
 GPT.prototype.sendRequest = async function (turns, systemMessage) {
   const agentName = this.params?.user;
-  if (programOwned.has(agentName)) return ''; // The shared local program owns the next action.
+  if (programOwned.has(agentName) || !repairIsCurrent()) return ''; // A current owner is required.
   const controller = new AbortController();
   const requests = modelRequests.get(agentName) ?? new Set();
   requests.add(controller); modelRequests.set(agentName, requests);
@@ -132,6 +142,8 @@ Agent.prototype.handleMessage = async function (source, message, ...args) {
   // Game chat is untrusted data. Only internal self-prompts and the four bot peers
   // may drive this deployment. Humans still play normally; chat is not remote code.
   if (source !== 'system' && !Object.hasOwn(BOT_ROLES, source)) return false;
+  // Mode notifications must not start a second model conversation during repair.
+  if (this.adventure && getMission()?.bots[this.name].program?.length && !hasRepairContext(this)) return false;
   return originalHandle.call(this, source, message, ...args);
 };
 
@@ -190,7 +202,7 @@ Agent.prototype.startEvents = function (...args) {
     this.adventure.emit('gather', `Mined ${material} at ${position}.`, { material, position: { x: position.x, y: position.y, z: position.z } });
     return result;
   };
-  this.bot.adventureAction = () => this.actions.currentActionLabel || (this.adventureThinking ? 'planning' : 'idle');
+  this.bot.adventureAction = () => this.adventure.task();
   viewer.mineflayer(this.bot, { port: 8931 + Object.keys(BOT_ROLES).indexOf(this.name), viewDistance: 4, firstPerson: true });
   if (this.name === 'Roy') {
     const timer = setInterval(() => {

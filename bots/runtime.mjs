@@ -4,13 +4,14 @@ import { createHash, randomUUID } from 'node:crypto';
 import { observedInventory } from './program.mjs';
 import { observeMeals, interruptedProgramRetry, safeToResume } from './survival.mjs';
 import { BOT_ROLES, INITIAL_TASKS, missionPrompt, validateMission } from './blueprint.mjs';
+import { RepairScheduler, inventoryContext, repairOutcomeContext, runRepair } from './repair.mjs';
 
 export const ROOT = process.env.ADVENTURE_ROOT ?? '/var/lib/minecraft-adventure';
 export const OBS = join(ROOT, 'observations');
 export const CONTROL = join(ROOT, 'control');
 export const NAMES = Object.keys(BOT_ROLES);
 const controllerHash = createHash('sha256');
-for (const file of ['program.mjs', 'gather.mjs', 'navigation.mjs', 'extensions.mjs', 'compat-loader.mjs', 'inventory-controller.mjs', 'progression.mjs', 'scout.mjs', 'bootstrap.mjs', 'survival.mjs']) {
+for (const file of ['program.mjs', 'gather.mjs', 'navigation.mjs', 'extensions.mjs', 'compat-loader.mjs', 'inventory-controller.mjs', 'progression.mjs', 'scout.mjs', 'bootstrap.mjs', 'survival.mjs', 'runtime.mjs', 'repair.mjs']) {
   controllerHash.update(readFileSync(new URL(file, import.meta.url)));
 }
 export const CONTROLLER_REVISION = controllerHash.digest('hex');
@@ -96,20 +97,33 @@ export function createObserver(agent, controls = {}) {
   let errorCount = 0;
   let foodMissing = false;
   let programRunning = false;
-  let repairRunning = false;
   let programId = null;
   let programFailed = false;
-  let finishedAt = 0;
   let programMessage = '';
   let failureKind = null;
+  let failureReason = null;
+  let life = 0;
   const emit = (type, message, data = {}) => {
-    if (type === 'attempt_failed') failureKind = data.kind;
+    if (type === 'attempt_failed') {
+      failureKind = data.kind;
+      failureReason = JSON.stringify([data.kind, data.action, data.target, data.reason]);
+    }
     if (type === 'error') { errorCount++; error = String(message); }
     events.push({ session, sequence: ++eventSequence, at: new Date().toISOString(), bot: agent.name, type, message: String(message).slice(0, 1200), data });
     if (events.length > 60) events.shift();
   };
   const recordError = e => { error = String(e.message ?? e); emit('error', error); console.error(`[${agent.name}]`, e); };
   const bot = agent.bot;
+  const repair = new RepairScheduler({ agent, session, missionId: () => getMission()?.id,
+    cancel: () => controls.cancelChat?.(), now: () => Date.now() });
+  const invalidateRepair = () => {
+    repair.invalidate();
+    agent.adventureThinking = false;
+    controls.programMode?.(true);
+  };
+  const task = () => agent.actions.currentActionLabel || (repair.active ? 'repair planning' :
+    programFailed ? 'waiting after failure' : programId && !programRunning ? 'program completed' :
+      agent.self_prompter.isActive() ? 'planning' : 'waiting for shared plan');
   let physicsTicks = 0;
   let serverCorrections = 0;
   bot.on('physicsTick', () => { physicsTicks++; });
@@ -124,9 +138,15 @@ export function createObserver(agent, controls = {}) {
     if (!foodMissing) emit('food', 'No edible food available; forage or cook owned supplies.');
     foodMissing = true;
   });
-  bot.on('death', () => emit('death', 'Died in survival; items remain in the world.', { position: { x: bot.entity.position.x, y: bot.entity.position.y, z: bot.entity.position.z } }));
+  bot.on('death', () => {
+    life++;
+    invalidateRepair();
+    emit('death', 'Died in survival; items remain in the world.', { position: { x: bot.entity.position.x, y: bot.entity.position.y, z: bot.entity.position.z } });
+  });
   bot.on('respawn', () => {
     // Completed preparation cannot survive a death: tools and supplies were dropped.
+    life++;
+    invalidateRepair();
     programId = null;
     programFailed = false;
     emit('respawn', 'Respawned; rechecking the shared program against the empty inventory.');
@@ -141,6 +161,7 @@ export function createObserver(agent, controls = {}) {
   bot.on('error', recordError);
   bot.on('kicked', reason => emit('disconnected', JSON.stringify(reason)));
   bot.on('end', reason => {
+    invalidateRepair();
     emit('disconnected', reason);
     atomicJson(join(OBS, `${agent.name}.json`), { name: agent.name, session, controllerRevision: CONTROLLER_REVISION, status: 'offline', updatedAt: new Date().toISOString(), error: String(reason), events });
   });
@@ -151,41 +172,55 @@ export function createObserver(agent, controls = {}) {
       const home = getHome();
       const id = `${mission?.id ?? 'initial'}:${home ? `${home.x},${home.z}` : 'unsettled'}`;
       if (lastMissionId !== id) {
+        invalidateRepair();
+        programFailed = false;
         lastMissionId = id;
         const prompt = missionPrompt(agent.name, mission, home);
         agent.self_prompter.prompt = prompt;
         emit('mission', mission?.bots[agent.name].task ?? INITIAL_TASKS[agent.name]);
       }
       if (mission?.bots[agent.name].program?.length && controls.runProgram) {
-        controls.programMode(!repairRunning);
+        controls.programMode(!repair.active);
         if (!agent.self_prompter.isStopped()) {
           agent.self_prompter.stop(false);
           controls.cancelChat();
         }
-        if (programFailed && !programRunning && !repairRunning && agent.isIdle() && interruptedProgramRetry(failureKind, bot)) {
+        if (programFailed && !programRunning && !repair.active && agent.isIdle() && interruptedProgramRetry(failureKind, bot)) {
           programId = null;
           programFailed = false;
         }
-        if (!programRunning && !repairRunning && programId !== mission.id && agent.isIdle() && safeToResume(bot)) {
+        if (!programRunning && !repair.active && programId !== mission.id && agent.isIdle() && safeToResume(bot)) {
           programId = mission.id;
           programRunning = true;
           failureKind = null;
+          failureReason = null;
           const errorsBefore = errorCount;
+          const startedLife = life;
+          const current = () => life === startedLife && getMission()?.id === mission.id;
           Promise.resolve(controls.runProgram()).then(message => {
+            if (!current()) return;
             programMessage = String(message);
             programFailed = errorCount !== errorsBefore || bot.interrupt_code;
             emit('program_result', programMessage);
-          }).catch(e => { programFailed = true; recordError(e); }).finally(() => {
-            programRunning = false; finishedAt = Date.now();
+          }).catch(e => { if (current()) { programFailed = true; recordError(e); } }).finally(() => {
+            programRunning = false;
           });
-        } else if (programFailed && failureKind !== 'interrupted' && !programRunning && !repairRunning && Date.now() - finishedAt >= 45000 && agent.isIdle()) {
-          repairRunning = true;
+        } else if (programFailed && failureKind !== 'interrupted' && !programRunning) {
+          const fingerprint = JSON.stringify([failureReason ?? programMessage, inventoryContext(bot)]);
+          const token = repair.begin(mission.id, fingerprint);
+          if (!token) return;
+          const before = repairOutcomeContext(bot);
           agent.adventureThinking = true;
           controls.programMode(false);
-          agent.handleMessage('system', `Shared program is blocked: ${programMessage}. Choose ONE useful authored command to resolve the concrete prerequisite. If wood is absent, use !scoutForResource("wood", 96). Do not negotiate for items peers do not have.`, 1)
-            .catch(recordError).finally(() => {
-              repairRunning = false; agent.adventureThinking = false;
-              controls.programMode(true); programId = null;
+          runRepair(token, () => agent.handleMessage('system', `Shared program is blocked: ${programMessage}. Choose ONE useful authored command to resolve the concrete prerequisite. If wood is absent, use !scoutForResource("wood", 96). Do not negotiate for items peers do not have.`, 1))
+            .then(usedCommand => {
+              // Retry the shared work only after a current repair changed real state.
+              if (token.isCurrent() && usedCommand && repairOutcomeContext(bot) !== before) programId = null;
+            }).catch(e => { if (token.isCurrent()) recordError(e); }).finally(() => {
+              // An obsolete completion must not clear a newer repair's ownership.
+              if (!repair.finish(token)) return;
+              agent.adventureThinking = false;
+              controls.programMode(true);
             });
         }
         return;
@@ -214,7 +249,7 @@ export function createObserver(agent, controls = {}) {
         food: bot.food,
         position: { x: p.x, y: p.y, z: p.z },
         dimension: bot.game.dimension,
-        task: agent.actions.currentActionLabel || (agent.adventureThinking || agent.self_prompter.isActive() ? 'planning' : 'waiting for shared plan'),
+        task: task(),
         shortPlan: mission?.bots[agent.name].task ?? INITIAL_TASKS[agent.name],
         ...agent.adventureSurvey,
         navigation: {
@@ -238,10 +273,10 @@ export function createObserver(agent, controls = {}) {
   }
 
   missionUpdate(); publish();
-  const missionTimer = setInterval(missionUpdate, 15000);
+  const missionTimer = setInterval(missionUpdate, 1000);
   const timer = setInterval(publish, 5000);
   bot.once('end', () => { clearInterval(timer); clearInterval(missionTimer); });
-  return { emit, recordError, publish };
+  return { emit, recordError, publish, task };
 }
 
 export function aggregateState() {
