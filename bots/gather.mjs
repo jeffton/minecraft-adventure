@@ -7,6 +7,20 @@ function protectedSite(position, home, dimension) {
     position.z >= home.z - 3 && position.z <= home.z + 10 && position.y >= home.y - 2;
 }
 
+export async function approachAnimal(agent, animal) {
+  const bot = agent.bot;
+  if (bot.game.gameMode !== 'survival') throw new Error('Hunting approach requires survival mode.');
+  const movements = new Movements(bot);
+  movements.canDig = false;
+  movements.allowParkour = false;
+  movements.allow1by1towers = false;
+  movements.maxDropDown = 1;
+  bot.pathfinder.setMovements(movements);
+  await bot.pathfinder.goto(new goals.GoalFollow(animal, 12));
+  if (bot.interrupt_code) throw new Error('Hunting approach interrupted.');
+  if (bot.entity.position.distanceTo(animal.position) > 24) throw new Error('Safe route did not reach the observed food animal.');
+}
+
 export async function gatherResource(agent, names, home, skills) {
   const bot = agent.bot;
   if (bot.game.gameMode !== 'survival') throw new Error('Gathering requires survival mode.');

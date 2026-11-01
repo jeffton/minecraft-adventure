@@ -156,13 +156,15 @@ export async function executeProgram(agent, skills, helpers) {
         if (Object.hasOwn(MEAT, item)) {
             while (inventoryCount(bot, item) < target) {
                 check();
-                const animal = Object.values(bot.entities).find(entity => entity.name === MEAT[item] && bot.entity.position.distanceTo(entity.position) <= 24);
-                if (!animal) throw new Error(`No loaded ${MEAT[item]} within 24 blocks for earned ${item}.`);
+                const animal = Object.values(bot.entities).filter(entity => entity.name === MEAT[item] && bot.entity.position.distanceTo(entity.position) <= 96)
+                    .sort((a, b) => bot.entity.position.distanceTo(a.position) - bot.entity.position.distanceTo(b.position))[0];
+                if (!animal) throw new Error(`No loaded ${MEAT[item]} within 96 blocks for earned ${item}.`);
+                if (bot.entity.position.distanceTo(animal.position) > 20) await operation(() => helpers.approachAnimal(agent, animal));
                 if (++gathered > 64) throw new Error('Program reached its 64-resource gathering budget.');
                 const before = inventoryCount(bot, item);
-                // attackNearest kills only this fixed passive animal type and picks up its
-                // dropped items. Self-preservation can interrupt through the normal manager.
-                await operation(() => skills.attackNearest(bot, MEAT[item], true));
+                // Attack the observed passive animal directly. attackNearest disables
+                // cowardice; food gathering must remain interruptible by nearby hostiles.
+                await operation(() => skills.attackEntity(bot, animal, true));
                 if (inventoryCount(bot, item) <= before) throw new Error(`Hunting ${MEAT[item]} yielded no observed ${item}; stop and re-observe.`);
             }
             return;

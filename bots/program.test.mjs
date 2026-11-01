@@ -40,7 +40,7 @@ function fixture(program, initial = {}, name = 'Roy') {
                 for (const [slot, item] of equipment) slots[slot] = item;
                 return slots;
             } },
-        entity: { position: { x: 0, y: 64, z: 0, distanceTo: p => Math.hypot(p.x, p.y - 64, p.z) } },
+        entity: { position: { x: 0, y: 64, z: 0, distanceTo(p) { return Math.hypot(p.x - this.x, p.y - this.y, p.z - this.z); } } },
         pathfinder: { setGoal: () => {} }, clearControlStates: () => {},
         _syncWindow: async () => {},
         findBlock: ({ matching, useExtraInfo, maxDistance }) => {
@@ -243,7 +243,7 @@ test('cooked food from initial resources resolves equipment prerequisites beyond
     f.resources.set('tree', f.block('oak_log'));
     f.resources.set('rock', f.block('stone'));
     f.resources.set('coal', f.block('coal_ore'));
-    f.skills.attackNearest = async () => { f.add('mutton', 2); delete f.bot.entities[7]; return true; };
+    f.skills.attackEntity = async () => { f.add('mutton', 2); delete f.bot.entities[7]; return true; };
     await f.run();
     assert.equal(f.amount('cooked_mutton'), 2);
     assert.equal(f.amount('wooden_pickaxe'), 1);
@@ -370,8 +370,8 @@ test('injured empty-inventory Moss can obtain actual edible drops from observed 
     f.bot.health = 4.16;
     f.bot.food = 2;
     f.bot.entities = { 7: { name: 'sheep', position: { x: 5, y: 64, z: 0 } } };
-    f.skills.attackNearest = async (_, type, kill) => {
-        assert.equal(type, 'sheep'); assert.equal(kill, true);
+    f.skills.attackEntity = async (_, animal, kill) => {
+        assert.equal(animal, f.bot.entities[7]); assert.equal(kill, true);
         f.add('mutton', 2);
         delete f.bot.entities[7];
         return true;
@@ -385,7 +385,7 @@ test('cooked meat uses real earned raw drops and coal in an observed furnace', a
     f.bot.health = 4.16;
     f.bot.entities = { 7: { name: 'sheep', position: { x: 5, y: 64, z: 0 } } };
     f.resources.set('furnace', f.block('furnace'));
-    f.skills.attackNearest = async () => { f.add('mutton', 2); delete f.bot.entities[7]; return true; };
+    f.skills.attackEntity = async () => { f.add('mutton', 2); delete f.bot.entities[7]; return true; };
     await f.run();
     assert.equal(f.amount('mutton'), 0);
     assert.equal(f.amount('cooked_mutton'), 2);
@@ -393,10 +393,32 @@ test('cooked meat uses real earned raw drops and coal in an observed furnace', a
     assert.deepEqual(f.calls.filter(call => call[0] === 'smelt'), [['smelt', 'mutton', 2]]);
 });
 
+test('food preparation approaches the nearest observed animal beyond the combat radius before hunting it', async () => {
+    const f = fixture([ensure('mutton', 2)], {}, 'Moss');
+    const far = { name: 'sheep', position: { x: 70, y: 64, z: 0 } };
+    const near = { name: 'sheep', position: { x: 25, y: 64, z: 0 } };
+    f.bot.entities = { 1: far, 2: near };
+    f.helpers.approachAnimal = async (agent, animal) => {
+        assert.equal(animal, near);
+        f.calls.push(['approach', animal.name]);
+        f.bot.entity.position.x = 17;
+        return true;
+    };
+    f.skills.attackEntity = async (bot, animal) => {
+        assert.equal(animal, near);
+        assert.ok(f.calls.some(call => call[0] === 'approach'));
+        f.add('mutton', 2);
+        delete f.bot.entities[2];
+        return true;
+    };
+    await f.run();
+    assert.equal(f.amount('mutton'), 2);
+});
+
 test('hunting without observed food drops cannot claim recovery success', async () => {
     const f = fixture([ensure('mutton', 1)], {}, 'Moss');
     f.bot.entities = { 7: { name: 'sheep', position: { x: 5, y: 64, z: 0 } } };
-    f.skills.attackNearest = async () => true;
+    f.skills.attackEntity = async () => true;
     await assert.rejects(f.run(), /no observed mutton/);
     assert.equal(f.amount('mutton'), 0);
 });
@@ -404,7 +426,7 @@ test('hunting without observed food drops cannot claim recovery success', async 
 test('food hunting rejects missing passive animals without attacking any player or hostile', async () => {
     const f = fixture([ensure('mutton', 1)], {}, 'Moss');
     f.bot.entities = { 7: { name: 'player', username: 'sheep', position: { x: 1, y: 64, z: 0 } } };
-    f.skills.attackNearest = async () => { throw new Error('Must not attack unrelated entities'); };
+    f.skills.attackEntity = async () => { throw new Error('Must not attack unrelated entities'); };
     await assert.rejects(f.run(), /No loaded sheep/);
 });
 

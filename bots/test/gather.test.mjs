@@ -1,10 +1,27 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { gatherResource } from '../gather.mjs';
+import { gatherResource, approachAnimal } from '../gather.mjs';
 const require = createRequire('/opt/minecraft-mindcraft/package.json');
 const registry = require('minecraft-data')('1.21.4');
 const { Vec3 } = require('vec3');
+
+test('hunting reaches a loaded animal with safe walking and refuses a failed arrival', async () => {
+  const animal = { name: 'sheep', position: new Vec3(25, 64, 0) };
+  let policy;
+  const bot = { registry, game: { gameMode: 'survival' }, entity: { position: new Vec3(0, 64, 0) },
+    pathfinder: { setMovements: value => { policy = value; }, goto: async goal => {
+      assert.equal(goal.isEnd(new Vec3(0, 64, 0)), false);
+      bot.entity.position = new Vec3(17, 64, 0);
+      assert.equal(goal.isEnd(bot.entity.position), true);
+    } } };
+  await approachAnimal({ bot }, animal);
+  assert.equal(policy.canDig, false);
+  assert.equal(policy.maxDropDown, 1);
+  bot.entity.position = new Vec3(0, 64, 0);
+  bot.pathfinder.goto = async () => {};
+  await assert.rejects(approachAnimal({ bot }, animal), /did not reach/);
+});
 
 test('gathering skips the protected home and an unreachable nearest tree, then digs the selected reachable block', async () => {
   const positions = [1, 10, 14].map(x => new Vec3(x, 64, 0));

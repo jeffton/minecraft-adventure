@@ -7,7 +7,7 @@ import * as skills from '/opt/minecraft-mindcraft/src/agent/library/skills.js';
 import { registerProgression } from './progression.mjs';
 import { registerPrograms } from './program.mjs';
 import { registerScouting } from './scout.mjs';
-import { gatherResource } from './gather.mjs';
+import { gatherResource, approachAnimal } from './gather.mjs';
 const require = createRequire('/opt/minecraft-mindcraft/package.json');
 const { Vec3 } = require('vec3');
 
@@ -105,7 +105,7 @@ export function registerAdventure(actions) {
   registerProgression(actions, skills);
   registerScouting(actions, skills);
   registerPrograms(actions, skills, {
-    getMission, getHome,
+    getMission, getHome, approachAnimal,
     gatherResource: (agent, names, home) => gatherResource(agent, names, home, skills),
     emit: (agent, type, message) => agent.adventure?.emit(type, message),
     buildLodge: async (bot, home, agent) => {
