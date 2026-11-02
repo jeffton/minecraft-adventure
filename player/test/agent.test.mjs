@@ -4,17 +4,21 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { Type } from '@earendil-works/pi-ai';
 import { createModels } from '@earendil-works/pi-ai/models';
 import { openaiCodexProvider } from '@earendil-works/pi-ai/providers/openai-codex';
 import { fauxProvider, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/providers/faux';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { Harness, createRegistry, defineDoc } from '@earendil-works/pi-durable';
+import { Harness, createRegistry, defineDoc, defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { openPlayerAgent, playerModels, PLAYER_INSTRUCTIONS } from '../agent.mjs';
 
 const answer = text => fauxAssistantMessage(text);
 const call = (name, args) => fauxAssistantMessage(fauxToolCall(name, args), { stopReason: 'toolUse' });
 const schema = { type: 'object', properties: { code: { type: 'string' } }, required: ['code'], additionalProperties: false };
+const versionedCandidateSchema = {
+  ...schema, properties: { ...schema.properties, baseVersion: { type: 'string' } }, required: ['code', 'baseVersion'],
+};
 
 async function fixture(responses, tools = [], contextWindow = 131072, getFeedback) {
   const stateDir = await mkdtemp(path.join(tmpdir(), 'minecraft-player-agent-'));
@@ -188,11 +192,20 @@ async function seedCheckpointedTurn(f, controllerMode) {
     checkpointWhen: () => true,
   });
   const database = path.join(f.stateDir, 'worlds/fresh-one/agent.sqlite');
-  const harness = await Harness.open(await openNodeSqliteStorage(database), { models: f.models, registry: createRegistry() }, context);
+  const registry = createRegistry();
+  const candidate = defineTool({
+    name: 'controller_candidate', description: 'Stage controller code.',
+    parameters: Type.Unsafe(controllerMode === 'reactive-v2' ? versionedCandidateSchema : schema),
+    execute: async () => ({ output: [{ type: 'text', text: 'Staged.' }] }),
+  });
+  const extension = defineExtension({ name: 'minecraft.player', tools: [candidate] });
+  registry.install(extension);
+  const harness = await Harness.open(await openNodeSqliteStorage(database), { models: f.models, registry }, context);
   const root = await harness.root(context);
   await root.configure({
     model: { provider: 'openai-codex', modelId: 'gpt-6.1-sol' },
     instructions: controllerMode ? PLAYER_INSTRUCTIONS : 'Old turn-based player instructions.',
+    extensions: [extension], tools: [candidate],
   }, context);
   const diary = await harness.createConversation({ ownership: { kind: 'ownerless' }, agent: { tools: [] } }, context);
   await diary.configure({ model: { provider: 'openai-codex', modelId: 'gpt-6.1-terra' } }, context);
@@ -208,8 +221,9 @@ async function seedCheckpointedTurn(f, controllerMode) {
   return { harness, root, diary, documents, knowledge, database };
 }
 
-for (const controllerMode of [undefined, 'persistent-v1']) {
-  test(`${controllerMode ? 'current controller restart resumes' : 'legacy architecture migration retires'} a checkpointed generation without losing history or documents`, async () => {
+for (const controllerMode of [undefined, 'persistent-v1', 'reactive-v2']) {
+  const currentMode = controllerMode === 'reactive-v2';
+  test(`${currentMode ? 'current controller restart resumes' : `${controllerMode ?? 'legacy'} schema migration retires`} a checkpointed generation without losing history or documents`, async () => {
     const entered = deferred();
     const f = await fixture([
       answer('Preserved root survival lesson.'),
@@ -225,9 +239,16 @@ for (const controllerMode of [undefined, 'persistent-v1']) {
         return answer('Interrupted generation.');
       },
       ...Array.from({ length: 8 }, () => answer('Current controller inspection.')),
-    ]);
+    ], [{
+      name: 'controller_candidate', description: 'Stage versioned controller code.', parameters: versionedCandidateSchema,
+      execute: async () => ({ accepted: true }),
+    }]);
     const seeded = await seedCheckpointedTurn(f, controllerMode);
     await entered.promise;
+    const checkpointSchema = f.calls.at(-1).context.messages
+      .filter(message => message.role === 'system').flatMap(message => message.toolsAdded ?? [])
+      .findLast(tool => tool.name === 'controller_candidate').parameters;
+    assert.equal(checkpointSchema.required.includes('baseVersion'), currentMode, 'the checkpoint actually uses the old or current tool schema');
     await seeded.harness.close(BACKGROUND_CONTEXT);
     const inspectHarness = await Harness.open(await openNodeSqliteStorage(seeded.database), { models: f.models, registry: createRegistry() }, BACKGROUND_CONTEXT);
     const checkpoint = await inspectHarness.inspect(BACKGROUND_CONTEXT);
@@ -236,11 +257,14 @@ for (const controllerMode of [undefined, 'persistent-v1']) {
 
     let agent = await f.open();
     try {
-      const expectedMigrations = controllerMode ? [] : ['migration_started', 'migration_completed'];
+      const expectedMigrations = currentMode ? [] : ['migration_started', 'migration_completed'];
       assert.deepEqual(f.events.filter(event => event.type.startsWith('migration_')).map(event => event.type), expectedMigrations);
       const image = { type: 'image', mimeType: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6S8sAAAAASUVORK5CYII=' };
       await agent.step({ controller: 'fresh-controller-observation-marker' }, { images: [image] });
       const fresh = f.calls.at(-1).context;
+      const freshSchema = fresh.messages.filter(message => message.role === 'system')
+        .flatMap(message => message.toolsAdded ?? []).findLast(tool => tool.name === 'controller_candidate').parameters;
+      assert.ok(freshSchema.required.includes('baseVersion'), 'the fresh native turn exposes the required versioned candidate interface');
       assert.match(JSON.stringify(fresh), /background Minecraft controller engineer/);
       assert.match(JSON.stringify(fresh), /preserved-root-landmark-marker/);
       assert.match(JSON.stringify(fresh), /Preserved root survival lesson/);
@@ -262,7 +286,7 @@ for (const controllerMode of [undefined, 'persistent-v1']) {
     try {
       assert.equal((await verified.root(BACKGROUND_CONTEXT)).id, seeded.root.id);
       assert.deepEqual(await verified.snapshot(seeded.documents, BACKGROUND_CONTEXT), {
-        diary: seeded.diary.id, controllerMode: 'persistent-v1',
+        diary: seeded.diary.id, controllerMode: 'reactive-v2',
       });
       assert.deepEqual(await verified.snapshot(seeded.knowledge, BACKGROUND_CONTEXT), {
         skills: ['preserved-shelter-skill'], home: { x: 12, y: 64, z: 34 },
@@ -270,7 +294,7 @@ for (const controllerMode of [undefined, 'persistent-v1']) {
       const tasks = await verifiedStorage.scanTasks({ status: 'terminal' }, 100, undefined, BACKGROUND_CONTEXT);
       const checkpointIds = new Set(checkpoint.tasks.map(({ record }) => record.id));
       assert.ok(tasks.items.some(record => checkpointIds.has(record.id) &&
-        record.state.outcome.status === (controllerMode ? 'completed' : 'aborted')),
+        record.state.outcome.status === (currentMode ? 'completed' : 'aborted')),
       'the checkpointed generation reaches the appropriate terminal outcome');
     } finally { await verified.close(BACKGROUND_CONTEXT); }
   });

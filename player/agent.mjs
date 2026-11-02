@@ -17,7 +17,7 @@ const MAX_TOOL_CALLS = 12;
 const context = BACKGROUND_CONTEXT;
 const Conversations = defineDoc({
   kind: 'minecraft.player-conversations', version: 1, scope: 'session',
-  initial: () => ({ diary: null, controllerMode: 'persistent-v1' }),
+  initial: () => ({ diary: null, controllerMode: 'reactive-v2' }),
   checkpointWhen: () => true,
 });
 
@@ -291,15 +291,16 @@ export async function openPlayerAgent({
     onStatus({ phase: tasks.some(task => task.kind === 'blocked') ? 'blocked' : 'recovering', tasks });
     const controllerMode = (await harness.snapshot(Conversations, context))?.controllerMode;
     harness.resume();
-    if (controllerMode !== 'persistent-v1') {
-      emit({ type: 'migration_started', controllerMode: 'persistent-v1' });
-      // The engineer cannot resume a turn authored for the obsolete player role.
-      // Abort retires its work without resetting the conversation or its history.
+    if (controllerMode !== 'reactive-v2') {
+      emit({ type: 'migration_started', controllerMode: 'reactive-v2' });
+      // Existing generations retain their old tool schema: configure only changes
+      // future turns. Retire obsolete turns before requiring candidate baseVersion.
+      // Abort preserves the root, its history and all controller/world documents.
       await root.abort(context);
       await root.commit(async tx => {
-        (await tx.doc(Conversations)).controllerMode = 'persistent-v1';
+        (await tx.doc(Conversations)).controllerMode = 'reactive-v2';
       }, context);
-      emit({ type: 'migration_completed', controllerMode: 'persistent-v1' });
+      emit({ type: 'migration_completed', controllerMode: 'reactive-v2' });
     }
     await root.waitForIdle(context);
     await diary.waitForIdle(context);
