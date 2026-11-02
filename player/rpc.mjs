@@ -86,7 +86,7 @@ export function createMinecraftRpc(bot, { Vec3, goals, onEvent = () => {}, knowl
     const origin = bot.entity?.position;
     const entities = origin ? Object.values(bot.entities).filter(value => value.position && value.id !== bot.entity.id)
       .map(value => ({ id: value.id, name: value.name, type: value.type, position: packPosition(value.position), distance: value.position.distanceTo(origin) }))
-      .filter(value => value.distance <= 64).sort((a, b) => a.distance - b.distance).slice(0, 32) : [];
+      .sort((a, b) => a.distance - b.distance) : [];
     const blocks = [];
     if (origin) {
       for (let y = -1; y <= 2; y++) {
@@ -192,17 +192,17 @@ export function createMinecraftRpc(bot, { Vec3, goals, onEvent = () => {}, knowl
     },
     recipesFor(name, count = 1, table = null) {
       return bot.recipesFor(itemType(name), null, integer(count, 'count', 1, 64), table ? block(table) : null)
-        .slice(0, 16).map(packRecipe);
+        .map(packRecipe);
     },
     recipesAll(name, table = true) {
       if (typeof table !== 'boolean') throw new Error('table must be boolean');
-      return bot.recipesAll(itemType(name), null, table).slice(0, 32).map(packRecipe);
+      return bot.recipesAll(itemType(name), null, table).map(packRecipe);
     },
     async craft(name, count = 1, table = null, recipeIndex = 0) {
       integer(count, 'count', 1, 64);
       const tableBlock = table ? block(table) : null;
       const recipes = bot.recipesFor(itemType(name), null, 1, tableBlock);
-      const recipe = recipes[integer(recipeIndex, 'recipe index', 0, 15)];
+      const recipe = recipes[integer(recipeIndex, 'recipe index', 0, Math.max(0, recipes.length - 1))];
       if (!recipe) throw new Error(`No currently craftable recipe for ${name}`);
       for (const ingredient of recipe.delta.filter(value => value.count < 0)) {
         const available = bot.inventory.items().filter(value => value.type === ingredient.id &&

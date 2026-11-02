@@ -158,6 +158,6 @@ test('worker protocol failure drains before wait resolves and immediate successo
 
 test('protocol rejects oversized skill before opening a socket', () => {
   const sandbox = new SkillSandbox({ rpc: fakeRpc() });
-  assert.throws(() => sandbox.start('x'.repeat(32769), { name: 'Run sandbox checks', worldId: 'fresh' }), /32 KiB/);
+  assert.throws(() => sandbox.start('x'.repeat(1_048_576), { name: 'Run sandbox checks', worldId: 'fresh' }), /frame limit/);
   assert.throws(() => sandbox.start('return 1', { name: 'Check world identity' }), /worldId/);
 });

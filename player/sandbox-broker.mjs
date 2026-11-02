@@ -67,14 +67,9 @@ export function createSandboxBroker({ root, timeoutMs = 120_000, onEvent = () =>
     readFrames(socket, message => {
       if (message.type === 'start' && !started) {
         if (busy) throw new Error('Sandbox already has an active action');
-        if (typeof message.code !== 'string' || Buffer.byteLength(message.code) > 32_768) {
-          throw new Error('Skill code must be at most 32 KiB');
-        }
+        if (typeof message.code !== 'string') throw new Error('Skill code must be a string');
         if (typeof message.worldId !== 'string' || !message.worldId || message.worldId.length > 128) {
           throw new Error('A worldId of at most 128 characters is required');
-        }
-        if (Buffer.byteLength(JSON.stringify(message.input ?? null)) > 16_384) {
-          throw new Error('Skill input must be at most 16 KiB');
         }
         started = true;
         busy = true;

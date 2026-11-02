@@ -100,6 +100,16 @@ test('failed persistence is surfaced and a later explicit flush retries the obse
   assert.equal(reopened.locations().locations.length, 1);
 });
 
+test('exploration preserves an old resource site beyond 8192 observed cells', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'roy-knowledge-history-'));
+  const memory = createWorldKnowledge({ directory, worldId: 'history' });
+  memory.observe({ dimension: 'overworld', entities: [{ name: 'sheep', position: { x: 0, y: 64, z: 0 } }] });
+  for (let cell = 1; cell <= 8200; cell++) memory.observe({ dimension: 'overworld', position: { x: cell * 16, y: 64, z: 0 } });
+  await memory.flush();
+  const reopened = createWorldKnowledge({ directory, worldId: 'history' });
+  assert.equal(reopened.locations({ kind: 'entity', names: ['sheep'] }).locations[0].position.x, 0);
+});
+
 test('spatial memory persists by world and dimension, coalesces cells, and bounds output', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'roy-knowledge-'));
   const memory = createWorldKnowledge({ directory, worldId: 'one' });

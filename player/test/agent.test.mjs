@@ -374,7 +374,7 @@ test('Terra narrates in an independent persistent conversation without tools or 
   } finally { await agent.close(); }
 });
 
-test('bounded model runs stop a polling storm and a subsequent fresh observation can recover', async () => {
+test('engineering can inspect beyond eight rounds without losing the turn', async () => {
   let polls = 0;
   const f = await fixture([
     ...Array.from({ length: 8 }, () => call('action_status', {})), answer('Fresh observation received.'),
@@ -384,16 +384,15 @@ test('bounded model runs stop a polling storm and a subsequent fresh observation
   }]);
   const agent = await f.open();
   try {
-    await assert.rejects(agent.step({ status: 'running' }), /model run failed/);
-    assert.equal(f.calls.length, 8);
+    const result = await agent.step({ status: 'running' });
+    assert.equal(f.calls.length, 9);
     assert.equal(polls, 8);
-    const next = await agent.step({ status: 'completed' });
-    assert.equal(next.text, 'Fresh observation received.');
-    assert.equal(next.modelCalls, 1);
+    assert.equal(result.text, 'Fresh observation received.');
+    assert.equal(result.modelCalls, 9);
   } finally { await agent.close(); }
 });
 
-test('oversized tool rounds never execute, and tool-returned errors remain genuine model-visible results', async () => {
+test('engineering can inspect more than twelve tools and sees genuine tool errors', async () => {
   let executions = 0;
   const f = await fixture([
     fauxAssistantMessage(Array.from({ length: 13 }, (_, i) => fauxToolCall('inspect', {}, { id: `too-many-${i}` })), { stopReason: 'toolUse' }),
@@ -404,12 +403,24 @@ test('oversized tool rounds never execute, and tool-returned errors remain genui
   }]);
   const agent = await f.open();
   try {
-    await assert.rejects(agent.step({}), /model run failed/);
-    assert.equal(executions, 0);
     const result = await agent.step({});
-    assert.equal(executions, 1);
+    assert.equal(executions, 14);
     assert.match(JSON.stringify(f.calls[2].context), /Target is not reachable/);
     assert.equal(result.text, 'I need a different approach.');
+  } finally { await agent.close(); }
+});
+
+test('large structured controller and observation results remain complete model-visible JSON', async () => {
+  const payload = { code: 'x'.repeat(40_000), state: { routes: 'y'.repeat(24_000) }, finalMarker: 'complete-controller-state' };
+  const f = await fixture([call('controller_inspect', {}), answer('Inspected the complete controller.')], [{
+    name: 'controller_inspect', description: 'Read complete source and state.', parameters: { type: 'object', properties: {} },
+    execute: async () => payload,
+  }]);
+  const agent = await f.open();
+  try {
+    await agent.step({});
+    const result = f.calls[1].context.messages.findLast(message => message.role === 'toolResult');
+    assert.deepEqual(JSON.parse(result.content.find(block => block.type === 'text').text), payload);
   } finally { await agent.close(); }
 });
 
@@ -417,7 +428,7 @@ test('unsafe world identifiers are rejected before storage opens', async () => {
   await assert.rejects(openPlayerAgent({ stateDir: '/tmp', worldId: '../old-world', tools: [] }), /worldId/);
 });
 
-test('player uses canonical broker models with Sol8192 and Terra2048 without fetching credentials at startup', async () => {
+test('player preserves canonical context and output capacity without fetching credentials at startup', async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'minecraft-player-broker-'));
   const socketPath = path.join(directory, 'broker.sock');
   const base = openaiCodexProvider().getModels().find(model => model.id === 'gpt-6.1-sol');
@@ -432,8 +443,9 @@ test('player uses canonical broker models with Sol8192 and Terra2048 without fet
   await new Promise(resolve => server.listen(socketPath, resolve));
   try {
     const models = await playerModels(socketPath);
-    assert.equal(models.getModel('openai-codex', 'gpt-6.1-sol').maxTokens, 8192);
-    assert.equal(models.getModel('openai-codex', 'gpt-6.1-terra').maxTokens, 2048);
+    assert.equal(models.getModel('openai-codex', 'gpt-6.1-sol').maxTokens, base.maxTokens);
+    assert.equal(models.getModel('openai-codex', 'gpt-6.1-terra').maxTokens, base.maxTokens);
+    assert.equal(models.getModel('openai-codex', 'gpt-6.1-sol').contextWindow, base.contextWindow);
     assert.equal(models.getModel('openai-codex', 'gpt-6.1-sol').name, 'Canonical gpt-6.1-sol');
     assert.deepEqual(requests, ['/models']);
     catalog = catalog.filter(model => model.id !== 'gpt-6.1-sol');
@@ -663,22 +675,22 @@ for (const [name, feedback] of [
   });
 }
 
-test('changing engineer feedback stops continuing before the native model budget is exhausted', async () => {
+test('fresh engineering feedback may continue past eight rounds until evidence settles', async () => {
   let key = 0;
-  const f = await fixture(Array.from({ length: 7 }, () => answer('Still assessing.')), [], 131072, () => ({
+  const f = await fixture(Array.from({ length: 20 }, () => answer('Still assessing.')), [], 131072, () => key >= 20 ? null : ({
     key: `new-state-${++key}`, needsEngineering: true, baseVersion: 'v1', reasons: ['error'],
     observation: { action: { state: 'running' }, reflexOwner: 'defending' },
   }));
   const agent = await f.open();
   try {
     const result = await agent.step({});
-    assert.equal(result.modelCalls, 7);
-    assert.equal(f.events.filter(event => event.type === 'feedback_continue').length, 6);
+    assert.equal(result.modelCalls, 11);
+    assert.equal(f.events.filter(event => event.type === 'feedback_continue').length, 10);
     assert.equal(f.events.filter(event => event.type === 'model_error').length, 0);
   } finally { await agent.close(); }
 });
 
-test('feedback continuation preserves tool budget headroom while existing requests still receive evidence', async () => {
+test('existing requests receive fresh evidence after a large tool round', async () => {
   let executions = 0;
   let feedback = null;
   const f = await fixture([
@@ -706,7 +718,7 @@ test('feedback continuation preserves tool budget headroom while existing reques
   } finally { await agent.close(); }
 });
 
-test('large-window player history compacts at a tactical working set instead of growing to the provider maximum', async () => {
+test('large-window history is preserved beyond the former 64k tactical cap', async () => {
   const f = await fixture(Array.from({ length: 20 }, () => answer('Persistent tactical summary: keep the tools and known home.')), [], 262144);
   const agent = await f.open();
   try {
@@ -715,8 +727,8 @@ test('large-window player history compacts at a tactical working set instead of 
     }
     await agent.step({ health: 20, inventory: ['pickaxe'] });
     const requests = f.calls.map(call => JSON.stringify(call.context));
-    assert.ok(requests.some(request => /summari|compact/i.test(request)));
-    assert.ok(requests.some((request, index) => index > 0 && request.length < requests[index - 1].length / 2), 'old block telemetry is replaced by a summary');
+    assert.equal(requests.some(request => /summari|compact/i.test(request)), false);
+    assert.match(requests.at(-1), /historical-block-data/);
     assert.match(requests.at(-1), /known home/);
   } finally { await agent.close(); }
 });

@@ -23,8 +23,8 @@ test('shared request validation normalizes queue labels and applies the broker i
     (code, options) => validateSkillRequest(code, options),
     (code, options) => new SkillSandbox({ rpc }).start(code, options)
   ]) {
-    assert.throws(() => invoke('return input;', { name: 'Gather logs', worldId: 'fresh', input: 'x'.repeat(16_384) }), /16 KiB/);
-    assert.throws(() => invoke('\n'.repeat(32_768), { name: 'Gather logs', worldId: 'fresh' }), /frame limit/);
+    assert.throws(() => invoke('return input;', { name: 'Gather logs', worldId: 'fresh', input: 'x'.repeat(1_048_576) }), /frame limit/);
+    assert.throws(() => invoke('\n'.repeat(524_288), { name: 'Gather logs', worldId: 'fresh' }), /frame limit/);
     const circular = {};
     circular.self = circular;
     assert.throws(() => invoke('return input;', { name: 'Gather logs', worldId: 'fresh', input: circular }), /circular/i);

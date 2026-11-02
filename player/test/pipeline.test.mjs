@@ -123,6 +123,6 @@ test('stale identity and oversized requests fail before queue admission', () => 
   const f = fixture();
   const first = f.pipeline.start(f.program());
   assert.throws(() => f.pipeline.queue({ ...f.program(), afterAction: 'stale' }), /latest uninterrupted action/);
-  assert.throws(() => f.pipeline.queue({ ...f.program(), input: 'x'.repeat(17000), afterAction: first.actionId }), /16 KiB/);
+  assert.throws(() => f.pipeline.queue({ ...f.program(), input: 'x'.repeat(1_048_576), afterAction: first.actionId }), /frame limit/);
   assert.equal(f.pipeline.next, null);
 });

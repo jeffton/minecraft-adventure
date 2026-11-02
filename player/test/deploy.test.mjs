@@ -48,7 +48,7 @@ if [[ "$1" == *check-deploy.mjs && "\u0024{FAIL:-}" == readiness ]]; then exit 1
 }
 
 const rootOnly = { skip: process.getuid() !== 0 ? 'Deploy requires root' : false };
-test('deploy stages tests/dependencies/build before stopping only the player', rootOnly, async t => {
+test('deploy stages checks, drains the player and reloads its sandbox broker before reentry', rootOnly, async t => {
   const f = await fixture(t);
   const result = f.run();
   assert.equal(result.status, 0, result.stderr);
@@ -58,7 +58,7 @@ test('deploy stages tests/dependencies/build before stopping only the player', r
   assert.ok(log.indexOf('systemctl stop') < log.indexOf('/target/player/sandbox-install.mjs'));
   assert.ok(log.indexOf('/target/player/sandbox-install.mjs') < log.indexOf('systemctl start'));
   assert.ok(log.indexOf('systemctl start') < log.lastIndexOf('/player/check-deploy.mjs'));
-  assert.deepEqual(log.split('\n').filter(line => line.startsWith('systemctl')), ['systemctl stop minecraft-player.service', 'systemctl start minecraft-player.service']);
+  assert.deepEqual(log.split('\n').filter(line => line.startsWith('systemctl')), ['systemctl stop minecraft-player.service', 'systemctl restart minecraft-player-sandbox.service', 'systemctl start minecraft-player.service']);
   assert.equal(await readFile(`${f.dir}/target/bots/assets/worker.js`, 'utf8'), 'worker\n');
   // Check the installed import closure, not only the script's explicit file list.
   for (const name of await readdir(`${f.dir}/target/bots`)) {

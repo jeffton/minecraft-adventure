@@ -83,7 +83,6 @@ export function createWorldKnowledge({ directory, worldId = 'unpersisted' } = {}
     const old = facts.get(key);
     facts.delete(key);
     facts.set(key, { kind, name, dimension, position: { x: position.x, y: position.y, z: position.z }, firstSeen: old?.firstSeen ?? at, lastSeen: at });
-    while (facts.size > 8192) facts.delete(facts.keys().next().value);
     dirty = true;
   }
 

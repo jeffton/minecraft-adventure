@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ControllerLoop, budgetControllerInput } from '../controller-loop.mjs';
+import { ControllerLoop } from '../controller-loop.mjs';
 import { BackgroundAgent } from '../background-agent.mjs';
 import { ControlDrain } from '../control-drain.mjs';
 
@@ -94,31 +94,27 @@ test('safety interruption during validation defers promotion; invalidated decisi
   assert.equal(f.calls.some(call => call[0] === 'activate' || call[0] === 'start'), false);
 });
 
-test('large action returns cannot permanently poison the local decision loop', async () => {
+test('large query results reach the controller intact rather than disappearing at 16 KiB', async () => {
   const f = fixture();
   f.setCurrent({ id: 'oversized', name: 'Query too broadly', state: 'completed', settled: true, calls: [], value: 'x'.repeat(17000) });
   f.controller.decide = async (observation, result) => {
-    assert.equal(result.value.omitted, true);
-    assert.equal(result.value.bytes, 17002);
-    assert.match(result.value.reason, /smaller query/);
+    assert.equal(result.value, 'x'.repeat(17000));
     return { state: {}, action: { name: 'Recover with bounded query', code: 'return await mc.call("registryInfo","biomes",{limit:4});' } };
   };
   await f.loop.tick();
   assert.equal(f.calls.filter(call => call[0] === 'start').length, 1);
 });
 
-test('budget preserves authoritative inventory and state while explicitly shrinking optional sensors', () => {
-  const state = { goals: 'x'.repeat(8000) };
-  const observation = {
-    inventory: [{ name: 'stone_pickaxe', count: 1 }], blocks: Array.from({ length: 24 }, () => ({ name: 'x'.repeat(400) })),
-    entities: [], sensorWindow: { blocks: 24, entities: 0 },
-  };
-  const budgeted = budgetControllerInput(observation, state, { error: 'Path blocked', value: 'x'.repeat(10000) });
-  assert.ok(budgeted.observation.blocks.length < 24);
-  assert.equal(budgeted.observation.sensorWindow.blocks, budgeted.observation.blocks.length);
-  assert.deepEqual(budgeted.observation.inventory, observation.inventory);
-  assert.equal(budgeted.lastResult.error, 'Path blocked');
-  assert.ok(Buffer.byteLength(JSON.stringify({ ...budgeted, state })) <= 16384);
+test('local controller receives all non-air sensors including a target beyond the old slice', () => {
+  const f = fixture();
+  const blocks = Array.from({ length: 60 }, (_, i) => ({ name: i === 59 ? 'furnace' : 'stone' }));
+  const entities = Array.from({ length: 32 }, (_, id) => ({ id, name: 'sheep' }));
+  f.loop.observe = () => ({ inventory: [{ name: 'stone_pickaxe', count: 1 }], blocks, entities });
+  const snapshot = f.loop.snapshot();
+  assert.deepEqual(snapshot.blocks, blocks);
+  assert.deepEqual(snapshot.entities, entities);
+  assert.equal(snapshot.blocks.at(-1).name, 'furnace');
+  assert.equal(snapshot.sensorWindow.blocks, 60);
 });
 
 test('recovering or blocked background engineer cannot block an already active local controller', async () => {
@@ -160,8 +156,7 @@ test('oversized thrown error remains a failure but cannot prevent local recovery
   f.setCurrent({ id: 'failed', name: 'Failed query', state: 'failed', settled: true, calls: [], error: 'x'.repeat(17000) });
   f.controller.decide = async (observation, result) => {
     assert.equal(result.state, 'failed');
-    assert.equal(result.errorOmitted.bytes, 17000);
-    assert.match(result.error, /Action failed/);
+    assert.equal(result.error, 'x'.repeat(17000));
     return { state: {}, action: { name: 'Recover after error', code: 'return await mc.observe();' } };
   };
   await f.loop.tick();

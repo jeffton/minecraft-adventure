@@ -12,8 +12,6 @@ import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite
 
 const PLAYER_MODEL = 'gpt-6.1-sol';
 const DIARY_MODEL = 'gpt-6.1-terra';
-const MAX_MODEL_CALLS = 8;
-const MAX_TOOL_CALLS = 12;
 const context = BACKGROUND_CONTEXT;
 const Conversations = defineDoc({
   kind: 'minecraft.player-conversations', version: 1, scope: 'session',
@@ -57,14 +55,14 @@ export async function playerModels(socketPath) {
   const configured = [PLAYER_MODEL, DIARY_MODEL].map(id => {
     const model = catalog.find(candidate => candidate.provider === 'openai-codex' && candidate.id === id);
     if (!model) throw new Error(`Configured player model absent from canonical catalog: ${id}`);
-    return { ...model, maxTokens: id === PLAYER_MODEL ? 8192 : 2048 };
+    return model;
   });
   models.setProvider({
     ...provider,
     auth: { apiKey: { name: 'Local Codex credential broker', resolve: () => readBroker(socketPath, '/auth', 16384) } },
     getModels: () => configured,
     streamSimple: (model, transcript, options) => provider.streamSimple(model, transcript, {
-      ...options, maxTokens: model.id === PLAYER_MODEL ? 8192 : 2048, maxRetries: 0,
+      ...options, maxRetries: 0,
     }),
   });
   return models;
@@ -113,9 +111,11 @@ export async function openPlayerAgent({
   const registeredTools = tools.map(tool => defineTool({
     ...tool,
     parameters: Type.Unsafe(tool.parameters),
-    outputLimits: tool.outputLimits ?? { maxBytes: 24000, maxLines: 300 },
+    // Context admission/compaction owns model capacity. Never cut structured JSON
+    // or controller source into an unreadable prefix at the tool boundary.
+    outputLimits: tool.outputLimits ?? { maxBytes: Number.MAX_SAFE_INTEGER, maxLines: Number.MAX_SAFE_INTEGER },
     async execute(args, api, callContext) {
-      if (++toolCalls > MAX_TOOL_CALLS) throw new Error('Player tool budget exhausted; wait for a fresh observation');
+      toolCalls++;
       emit({ type: 'tool_start', name: tool.name, callId: api.callId, taskId: api.taskId });
       try {
         const result = nativeResult(await tool.execute(args, api, callContext));
@@ -164,7 +164,6 @@ export async function openPlayerAgent({
         };
       },
       async onYield() {
-        if (modelCalls >= MAX_MODEL_CALLS - 1 || toolCalls >= MAX_TOOL_CALLS - 1) return;
         const feedback = await readFreshFeedback('onYield');
         if (!feedback) return;
         emit({ type: 'feedback_continue', key: feedback.key, baseVersion: feedback.baseVersion });
@@ -198,7 +197,7 @@ export async function openPlayerAgent({
           };
           try {
             const playing = model.id === PLAYER_MODEL;
-            if ((playing && modelCalls >= MAX_MODEL_CALLS) || (!playing && diaryCalls >= 2)) {
+            if (!playing && diaryCalls >= 2) {
               failure = 'model_budget_exhausted';
               fail();
               return;
@@ -216,11 +215,6 @@ export async function openPlayerAgent({
                 const calls = event.message.content.filter(block => block.type === 'toolCall');
                 if (!playing && (calls.length || event.message.stopReason === 'toolUse')) {
                   failure = 'diary_tools_forbidden';
-                  fail();
-                  return;
-                }
-                if (playing && toolCalls + calls.length > MAX_TOOL_CALLS) {
-                  failure = 'tool_budget_exhausted';
                   fail();
                   return;
                 }
@@ -247,14 +241,12 @@ export async function openPlayerAgent({
       afterFailedRun: 'withdraw',
       toolExecution: 'sequential',
       compaction: {
-        enabled: true, reserveTokens: 16384, keepRecentTokens: 12000, backgroundTokens: 0,
-        // Tactical decisions need recent game state and learned skills, not
-        // hundreds of thousands of cached tokens from earlier block operations.
-        modelOverrides: {
-          [`openai-codex/${PLAYER_MODEL}`]: {
-            reserveTokens: Math.max(16384, models.getModel('openai-codex', PLAYER_MODEL).contextWindow - 65536),
-          },
-        },
+        enabled: true, backgroundTokens: 0,
+        // Use the catalog's actual context capacity, reserving its supported
+        // answer budget rather than forcing a 64k tactical working set.
+        modelOverrides: Object.fromEntries([PLAYER_MODEL, DIARY_MODEL].map(id => [
+          `openai-codex/${id}`, { reserveTokens: models.getModel('openai-codex', id).maxTokens },
+        ])),
       },
     },
     onReport: (_error, info) => emit({ type: 'harness_report', category: info.type }),

@@ -7,8 +7,21 @@ export class VisionLoop {
   }
 
   start() {
-    void this.refresh().catch(this.onError);
-    this.timer = setInterval(() => { void this.refresh().catch(this.onError); }, this.intervalMs);
+    this.request();
+    this.timer = setInterval(() => this.request(), this.intervalMs);
+  }
+
+  peek({ maxAgeMs = this.maxAgeMs } = {}) {
+    return this.frame?.contextKey === this.contextKey() && this.now() - this.frame.at <= maxAgeMs ? this.frame : null;
+  }
+
+  request() {
+    if (this.closed || this.pending) return;
+    const requestedContext = this.contextKey();
+    void this.refresh().catch(this.onError).finally(() => {
+      // A death during rendering invalidates that frame, not the independent AI.
+      if (!this.closed && requestedContext !== this.contextKey()) this.request();
+    });
   }
 
   refresh() {
@@ -30,5 +43,5 @@ export class VisionLoop {
     return this.refresh();
   }
 
-  close() { clearInterval(this.timer); }
+  close() { this.closed = true; clearInterval(this.timer); }
 }

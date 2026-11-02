@@ -9,6 +9,7 @@ import { openPlayerAgent } from './agent.mjs';
 import { BackgroundAgent } from './background-agent.mjs';
 import { EngineeringSignals } from './engineering-signals.mjs';
 import { ControlDrain, shouldDrainForRepair } from './control-drain.mjs';
+import { readEngineeringPerception } from './perception.mjs';
 import { SkillSandbox } from './sandbox.mjs';
 import { createMinecraftRpc, RPC_DESCRIPTION } from './rpc.mjs';
 import { SkillLibrary } from './skills.mjs';
@@ -257,19 +258,19 @@ export async function runPlayer(env = process.env) {
       const active = controller.current();
       return {
         worldId, active: active && { version: active.version, baseVersion: active.baseVersion, name: active.name, code: active.code },
-        state: view.state, error: view.error, lastDecision: view.lastDecision,
+        state: view.state, error: view.error, lastDecision: view.lastDecision, feedbackFailure: view.feedbackFailure,
         versions: view.versions.slice(-5).map(({ version, baseVersion, name, status, error, validation, analysis }) => ({ version, baseVersion, name, status, error, validation, analysis })),
       };
     };
     const tool = (name, description, properties, required, execute) => ({ name, description, parameters: { ...OBJECT(properties), required }, execute });
     const tools = [
-      tool('observe', 'Read fresh server state and a recent actual POV image, including current baseVersion and engineering evidence. Safe while gameplay continues. Inventory/positions are authoritative; images carry capture age.', {}, [], async () => {
-        const visual = await vision.current({ maxAgeMs: 5000 });
+      tool('observe', 'Read fresh server state immediately, plus a valid recent POV when available. Capture runs independently; imagePending means no image is attached. Includes current baseVersion and engineering evidence. Never infer unseen terrain.', {}, [], async () => {
+        const visual = perceptionImage();
         const observed = { ...modelObservation(visual), baseVersion: controller.current()?.version ?? null, engineering: engineering.feedback() };
-        return { output: [{ type: 'text', text: JSON.stringify(observed) }, visual.frame.image] };
+        return { output: [{ type: 'text', text: JSON.stringify(observed) }, ...(visual ? [visual.frame.image] : [])] };
       }),
-      tool('controller_inspect', 'Read the active persistent controller, durable state, candidate source and validation results. Inspect before improving it.', { version: STRING }, [], async ({ version }) => ({ controller: controllerFeedback(version), scheduler: controllerLoop.inspect() })),
-      tool('controller_candidate', 'Submit a version-aware controller improvement with 2–6 offline fixtures. Module source must fit 20 KiB; keep reusable skills separate. baseVersion must match the currently inspected active version (null for bootstrap). Stale source is rejected; inspect fresh source/state and repair. Tests/activation happen at a drained boundary. Accepted staging ends this model turn, not proof of useful play.', { name: STRING, code: STRING, baseVersion: { type: ['string', 'null'] }, fixtures: { type: 'array', items: { type: 'object' }, minItems: 2, maxItems: 6 } }, ['name', 'code', 'baseVersion', 'fixtures'], async args => {
+      tool('controller_inspect', 'Read the active persistent controller, durable state, candidate source and validation results. Inspect before improving it. Supply feedbackId to read the complete retained original of transport-rejected action feedback.', { version: STRING, feedbackId: STRING }, [], async ({ version, feedbackId }) => feedbackId ? controller.inspectFeedback(feedbackId) : ({ controller: controllerFeedback(version), scheduler: controllerLoop.inspect() })),
+      tool('controller_candidate', 'Submit a version-aware controller improvement with 2–6 offline fixtures. Source, state and observations share the 1 MiB sandbox JSON transport boundary; keep reusable skills separate where useful. baseVersion must match the currently inspected active version (null for bootstrap). Stale source is rejected; inspect fresh source/state and repair. Tests/activation happen at a drained boundary. Accepted staging ends this model turn, not proof of useful play.', { name: STRING, code: STRING, baseVersion: { type: ['string', 'null'] }, fixtures: { type: 'array', items: { type: 'object' }, minItems: 2, maxItems: 6 } }, ['name', 'code', 'baseVersion', 'fixtures'], async args => {
         const currentVersion = controller.current()?.version ?? null;
         if (args.baseVersion !== currentVersion) throw new Error(`Stale controller baseVersion: inspect current ${currentVersion} before submitting another patch.`);
         const observation = controllerLoop.snapshot();
@@ -306,7 +307,7 @@ export async function runPlayer(env = process.env) {
     const instructions = `You maintain Roy's persistent Minecraft player controller. You are NOT the realtime player. The controller continues observing, choosing and executing locally while you improve it in the background. Preserve Roy's goals: survive, food/tools, attractive practical home with storage and bed, exploration and eventual dragon.
 Supply the inspected baseVersion with controller_candidate; re-inspect source/state on any mismatch. React to supplied failure, death, stagnation and material evidence; there is no fixed engineering cooldown. Capture and deterministic evidence analysis run alongside local gameplay; you are the sole patch writer. Submit at most one useful candidate per analysis, not cosmetic revisions. Use controller_candidate to submit a complete ES module exporting async function decide(observation,state,lastResult). It receives fresh authoritative observations, durable world-scoped state and the last host action outcome. Return {state,action:{name,code,input}} for one useful bounded skill, or {state,action:null,reason,wakeAfterMs}. Code bodies get mc.call, mc.observe, input; controller decisions have no mc or external I/O. Retain actionable goals, exploration frontiers, resource dependencies and failure lessons in state. Select actions by consulting those goals/dependencies/sites; writing goal strings that never affect control flow is not planning. Never reset persistent goals, learned routes or frontiers when life changes; invalidate only transient equipment/action/entity assumptions and reobserve inventory. Do not put large immutable code strings in state. Use local feedback and bounded loops, not a fixed list exhausted after a few turns. New candidate is tested offline and activated only between actions. A candidate admission is not activation or gameplay success; inspect feedback.
 Provide 2–6 representative fixtures {observation,state,lastResult}, including a selected bed goal with missing wool and a known plains site, another resource goal such as iron pickaxe, and actual read-only query-result shapes. The same controller must choose different dependency/resource routes for different goals, not always timber scouting. Also test death preserving goals and a failed route selecting a different frontier. Fixtures execute controller decisions only; do not pretend they verify action effects. Never use waits or repeated scans as fabricated progress. Useful idle is allowed with explicit reason, but unknown resources require purposeful exploration or a different achievable subgoal. Plan dependencies spatially: recipe → actual missing materials → plausible sources/biomes → observed routes and exploration frontiers. Wool/sheep/plains and iron/stone/caves are examples of reasoning, not fixed scripts. Biome registry is semantic knowledge, NOT locations; unknown terrain coordinates must be explored physically. Preserve long-term goals while repairing local failure. Repeated navigation failure calls for a changed route or objective; do not repeat the same unreachable destination.
-Controller action results include value (your structured query/result), verified effects and errors. Controller module source is capped at 20 KiB, controller state at 8 KiB; total decision input is 16 KiB, so use compact summaries and bounded query results (not copies of full observations). Query registryInfo, recipesAll, biomeAt and knownLocations inside bounded skill actions to obtain semantic/observed world knowledge, then incorporate it in the next local decision. Use skills for reusable source; embed fetched source as the returned action code, with parameters in input. No host gameplay policy or model approval is needed per decision.
+Controller action results include value (your structured query/result), verified effects and errors. Controller source, durable state, observations and action results share the sandbox's 1 MiB JSON transport boundary; there are no separate miniature source/state/sensor budgets. Preserve facts needed for planning and use targeted queries rather than duplicating immutable source in state. Query registryInfo, recipesAll, biomeAt and knownLocations inside bounded skill actions to obtain semantic/observed world knowledge, then incorporate it in the next local decision. Use skills for reusable source; embed fetched source as the returned action code, with parameters in input. No host gameplay policy or model approval is needed per decision.
 Controller audit reports are version-scoped evidence; compare them with current source and repair demonstrated defects rather than treating a report as proof that an action succeeded. Use actual POV images for terrain/build quality and host observations for exact inventory. Do not change the world through model tools: your only gameplay authority is the versioned controller. Improve existing controller rather than replacing successful behavior for novelty. Candidate source and validation errors are visible.\n\nMinecraft RPC:\n${RPC_DESCRIPTION}`;
     const capture = async () => {
       const generation = life;
@@ -321,47 +322,67 @@ Controller audit reports are version-scoped evidence; compare them with current 
       const { image: _imageContent, ...source } = frame;
       return { at: Date.parse(frame.capturedAt), life: generation, frame, source };
     };
+    let awaitingImage = false;
     const vision = new VisionLoop({
       capture,
       contextKey: () => `${session}:${life}:${bot.game.dimension}`,
       onFrame: (frame, timing) => {
         visionError = null;
         emit('vision', 'Received current first-person image.', { source: frame.source, bytes: Buffer.byteLength(frame.frame.image.data, 'base64'), ...timing });
+        if (awaitingImage) {
+          awaitingImage = false;
+          engineering.notify({ kind: 'image_ready', key: frame.source.sha256, version: controller.current()?.version ?? null, life, sequence,
+            details: { source: frame.source, capturedAt: frame.at } });
+        }
       },
       onError: failure => { visionError = failure.message; emit('error', failure.message); },
     });
     cleanup.push(async () => { vision.close(); });
     vision.start();
+    const perceptionImage = () => {
+      const visual = vision.peek();
+      if (!visual || Date.now() - visual.at > 5000) {
+        awaitingImage = true;
+        vision.request();
+      }
+      return visual;
+    };
     const modelObservation = visual => ({
       worldId, session, life, reflexOwner, ...observationFeedback(rpc.observe()), notes, progress: progress.observation(),
       controller: controllerFeedback(), scheduler: controllerLoop.inspect(),
       action: actionFeedback(action()),
       events: events.filter(event => !['rpc', 'minecraft_rpc', 'model', 'latency', 'vision'].includes(event.type)).slice(-12),
-      image: visual.source, imageAgeMs: Date.now() - visual.at, reusableSkills: skills.list(), baseVersion: controller.current()?.version ?? null,
+      image: visual ? visual.source : null, imageAgeMs: visual ? Date.now() - visual.at : null,
+      imagePending: !visual, imageRefreshPending: awaitingImage, imageStatus: visual ? 'Actual matching-context camera frame attached with capture age; server facts are current. A newer render can arrive independently.' : 'Capture is running independently; no current image is attached. Use server observations, not an imagined view.',
+      reusableSkills: skills.list(), baseVersion: controller.current()?.version ?? null,
     });
     const freshFeedback = async ({ phase } = {}) => {
       const feedback = engineering.feedback();
       if (stopping || bot.health <= 0) return null;
       if (phase !== 'beforeRequest' && (!feedback || feedback.key === deliveredFeedbackKey)) return null;
       if (!feedback && !activeAnalysis) return null;
-      const visual = await vision.current({ maxAgeMs: 5000 });
-      if (visual.life !== life || stopping) return null;
-      // Include all coalesced evidence present AFTER capture, not an obsolete pre-render snapshot.
-      const pendingFeedback = engineering.feedback();
-      const latest = pendingFeedback ?? (activeAnalysis && {
-        key: deliveredFeedbackKey, requestedAt: activeAnalysis.requestedAt, reasons: activeAnalysis.reasons,
-      });
-      if (!latest) return null;
-      const controllerAudit = await optionalJson(path.join(stateDir, 'controller-audit.json'), null);
-      deliveredFeedbackKey = latest.key;
-      if (pendingFeedback) engineering.delivered(latest.key);
-      if (activeAnalysis) activeAnalysis.reasons = [...new Map([...activeAnalysis.reasons, ...latest.reasons].map(reason => [reason.identity, reason])).values()];
-      emit('engineering_feedback', 'Refreshed evidence and POV during background analysis.', {
-        analysisId: activeAnalysis?.id, feedbackKey: latest.key, baseVersion: controller.current()?.version ?? null,
-        imageAgeMs: Date.now() - visual.at, reasons: latest.reasons.map(({ kind, key, count, revision, requestedAt }) => ({ kind, key, count, revision, requestedAt })),
-      });
-      return { ...latest, needsEngineering: true, baseVersion: controller.current()?.version ?? null,
-        observation: { ...modelObservation(visual), controllerAudit, engineering: latest }, images: [visual.frame.image] };
+      return readEngineeringPerception(
+        () => optionalJson(path.join(stateDir, 'controller-audit.json'), null),
+        controllerAudit => {
+          if (stopping || bot.health <= 0) return null;
+          const visual = perceptionImage();
+          const pendingFeedback = engineering.feedback();
+          const latest = pendingFeedback ?? (activeAnalysis && {
+            key: deliveredFeedbackKey, requestedAt: activeAnalysis.requestedAt, reasons: activeAnalysis.reasons,
+          });
+          if (!latest) return null;
+          deliveredFeedbackKey = latest.key;
+          if (pendingFeedback) engineering.delivered(latest.key);
+          if (activeAnalysis) activeAnalysis.reasons = [...new Map([...activeAnalysis.reasons, ...latest.reasons].map(reason => [reason.identity, reason])).values()];
+          emit('engineering_feedback', 'Refreshed evidence and available camera data during background analysis.', {
+            analysisId: activeAnalysis?.id, feedbackKey: latest.key, baseVersion: controller.current()?.version ?? null,
+            imageAgeMs: visual ? Date.now() - visual.at : null, imagePending: !visual,
+            reasons: latest.reasons.map(({ kind, key, count, revision, requestedAt }) => ({ kind, key, count, revision, requestedAt })),
+          });
+          return { ...latest, needsEngineering: true, baseVersion: controller.current()?.version ?? null,
+            observation: { ...modelObservation(visual), controllerAudit, engineering: latest }, images: visual ? [visual.frame.image] : [] };
+        });
+
     };
     const engineeringFailure = failure => {
       if (stopping) return;
@@ -437,26 +458,32 @@ Controller audit reports are version-scoped evidence; compare them with current 
       });
       let failed = false;
       try {
-        const visual = await vision.current({ maxAgeMs: 5000 });
-        if (visual.life !== life || stopping) return;
-        const pending = engineering.feedback();
-        if (pending) {
-          deliveredFeedbackKey = pending.key;
-          activeAnalysis.reasons = pending.reasons;
-          engineering.delivered(pending.key);
-        }
-        const controllerAudit = await optionalJson(path.join(stateDir, 'controller-audit.json'), null);
-        const observed = { ...modelObservation(visual), controllerAudit, engineering: { ...batch, key: deliveredFeedbackKey, reasons: activeAnalysis.reasons },
-          decision: controller.current()
-            ? 'Reactive engineering request: inspect the supplied new evidence, use current source/state, and repair a demonstrated weakness. Local play continues. Submit one version-aware candidate when useful; otherwise finish without cosmetic changes. Further relevant feedback/images arrive at model round boundaries.'
-            : 'No controller is active. Write a general persistent controller now with offline fixtures. It must keep choosing useful actions locally without further model requests.' };
-        emit('perception', 'Background engineer received state and actual POV image.', {
+        const payload = await readEngineeringPerception(
+          () => optionalJson(path.join(stateDir, 'controller-audit.json'), null),
+          controllerAudit => {
+            if (stopping) return null;
+            const visual = perceptionImage();
+            const pending = engineering.feedback();
+            if (pending) {
+              deliveredFeedbackKey = pending.key;
+              activeAnalysis.reasons = pending.reasons;
+              engineering.delivered(pending.key);
+            }
+            const observed = { ...modelObservation(visual), controllerAudit, engineering: { ...batch, key: deliveredFeedbackKey, reasons: activeAnalysis.reasons },
+              decision: controller.current()
+                ? 'Reactive engineering request: inspect the supplied new evidence, use current source/state, and repair a demonstrated weakness. Local play continues. Submit one version-aware candidate when useful; otherwise finish without cosmetic changes. Further relevant feedback/images arrive at model round boundaries.'
+                : 'No controller is active. Write a general persistent controller now with offline fixtures. It must keep choosing useful actions locally without further model requests.' };
+            return { observed, images: visual ? [visual.frame.image] : [] };
+          });
+        if (!payload) return;
+        const { observed, images } = payload;
+        emit('perception', 'Background engineer received fresh server state and independent camera status.', {
           analysisId: activeAnalysis.id, feedbackKey: deliveredFeedbackKey, imageAgeMs: observed.imageAgeMs,
-          imageSha256: visual.source.sha256, evidenceToModelMs: Date.now() - new Date(batch.requestedAt).getTime(),
+          imageSha256: observed.image?.sha256 ?? null, imagePending: observed.imagePending, evidenceToModelMs: Date.now() - new Date(batch.requestedAt).getTime(),
           reasons: activeAnalysis.reasons.map(({ kind, revision, requestedAt }) => ({ kind, revision, requestedAt })),
         });
         const started = Date.now();
-        const answer = await engineer.agent.step(observed, { images: [visual.frame.image], feedbackKey: deliveredFeedbackKey });
+        const answer = await engineer.agent.step(observed, { images, feedbackKey: deliveredFeedbackKey });
         metrics.modelMs += Date.now() - started;
         metrics.modelRuns++;
         engineerFailures = 0;

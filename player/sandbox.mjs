@@ -1,19 +1,19 @@
 import { createConnection } from 'node:net';
 import { randomUUID, createHash } from 'node:crypto';
-import { readFrames, sendFrame } from './sandbox-protocol.mjs';
+import { MAX_FRAME_BYTES, readFrames, sendFrame } from './sandbox-protocol.mjs';
 
 /** Shared validation for immediate and queued skill execution. Does not allocate an action. */
 export function validateSkillRequest(code, { name, input = {}, worldId } = {}) {
-  if (typeof code !== 'string' || Buffer.byteLength(code) > 32_768) throw new Error('Skill code must be at most 32 KiB');
+  if (typeof code !== 'string') throw new Error('Skill code must be a string');
   if (typeof name !== 'string' || /\p{Cc}/u.test(name) || !name.trim() || name.trim().length > 80) {
     throw new Error('Skill name is required (1–80 trimmed characters, no control characters)');
   }
   name = name.trim();
   if (typeof worldId !== 'string' || !worldId || worldId.length > 128) throw new Error('worldId is required (maximum 128 characters)');
-  // Match the broker's input budget before queueing or opening a connection.
-  if (Buffer.byteLength(JSON.stringify(input ?? null)) > 16_384) throw new Error('Skill input must be at most 16 KiB');
   const request = { type: 'start', code, input, worldId };
-  if (Buffer.byteLength(JSON.stringify(request)) > 65_536) throw new Error('Action exceeds frame limit');
+  if (Buffer.byteLength(JSON.stringify(request)) + 1 > MAX_FRAME_BYTES) {
+    throw Object.assign(new Error('Action exceeds the 1 MiB sandbox frame limit'), { code: 'SANDBOX_FRAME_LIMIT' });
+  }
   return { name, request };
 }
 

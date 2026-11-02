@@ -1,7 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { Script } from 'node:vm';
+import { readFile } from 'node:fs/promises';
 import { SkillSandbox, validateSkillRequest } from './sandbox.mjs';
+import { MAX_FRAME_BYTES } from './sandbox-protocol.mjs';
 import { atomicJson, optionalJson } from './observations.mjs';
 
 const timestamp = () => new Date().toISOString();
@@ -17,7 +19,7 @@ function boundedJson(value, bytes, label) {
 // Runs INSIDE the existing OS sandbox. The VM narrows the controller API; it is
 // not the security boundary. No Minecraft object or RPC is passed to the VM.
 export function controllerRunner(code) {
-  if (typeof code !== 'string' || Buffer.byteLength(code) > 20_480) throw new Error('Controller source must be at most 20 KiB');
+  if (typeof code !== 'string') throw new Error('Controller source must be a string');
   const entryMarker = `__controllerEntry_${randomUUID().replaceAll('-', '')}`;
   let source;
   for (const match of code.matchAll(/\bexport\s+async\s+function\s+decide\s*\(/g)) {
@@ -43,7 +45,7 @@ new vm.Script(source + '\\n;if (typeof ${entryMarker} === "undefined") throw new
 await context.answer;
 context.awaitedAnswer = await context.answer;
 const encoded = new vm.Script('JSON.stringify(awaitedAnswer)').runInContext(context, { timeout: 250 });
-if (typeof encoded !== 'string' || Buffer.byteLength(encoded) > 49152) throw new Error('Controller output exceeds JSON budget');
+if (typeof encoded !== 'string' || Buffer.byteLength(encoded) > ${MAX_FRAME_BYTES}) throw new Error('Controller output exceeds JSON budget');
 const result = JSON.parse(encoded);
 if (result.action && typeof result.action.code === 'string') new vm.Script('(async function(mc,input){"use strict";\\n' + result.action.code + '\\n})');
 return result;
@@ -52,7 +54,7 @@ return result;
 
 export function validateControllerResult(value, worldId) {
   if (!value || typeof value !== 'object' || Array.isArray(value) || !Object.hasOwn(value, 'state')) throw new Error('Controller must return {state, action}');
-  const state = boundedJson(value.state, 8192, 'Controller state');
+  const state = boundedJson(value.state, MAX_FRAME_BYTES, 'Controller state');
   if (!state || typeof state !== 'object' || Array.isArray(state)) throw new Error('Controller state must be an object');
   if (value.action === null) {
     if (typeof value.reason !== 'string' || !value.reason.trim() || value.reason.length > 500) throw new Error('Idle decision requires a reason (1–500 characters)');
@@ -63,7 +65,7 @@ export function validateControllerResult(value, worldId) {
   const action = value.action;
   if (!action || typeof action !== 'object') throw new Error('Controller must return action or explicit null idle');
   const { name } = validateSkillRequest(action.code, { name: action.name, input: action.input ?? {}, worldId });
-  return { state, action: { name, code: action.code, input: boundedJson(action.input ?? {}, 16_384, 'Action input') } };
+  return { state, action: { name, code: action.code, input: boundedJson(action.input ?? {}, MAX_FRAME_BYTES, 'Action input') } };
 }
 
 export class PersistentController {
@@ -116,7 +118,7 @@ export class PersistentController {
 
   inspect(version) {
     if (version) return clone(this.record(version));
-    return clone({ worldId: this.worldId, activeVersion: this.data.activeVersion, state: this.data.state, busy: this.busy, error: this.data.error ?? null, lastDecision: this.data.lastDecision ?? null, versions: this.data.versions });
+    return clone({ worldId: this.worldId, activeVersion: this.data.activeVersion, state: this.data.state, busy: this.busy, error: this.data.error ?? null, feedbackFailure: this.data.feedbackFailure ?? null, lastDecision: this.data.lastDecision ?? null, versions: this.data.versions });
   }
 
   record(version) {
@@ -127,15 +129,15 @@ export class PersistentController {
 
   async candidate({ name, code, fixtures, baseVersion = this.data.activeVersion, analysis }) {
     if (baseVersion !== this.data.activeVersion) throw staleVersion('Controller candidate base version is not the active version');
-    controllerRunner(code);
+    validateSkillRequest(controllerRunner(code), { name, worldId: this.worldId });
     if (typeof name !== 'string' || !name.trim() || name.length > 80) throw new Error('Controller name is required (1–80 characters)');
     if (!Array.isArray(fixtures) || fixtures.length < 2 || fixtures.length > 8) throw new Error('Provide 2–8 offline fixtures');
-    fixtures = boundedJson(fixtures, 131_072, 'Controller fixtures');
+    fixtures = boundedJson(fixtures, MAX_FRAME_BYTES, 'Controller fixtures');
     for (const fixture of fixtures) {
       if (!fixture || typeof fixture.observation !== 'object' || !fixture.observation) throw new Error('Each fixture requires an observation');
     }
     const record = { version: randomUUID(), name: name.trim(), code, fixtures, baseVersion: this.data.activeVersion, sourceHash: createHash('sha256').update(code).digest('hex'), status: 'candidate', createdAt: timestamp() };
-    if (analysis !== undefined) record.analysis = boundedJson(analysis, 8192, 'Controller analysis metadata');
+    if (analysis !== undefined) record.analysis = boundedJson(analysis, MAX_FRAME_BYTES, 'Controller analysis metadata');
     this.data.versions.push(record);
     await this.save();
     return clone(record);
@@ -145,9 +147,21 @@ export class PersistentController {
     if (this.busy || this.isActionActive()) throw Object.assign(new Error('Controller operation requires a drained action/decision boundary'), { code: 'CONTROLLER_BOUNDARY_BUSY' });
   }
 
+  decisionRequest(code, observation, state, lastResult) {
+    const input = { observation, state, lastResult: lastResult ?? null };
+    const source = controllerRunner(code);
+    validateSkillRequest(source, { name: 'controller: decide', input, worldId: this.worldId });
+    return { source, input };
+  }
+
+  async inspectFeedback(id) {
+    if (typeof id !== 'string' || !/^[0-9a-f-]{36}$/.test(id)) throw new Error('Invalid controller feedback reference');
+    return JSON.parse(await readFile(path.join(path.dirname(this.file), 'feedback', `${id}.json`), 'utf8'));
+  }
+
   async run(code, observation, state, lastResult) {
-    const input = boundedJson({ observation, state, lastResult: lastResult ?? null }, 16_384, 'Decision input');
-    const id = this.sandbox.start(controllerRunner(code), { name: 'controller: decide', input, worldId: this.worldId });
+    const { source, input } = this.decisionRequest(code, observation, state, lastResult);
+    const id = this.sandbox.start(source, { name: 'controller: decide', input, worldId: this.worldId });
     const result = await this.sandbox.wait(id);
     if (result.state !== 'completed') throw new Error(result.error ?? 'Controller sandbox failed');
     return validateControllerResult(result.value, this.worldId);
@@ -217,9 +231,37 @@ export class PersistentController {
     this.busy = true;
     let completedRun = false;
     try {
-      const result = await this.run(record.code, observation, this.data.state, lastResult);
+      let admittedFeedback = lastResult;
+      try {
+        this.decisionRequest(record.code, observation, this.data.state, lastResult);
+      } catch (error) {
+        if (error.code !== 'SANDBOX_FRAME_LIMIT' || !lastResult) throw error;
+        // This is a rejected transport admission, not a successful result with
+        // silently shortened data. Preserve the full original for engineering.
+        const feedbackHash = createHash('sha256').update(JSON.stringify(lastResult)).digest('hex');
+        const previousFailure = this.data.feedbackFailure;
+        const retained = previousFailure?.id === lastResult.id && previousFailure?.feedbackHash === feedbackHash;
+        const feedbackId = retained ? previousFailure.feedbackId : randomUUID();
+        admittedFeedback = {
+          id: lastResult.id, name: lastResult.name, state: 'failed',
+          errorCode: 'CONTROLLER_FEEDBACK_TOO_LARGE',
+          error: 'Action feedback cannot fit the complete decision frame. Request smaller query results; the original is retained for controller_inspect({feedbackId}).',
+          feedbackId, feedbackHash,
+        };
+        this.decisionRequest(record.code, observation, this.data.state, admittedFeedback);
+        if (!retained) {
+          await atomicJson(path.join(path.dirname(this.file), 'feedback', `${feedbackId}.json`), lastResult);
+          this.data.feedbackFailure = admittedFeedback;
+          await this.save();
+          this.onEvent({ type: 'controller-feedback-rejected', ...admittedFeedback });
+        }
+      }
+      const result = await this.run(record.code, observation, this.data.state, admittedFeedback);
       completedRun = true;
       if (!isCurrent()) return { discarded: true };
+      // Do not persist state that cannot cross the next complete decision frame.
+      // A rejected state leaves the previous planning state available for repair.
+      this.decisionRequest(record.code, observation, result.state, null);
       const previous = clone({ state: this.data.state, lastDecision: this.data.lastDecision, error: this.data.error });
       this.data.state = result.state;
       this.data.lastDecision = { version: record.version, at: timestamp(), session: observation.session, life: observation.life, action: result.action?.name ?? null };

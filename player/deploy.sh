@@ -35,6 +35,9 @@ mv "$stage/player/node_modules" "$root/player/node_modules"
 install -m0644 "$stage/bots"/*.mjs "$root/bots/"
 install -m0644 "$stage/bots/assets/worker.js" "$root/bots/assets/worker.js"
 node "$root/player/sandbox-install.mjs"
+# The socket-activated broker imports protocol/admission code once per process.
+# Reload it while the player is stopped, before any new controller/action runs.
+systemctl restart minecraft-player-sandbox.service
 systemctl start minecraft-player.service
 node "$source_dir/check-deploy.mjs" "$observation" "$stage/previous-session" "$started"
 printf '%s\n' 'Player deployed; health, feed and fresh observation verified. Paper was not restarted.'

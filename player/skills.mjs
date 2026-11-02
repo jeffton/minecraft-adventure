@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync, renameSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { validateSkillRequest } from './sandbox.mjs';
 
 function validName(name) {
   if (typeof name !== 'string' || !/^[a-z][a-z0-9_-]{0,63}$/.test(name)) throw new Error('Skill name must be a lowercase slug (1–64 characters)');
@@ -32,7 +33,8 @@ export class SkillLibrary {
 
   save({ name, description, code }) {
     validName(name);
-    if (typeof code !== 'string' || !code || Buffer.byteLength(code) > 32_768) throw new Error('Skill source must contain 1–32768 bytes');
+    if (typeof code !== 'string' || !code) throw new Error('Skill source must be a nonempty string');
+    validateSkillRequest(code, { name, worldId: 'skill-library' });
     if (typeof description !== 'string' || !description || description.length > 2048) throw new Error('Skill description must contain 1–2048 characters');
     const hash = createHash('sha256').update(code).digest('hex');
     let previous;

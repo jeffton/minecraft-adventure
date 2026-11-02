@@ -1,6 +1,6 @@
 import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, chmod, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, chmod, readFile, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { PersistentController, validateControllerResult } from '../controller.mjs';
 import { createSandboxBroker } from '../sandbox-broker.mjs';
@@ -53,6 +53,54 @@ test('real sandbox validates offline, activates, persists state and scopes world
   assert.deepEqual(reopened.inspect().state, {});
   assert.equal((await create('world-two').open()).current(), null);
   await assert.rejects(reopened.decide({ worldId: 'world-two' }), /world mismatch/);
+});
+
+test('larger source, durable planning state and query feedback cross the real sandbox intact', { skip: !canRun }, async () => {
+  const controller = await create('larger-controller-world').open();
+  const route = 'route '.repeat(4000);
+  const largerCode = `/*${'module knowledge '.repeat(3000)}*/\nexport async function decide(observation, state, lastResult) {
+    return {state:{route:observation.route ?? state.route, query:lastResult?.value},action:null,reason:'Inspect known route'};
+  }`;
+  const candidate = await controller.candidate({ name: 'Larger planning controller', code: largerCode, fixtures: [
+    { observation: { route } }, { observation: { route }, lastResult: { value: 'x'.repeat(80_000) } },
+  ] });
+  const validated = await controller.validate(candidate.version);
+  assert.equal(validated.status, 'validated', validated.error);
+  await controller.activate(candidate.version);
+  const result = await controller.decide({ worldId: 'larger-controller-world', route }, { value: 'x'.repeat(80_000) });
+  assert.equal(result.state.route, route);
+  assert.equal(result.state.query.length, 80_000);
+  const reopened = await create('larger-controller-world').open();
+  assert.equal(reopened.inspect().state.route, route);
+});
+
+test('near-frame state cannot poison planning and rejected large feedback remains inspectable', { skip: !canRun }, async () => {
+  const controller = await create('transport-recovery-world').open();
+  const source = `export async function decide(observation,state,lastResult) {
+    if (observation.makeLarge) return {state:{memory:'x'.repeat(1040000)},action:null,reason:'Too much state'};
+    return {state:{recovered:lastResult?.errorCode ?? null},action:null,reason:'Choose a smaller query'};
+  }`;
+  const candidate = await controller.candidate({ name: 'Transport recovery', code: source, fixtures: [
+    { observation: {} }, { observation: {}, lastResult: { state: 'failed' } },
+  ] });
+  assert.equal((await controller.validate(candidate.version)).status, 'validated');
+  await controller.activate(candidate.version);
+  const observation = { worldId: 'transport-recovery-world', nearby: 'y'.repeat(10_000) };
+  await assert.rejects(controller.decide({ ...observation, makeLarge: true }), /frame limit/);
+  assert.deepEqual(controller.inspect().state, {}, 'Rejected state is not persisted');
+  const original = { id: 'actual-action', name: 'Broad query', state: 'completed', value: 'x'.repeat(1_040_000) };
+  const decision = await controller.decide(observation, original);
+  assert.equal(decision.state.recovered, 'CONTROLLER_FEEDBACK_TOO_LARGE');
+  const failure = controller.inspect().feedbackFailure;
+  assert.equal(failure.state, 'failed');
+  assert.equal(failure.id, original.id);
+  assert.deepEqual(await controller.inspectFeedback(failure.feedbackId), original);
+  const reopened = await create('transport-recovery-world').open();
+  assert.deepEqual(await reopened.inspectFeedback(failure.feedbackId), original);
+  await reopened.decide(observation, original);
+  assert.equal(reopened.inspect().feedbackFailure.feedbackId, failure.feedbackId);
+  assert.equal((await readdir(path.join(path.dirname(controller.file), 'feedback'))).length, 1, 'Repeated feedback reuses one retained payload after restart');
+  assert.equal((await reopened.decide(observation)).state.recovered, null, 'Subsequent local decisions continue normally');
 });
 
 test('controller accepts helpers and comments before the named exported decision', { skip: !canRun }, async () => {
@@ -150,16 +198,14 @@ test('fixture collection budget is independent from each decision input budget',
   const candidate = await controller.candidate({ name: 'Live snapshots', code, fixtures: snapshots });
   assert.equal((await controller.validate(candidate.version)).status, 'validated');
   await assert.rejects(controller.candidate({ name: 'Too much stored input', code, fixtures: [
-    { observation: { snapshot: 'x'.repeat(70_000) } },
-    { observation: { snapshot: 'x'.repeat(70_000) } },
-  ] }), /Controller fixtures.*131072/);
+    { observation: { snapshot: 'x'.repeat(700_000) } },
+    { observation: { snapshot: 'x'.repeat(700_000) } },
+  ] }), /Controller fixtures.*1048576/);
   const oversized = await controller.candidate({ name: 'Oversized individual input', code, fixtures: [
     { observation: { snapshot: 'x'.repeat(9000) }, state: { retained: 'x'.repeat(7000) }, lastResult: { text: 'x'.repeat(1000) } },
     fixtures[0],
   ] });
-  const rejected = await controller.validate(oversized.version);
-  assert.equal(rejected.status, 'failed');
-  assert.match(rejected.error, /Decision input.*16384/);
+  assert.equal((await controller.validate(oversized.version)).status, 'validated');
 });
 
 test('inspect exposes persisted decision metadata and errors without mutable references', { skip: !canRun }, async () => {
@@ -174,9 +220,9 @@ test('inspect exposes persisted decision metadata and errors without mutable ref
   assert.equal(inspection.lastDecision.life, 2);
   inspection.lastDecision.session = 'mutated';
   assert.equal(controller.inspect().lastDecision.session, 'session-one');
-  await assert.rejects(controller.decide({ worldId: 'inspect-world', snapshot: 'x'.repeat(17_000) }), /Decision input/);
+  await assert.rejects(controller.decide({ worldId: 'inspect-world', snapshot: 'x'.repeat(1_048_576) }), /frame limit/);
   const reopened = await create('inspect-world').open();
-  assert.match(reopened.inspect().error, /Decision input/);
+  assert.match(reopened.inspect().error, /frame limit/);
   assert.equal(reopened.inspect().lastDecision.session, 'session-one');
   await reopened.decide({ worldId: 'inspect-world', session: 'recovered', life: 2, hasWood: false });
   assert.equal(reopened.inspect().error, null);
@@ -190,7 +236,7 @@ test('invalidated decisions restore controller state and metadata after run or s
     await controller.validate(candidate.version);
     await controller.activate(candidate.version);
     await controller.decide({ worldId, session: 'original', life: 0, hasWood: false });
-    await assert.rejects(controller.decide({ worldId, snapshot: 'x'.repeat(17_000) }), /Decision input/);
+    await assert.rejects(controller.decide({ worldId, snapshot: 'x'.repeat(1_048_576) }), /frame limit/);
     const previous = controller.inspect();
     let current = true;
     let release;
@@ -279,7 +325,8 @@ test('restart rejects pending legacy provenance without altering the legacy acti
 });
 
 test('decision output rejects unbounded state and non-explicit idle', () => {
-  assert.throws(() => validateControllerResult({ state: { text: 'x'.repeat(9000) }, action: null, reason: 'x' }, 'world'), /8192/);
+  assert.equal(validateControllerResult({ state: { text: 'x'.repeat(9000) }, action: null, reason: 'x' }, 'world').state.text.length, 9000);
+  assert.throws(() => validateControllerResult({ state: { text: 'x'.repeat(1_048_576) }, action: null, reason: 'x' }, 'world'), /1048576/);
   assert.throws(() => validateControllerResult({ state: {} }, 'world'), /explicit null/);
   assert.throws(() => validateControllerResult({ state: {}, action: null, reason: 'x', wakeAfterMs: 0 }, 'world'), /100–60000/);
 });

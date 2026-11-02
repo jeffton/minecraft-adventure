@@ -1,30 +1,4 @@
-import { createHash } from 'node:crypto';
 import { actionFeedback, observationFeedback } from './feedback.mjs';
-
-const jsonBytes = value => Buffer.byteLength(JSON.stringify(value));
-
-/** Exact input budget: omitted untrusted payloads remain explicit, never claimed successful. */
-export function budgetControllerInput(observation, state, lastResult) {
-  const input = { observation: structuredClone(observation), state, lastResult: structuredClone(lastResult) };
-  if (typeof input.lastResult?.error === 'string' && Buffer.byteLength(input.lastResult.error) > 1024) {
-    const original = input.lastResult.error;
-    input.lastResult.error = 'Action failed; error text exceeds the controller feedback budget.';
-    input.lastResult.errorOmitted = { bytes: Buffer.byteLength(original), sha256: createHash('sha256').update(original).digest('hex') };
-  }
-  if (input.lastResult?.value !== undefined && jsonBytes(input) > 16384) {
-    const encoded = JSON.stringify(input.lastResult.value);
-    input.lastResult.value = { omitted: true, reason: 'Action result exceeds the controller input budget; return a smaller query summary.',
-      bytes: Buffer.byteLength(encoded), sha256: createHash('sha256').update(encoded).digest('hex') };
-  }
-  while (jsonBytes(input) > 16384 && (input.observation.blocks.length || input.observation.entities.length)) {
-    if (input.observation.blocks.length) input.observation.blocks.pop();
-    else input.observation.entities.pop();
-  }
-  input.observation.sensorWindow.blocks = input.observation.blocks.length;
-  input.observation.sensorWindow.entities = input.observation.entities.length;
-  if (jsonBytes(input) > 16384) throw new Error('Controller state and essential facts exceed the 16 KiB input budget');
-  return { observation: input.observation, lastResult: input.lastResult };
-}
 
 /** A realtime scheduler, independent of model requests. It owns no gameplay policy. */
 export class ControllerLoop {
@@ -88,9 +62,7 @@ export class ControllerLoop {
         id: outcome.id, name: outcome.name, state: outcome.state, error: outcome.error,
         effects: outcome.effects, value: outcome.untrustedValue,
       };
-      const budgeted = budgetControllerInput(observation, this.controller.inspect().state, lastResult);
-      if (budgeted.lastResult?.value?.omitted) this.onEvent('controller_feedback', budgeted.lastResult.value.reason, budgeted.lastResult.value);
-      const decision = await this.controller.decide(budgeted.observation, budgeted.lastResult, {
+      const decision = await this.controller.decide(observation, lastResult, {
         isCurrent: () => epoch === this.epoch && this.available(),
       });
       if (decision.discarded || epoch !== this.epoch || !this.available()) {
@@ -117,8 +89,7 @@ export class ControllerLoop {
     return {
       ...observed, worldId: fresh.worldId, session: fresh.session, life: fresh.life, interruption: this.interruption,
       inventory: observed.inventory.map(({ name, count }) => ({ name, count })),
-      blocks: observed.blocks.slice(0, 24), entities: observed.entities.slice(0, 16),
-      sensorWindow: { blocks: 24, entities: 16, queries: 'Use RPC for larger read-only queries in an action.' },
+      sensorWindow: { blocks: observed.blocks.length, entities: observed.entities.length, queries: 'Use RPC for larger read-only queries in an action.' },
     };
   }
 

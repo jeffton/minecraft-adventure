@@ -71,3 +71,59 @@ test('reactive analysis requests a newer image than the ordinary cache and share
   assert.equal((await engineer).frame.image, 'new-evidence');
   assert.equal((await sameEvidence).frame.image, 'new-evidence');
 });
+
+test('pending camera work never blocks independent analysis and never supplies a stale image', async () => {
+  const capture = deferred();
+  let count = 0;
+  const loop = new VisionLoop({ capture: () => { count++; return capture.promise; }, contextKey: () => 'current-life', onFrame: () => {}, onError: assert.fail });
+  loop.frame = { at: Date.now(), contextKey: 'previous-life', frame: { image: 'stale' } };
+  loop.request();
+  loop.request();
+  const observed = { imagePending: loop.peek({ maxAgeMs: 5000 }) === null, health: 20 };
+  let analysisStarted = false;
+  await Promise.resolve().then(() => { analysisStarted = true; });
+  assert.equal(analysisStarted, true);
+  assert.equal(observed.imagePending, true);
+  assert.equal(count, 1);
+  capture.resolve({ at: Date.now(), frame: { image: 'actual-current' } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(loop.peek().frame.image, 'actual-current');
+  loop.close();
+});
+
+test('death during an asynchronous render requests the new-life frame without waiting for a timer', async () => {
+  const captures = [deferred(), deferred()];
+  const errors = [];
+  const frames = [];
+  let key = 'life-one';
+  let count = 0;
+  const loop = new VisionLoop({ capture: () => captures[count++].promise, contextKey: () => key,
+    onFrame: frame => frames.push(frame), onError: error => errors.push(error.message), intervalMs: 50000 });
+  loop.request();
+  key = 'life-two';
+  captures[0].resolve({ at: Date.now(), frame: { image: 'invalidated-old-life' } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(count, 2);
+  assert.equal(loop.peek(), null);
+  assert.equal(frames.length, 0);
+  assert.match(errors[0], /context changed/);
+  captures[1].resolve({ at: Date.now(), frame: { image: 'actual-new-life' } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(loop.peek().frame.image, 'actual-new-life');
+  assert.equal(frames.length, 1);
+  loop.close();
+});
+
+test('closing an invalidated pending render cannot schedule another capture', async () => {
+  const capture = deferred();
+  let key = 'before';
+  let count = 0;
+  const loop = new VisionLoop({ capture: () => { count++; return capture.promise; }, contextKey: () => key, onFrame: () => {}, onError: () => {} });
+  loop.request();
+  loop.close();
+  key = 'after';
+  capture.resolve({ at: Date.now(), frame: {} });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(count, 1);
+  assert.equal(loop.peek(), null);
+});
