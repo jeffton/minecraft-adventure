@@ -1,5 +1,6 @@
 import '../compat-loader.mjs';
 import { patchChunkLightWorker } from '../chunk-light.mjs';
+import { minecraftLighting } from '../viewer-lightmap.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
@@ -350,9 +351,9 @@ test('light packets ignore a missing column even when viewer readiness is stale'
   assert.equal(f.packets.length, 0);
 });
 
-test('client darkens only sky uniformly and updates loaded adjacent sections after real column updates', async () => {
+test('client updates the lightmap without changing lamp brightness or remeshing terrain', async () => {
   const socket = new EventEmitter();
-  const material = createViewerLightMaterial(THREE);
+  const material = createViewerLightMaterial(THREE, minecraftLighting);
   const shader = { uniforms: {}, vertexShader: '#include <begin_vertex>', fragmentShader: '#include <color_fragment>' };
   material.onBeforeCompile(shader);
   const workerMessages = [];
@@ -364,12 +365,21 @@ test('client darkens only sky uniformly and updates loaded adjacent sections aft
   };
   installViewerLightClient({ world }, socket);
   socket.emit('adventureState', { dimension: 'overworld', time: { timeOfDay: 6000 } });
-  assert.equal(shader.uniforms.roycraftSkyDarken.value, 0);
+  const texture = shader.uniforms.roycraftLightmap.value;
+  const color = (block, sky) => [...texture.image.data.slice((sky * 16 + block) * 4, (sky * 16 + block) * 4 + 3)];
+  const day = { cave: color(0, 0), torch: color(14, 0), sky: color(0, 15) };
+  assert.equal(material.userData.skyFactor, 1);
+  assert.equal(material.toneMapped, false);
+  assert.equal(texture.encoding, THREE.LinearEncoding);
   socket.emit('adventureState', { dimension: 'overworld', time: { timeOfDay: 18000 } });
-  assert.equal(shader.uniforms.roycraftSkyDarken.value, 11);
+  assert.ok(Math.abs(material.userData.skyFactor - 0.24) < 1e-12);
+  assert.deepEqual(color(0, 0), day.cave);
+  assert.deepEqual(color(14, 0), day.torch);
+  assert.ok(color(0, 15)[0] < day.sky[0]);
+  assert.ok(color(0, 15)[0] > day.cave[0] * 3);
   assert.equal(dirty.length, 0, 'Day/night does not remesh terrain');
   socket.emit('adventureState', { dimension: 'the_nether', time: { timeOfDay: 18000 } });
-  assert.equal(shader.uniforms.roycraftSkyDarken.value, 0);
+  assert.equal(material.userData.skyFactor, 1);
   const light = new Chunk().dumpLight();
   socket.emit('lightColumn', { x: 0, z: 0, sections: [-64, -48], light });
   assert.equal(workerMessages.length, 1);

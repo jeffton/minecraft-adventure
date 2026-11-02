@@ -1,4 +1,5 @@
 import { buildViewerEntity, disposeViewerEntity } from './viewer-entity-mesh.mjs';
+import { minecraftLighting } from './viewer-lightmap.mjs';
 
 // Installed 1.21.4 model rotations extend at most 0.42388 blocks outside a cell.
 export function visibleSectionsReady(viewer, THREE, padding, fogRadius) {
@@ -31,18 +32,17 @@ export function radialFogVertex(source) {
   return source.replace(marker, 'fogDepth = length(mvPosition.xyz);');
 }
 
-// Prismarine's renderer has fixed daylight. Apply the observed overworld cycle
-// to sky, fog and Lambert lighting; this is not vanilla's per-block light engine.
-export function applyViewerDaylight(viewer, state) {
+// Atmosphere and terrain use the same celestial angle. Scene lights remain
+// separate entity lighting; the terrain uses its server-backed lightmap.
+export function applyViewerDaylight(viewer, state, lighting) {
   if (!state.time) return;
-  const angle = (state.time.timeOfDay - 6000) * Math.PI / 12000;
-  const daylight = state.dimension === 'overworld'
-    ? Math.max(0, Math.min(1, (Math.cos(angle) + 0.15) / 0.3))
-    : 1; // Other dimensions have no day/night cycle; clear any previous night.
-  viewer.scene.background.setRGB(0.012 + 0.666 * daylight, 0.018 + 0.829 * daylight, 0.055 + 0.847 * daylight);
-  viewer.scene.fog.color.copy(viewer.scene.background);
-  viewer.ambientLight.intensity = 0.22 + 0.78 * daylight;
-  viewer.directionalLight.intensity = 0.05 + 0.45 * daylight;
+  const { skyVisibility } = lighting(state.time.timeOfDay, state.dimension);
+  // Default Overworld palette with a dark blue horizon; biome-specific fog,
+  // stars and weather effects are outside this small atmosphere approximation.
+  viewer.scene.background.setRGB(0.012 + 0.459 * skyVisibility, 0.018 + 0.637 * skyVisibility, 0.055 + 0.945 * skyVisibility);
+  viewer.scene.fog.color.setRGB(0.753 * (0.06 + 0.94 * skyVisibility), 0.847 * (0.06 + 0.94 * skyVisibility), 0.09 + 0.91 * skyVisibility);
+  viewer.ambientLight.intensity = 0.22 + 0.78 * skyVisibility;
+  viewer.directionalLight.intensity = 0.05 + 0.45 * skyVisibility;
 }
 
 export function patchViewerClient(source, cameraMotionSource) {
@@ -69,7 +69,8 @@ window.roycraftBuildEntity = (${buildViewerEntity.toString()});
 window.roycraftDisposeEntity = (${disposeViewerEntity.toString()});
 window.roycraftVisibleSectionsReady = (${visibleSectionsReady.toString()});
 window.roycraftRadialFogVertex = (${radialFogVertex.toString()});
-window.roycraftApplyDaylight = (${applyViewerDaylight.toString()});
+window.roycraftLighting = (${minecraftLighting.toString()});
+window.roycraftApplyDaylight = (viewer, state) => (${applyViewerDaylight.toString()})(viewer, state, window.roycraftLighting);
 window.roycraftTexturesReady = viewer => {
   let ready = true;
   viewer.scene.traverse(object => {

@@ -1,5 +1,6 @@
 import '../bots/compat-loader.mjs';
 import { registerHooks } from 'node:module';
+import { minecraftLighting } from '../bots/viewer-lightmap.mjs';
 import { trackViewerLightColumns, installViewerLightStream, patchViewerLightServer, patchViewerLightClient, createViewerLightMaterial, installViewerLightClient } from '../bots/viewer-light.mjs';
 export { trackViewerLightColumns };
 import { readyScript, patchViewerClient } from '../bots/viewer-readiness.mjs';
@@ -34,7 +35,7 @@ registerHooks({
         app.use(prefix + '/entity-assets', express.static('/opt/minecraft-adventure/bots/assets/entities'))
         app.use(prefix + '/item-assets', express.static('/var/www/roybot.se/minecraft/item-assets'))
         app.get(prefix + '/', (req, res) => res.type('html').send(require('fs').readFileSync(${JSON.stringify(index)}, 'utf8').replace('<body>', '<body>' + ${JSON.stringify(readyScript)})))
-        app.get(prefix + '/index.js', (req, res) => res.type('js').send((${patchViewerBreakingClient.toString()})((${patchViewerRevisionClient.toString()})((${patchViewerHeightClient.toString()})((${patchViewerClient.toString()})((${patchViewerLightClient.toString()})((${patchViewerEntities.toString()})(require('fs').readFileSync(${JSON.stringify(index.replace('index.html', 'index.js'))}, 'utf8'), ${JSON.stringify(viewerEntityModel.toString())}), ${JSON.stringify(createViewerLightMaterial.toString())}, ${JSON.stringify(installViewerLightClient.toString())}), ${JSON.stringify(createCameraMotion.toString())}))), ${JSON.stringify(createViewerBreakingClient.toString())})))
+        app.get(prefix + '/index.js', (req, res) => res.type('js').send((${patchViewerBreakingClient.toString()})((${patchViewerRevisionClient.toString()})((${patchViewerHeightClient.toString()})((${patchViewerClient.toString()})((${patchViewerLightClient.toString()})((${patchViewerEntities.toString()})(require('fs').readFileSync(${JSON.stringify(index.replace('index.html', 'index.js'))}, 'utf8'), ${JSON.stringify(viewerEntityModel.toString())}), ${JSON.stringify(createViewerLightMaterial.toString())}, ${JSON.stringify(installViewerLightClient.toString())}, ${JSON.stringify(minecraftLighting.toString())}), ${JSON.stringify(createCameraMotion.toString())}))), ${JSON.stringify(createViewerBreakingClient.toString())})))
         app.get(prefix + '/worker.js', (req, res) => res.sendFile('/opt/minecraft-adventure/bots/assets/worker.js'))`);
     }
     return { ...result, source };

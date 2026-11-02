@@ -5,6 +5,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { chromium } from '/opt/minecraft-adventure/diary/node_modules/playwright-core/index.mjs';
 import { attachGeometryLight, createViewerLightMaterial } from './viewer-light.mjs';
+import { minecraftLighting } from './viewer-lightmap.mjs';
 
 const require = createRequire('/opt/minecraft-mindcraft/package.json');
 const Chunk = require('prismarine-chunk')('1.21.4');
@@ -42,7 +43,8 @@ try {
       }
       return { state: window.roycraftState, chunks: Object.keys(viewer.world.loadedChunks).length,
         material: viewer.world.material.type, workers: viewer.world.workers.length,
-        skyDarken: viewer.world.material.userData.skyDarken.value,
+        skyFactor: viewer.world.material.userData.skyFactor,
+        skyVisibility: viewer.world.material.userData.skyVisibility,
         blockLevels: [...channels[0]].sort((a, b) => a - b), skyLevels: [...channels[1]].sort((a, b) => a - b) };
     });
     assert.equal(actual.material, 'MeshBasicMaterial');
@@ -75,7 +77,7 @@ try {
         renderer.setSize(480,240); document.body.append(renderer.domElement);
         const scene = new THREE.Scene(); scene.background = new THREE.Color(0);
         const camera = new THREE.OrthographicCamera(-0.5,3.5,0.75,-0.75,0.1,10); camera.position.z=2;
-        const material=(${createViewerLightMaterial.toString()})(THREE);
+        const material=(${createViewerLightMaterial.toString()})(THREE,(${minecraftLighting.toString()}));
         const meshes=[]; const data=${JSON.stringify(geometry)};
         for(let i=0;i<4;i++){
           const geometry=new THREE.PlaneGeometry(0.8,0.8);
@@ -83,36 +85,51 @@ try {
           geometry.setAttribute('color',new THREE.BufferAttribute(new Float32Array(12).fill(1),3));
           const mesh=new THREE.Mesh(geometry,material);mesh.position.x=i;scene.add(mesh);meshes.push(mesh);
         }
-        window.draw=(night,remove=false)=>{
-          material.userData.skyDarken.value=night?11:0;
+        window.draw=(ticks,remove=false)=>{
+          material.userData.setTime(ticks,'overworld');
           if(remove)meshes[1].geometry.getAttribute('minecraftLight').array.fill(0);
           for(const mesh of meshes)mesh.geometry.getAttribute('minecraftLight').needsUpdate=true;
           renderer.render(scene,camera);
-          const gl=renderer.getContext(),pixels=new Uint8Array(4),values=[];
-          for(let i=0;i<4;i++){gl.readPixels(60+i*120,120,1,1,gl.RGBA,gl.UNSIGNED_BYTE,pixels);values.push(pixels[0]);}
-          return {values,programs:renderer.info.programs.map(p=>({runnable:p.diagnostics?.runnable??true}))};
+          const gl=renderer.getContext(),pixels=new Uint8Array(4),values=[],rgb=[];
+          for(let i=0;i<4;i++){gl.readPixels(60+i*120,120,1,1,gl.RGBA,gl.UNSIGNED_BYTE,pixels);values.push(pixels[0]);rgb.push(Array.from(pixels.slice(0,3)));}
+          return {values,rgb,outputEncoding:renderer.outputEncoding,toneMapping:renderer.toneMapping,
+            programs:renderer.info.programs.map(p=>({runnable:p.diagnostics?.runnable??true}))};
         };
         window.ready=true;
         </script>` });
     });
     await page.goto('http://light.test/');
     await page.waitForFunction(() => window.ready);
-    const day = await page.evaluate(() => draw(false));
+    const day = await page.evaluate(() => draw(6000));
     await page.screenshot({ path: `${output}/fixture-day.png` });
-    const night = await page.evaluate(() => draw(true));
+    const twilight = await page.evaluate(() => draw(12517));
+    await page.screenshot({ path: `${output}/fixture-1831.png` });
+    const night = await page.evaluate(() => draw(18000));
     await page.screenshot({ path: `${output}/fixture-night.png` });
-    const removed = await page.evaluate(() => draw(true, true));
+    const removed = await page.evaluate(() => draw(18000, true));
     await page.screenshot({ path: `${output}/fixture-removed.png` });
-    assert.ok(day.values[1] > day.values[0] * 10, 'Torch must light a cave');
-    assert.ok(day.values[2] > day.values[0] * 10, 'Furnace must light a cave');
+    const calibrated = (actual, expected) => actual.forEach((value, channel) => assert.ok(Math.abs(value - expected[channel]) <= 2, `${actual} differs from golden ${expected}`));
+    // Independent vanilla equation targets, multiplied by the existing 0.8
+    // north/south face shade. These are output code values, not linear lux.
+    calibrated(day.rgb[0], [20, 20, 20]);
+    calibrated(day.rgb[1], [202, 202, 202]);
+    calibrated(day.rgb[2], [194, 192, 187]);
+    calibrated(day.rgb[3], [201, 201, 201]);
+    calibrated(twilight.rgb[3], [121, 121, 149]);
+    calibrated(night.rgb[3], [64, 64, 100]);
+    assert.equal(day.outputEncoding, 3000, 'Three r128 LinearEncoding: no extra sRGB gamma');
+    assert.equal(day.toneMapping, 0, 'No tone mapping');
+    assert.ok(day.values[1] > day.values[0] * 8, 'Torch must light a cave');
+    assert.ok(day.values[2] > day.values[0] * 8, 'Furnace must light a cave');
     assert.equal(day.values[1], night.values[1], 'Torch light must not dim at night');
     assert.equal(day.values[2], night.values[2], 'Furnace light must not dim at night');
     assert.equal(day.values[0], night.values[0], 'Unlit cave must not follow the sun');
-    assert.ok(day.values[3] > night.values[3] * 5, 'Outdoor sky light must follow night');
+    assert.ok(day.values[3] > twilight.values[3] && twilight.values[3] > night.values[3], 'Outdoor sky light follows twilight into night');
+    assert.ok(night.values[3] > night.values[0] * 3, 'Night outdoors stays visible without making caves daylight');
     assert.equal(removed.values[1], removed.values[0], 'Removed source must become dark after light update');
     assert.equal(removed.values[2], night.values[2], 'Other sources must remain lit');
     assert.ok(day.programs.length && day.programs.every(program => program.runnable));
-    console.log(JSON.stringify({ fixture: { labels: ['unlit cave', 'torch', 'furnace', 'open sky'], day, night, removed }, errors, resourceErrors }));
+    console.log(JSON.stringify({ fixture: { labels: ['unlit cave', 'torch', 'furnace', 'open sky'], day, twilight, night, removed }, errors, resourceErrors }));
   }
   assert.deepEqual(errors, []);
   assert.ok(resourceErrors.every(error => error.status === 404 && new URL(error.url).pathname === '/favicon.ico'), JSON.stringify(resourceErrors));

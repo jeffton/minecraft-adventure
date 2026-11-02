@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import { applyViewerDaylight, patchViewerClient, readyScript } from '../viewer-readiness.mjs';
 import { viewerState, createCameraMotion } from '../viewer-stream.mjs';
 import { readFileSync } from 'node:fs';
+import { minecraftLighting } from '../viewer-lightmap.mjs';
 
 const require = createRequire('/opt/minecraft-mindcraft/package.json');
 const THREE = require('three');
@@ -18,8 +19,8 @@ function viewer() {
 test('server time drives sky, fog and terrain/entity lighting through sunset, night and sunrise', () => {
   const v = viewer();
   const samples = [6000, 12500, 18000, 23500, 6000].map(timeOfDay => {
-    applyViewerDaylight(v, { time: { timeOfDay }, dimension: 'overworld' });
-    assert.equal(v.scene.fog.color.getHex(), v.scene.background.getHex());
+    applyViewerDaylight(v, { time: { timeOfDay }, dimension: 'overworld' }, minecraftLighting);
+    assert.ok(v.scene.fog.color.toArray().every(channel => channel >= 0 && channel <= 1));
     return { sky: v.scene.background.clone(), ambient: v.ambientLight.intensity, sun: v.directionalLight.intensity };
   });
   assert.ok(samples[0].ambient > samples[1].ambient);
@@ -28,7 +29,7 @@ test('server time drives sky, fog and terrain/entity lighting through sunset, ni
   assert.ok(samples[3].ambient < samples[4].ambient);
   assert.ok(samples[0].sun > samples[2].sun);
   assert.ok(samples[0].sky.b > samples[2].sky.b * 10);
-  applyViewerDaylight(v, { time: { timeOfDay: 18000 }, dimension: 'the_nether' });
+  applyViewerDaylight(v, { time: { timeOfDay: 18000 }, dimension: 'the_nether' }, minecraftLighting);
   assert.equal(v.ambientLight.intensity, samples[0].ambient, 'A dimension change must not retain overworld night');
 });
 
@@ -36,7 +37,8 @@ test('production bundle consumes live time and injected daylight helper without 
   const source = readFileSync('/opt/minecraft-mindcraft/node_modules/prismarine-viewer/public/index.js', 'utf8');
   const patched = patchViewerClient(source, createCameraMotion.toString());
   assert.match(patched, /roycraftState=s;window.roycraftApplyDaylight\(u,s\)/);
-  assert.match(readyScript, /roycraftApplyDaylight = \(function applyViewerDaylight/);
+  assert.match(readyScript, /roycraftLighting = \(function minecraftLighting/);
+  assert.match(readyScript, /roycraftApplyDaylight = \(viewer, state\)/);
   new Function(patched);
 });
 

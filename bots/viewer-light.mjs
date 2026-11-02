@@ -108,25 +108,37 @@ export function attachGeometryLight(geometry, world) {
   return geometry;
 }
 
-// Self-contained for embedding in the browser bundle; sky darkening changes a
-// uniform, not terrain geometry. Block light remains unchanged throughout night.
-export function createViewerLightMaterial(THREE) {
-  const material = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, alphaTest: 0.1 });
-  material.userData.skyDarken = { value: 0 };
+// Self-contained for embedding in the browser bundle. The tiny lightmap changes
+// with time; terrain geometry and the server's two light channels do not.
+export function createViewerLightMaterial(THREE, lighting) {
+  const material = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, alphaTest: 0.1, toneMapped: false });
+  const texture = new THREE.DataTexture(new Uint8Array(16 * 16 * 4), 16, 16, THREE.RGBAFormat);
+  texture.magFilter = texture.minFilter = THREE.LinearFilter;
+  texture.encoding = THREE.LinearEncoding;
+  texture.generateMipmaps = false;
+  material.userData.lightmap = texture;
+  material.userData.setTime = (timeOfDay, dimension) => {
+    const frame = lighting(timeOfDay, dimension);
+    texture.image.data.set(frame.lightmap);
+    texture.needsUpdate = true;
+    material.userData.skyFactor = frame.skyFactor;
+    material.userData.skyVisibility = frame.skyVisibility;
+  };
+  material.userData.setTime(6000, 'overworld');
+  material.addEventListener('dispose', () => texture.dispose());
   material.onBeforeCompile = shader => {
-    shader.uniforms.roycraftSkyDarken = material.userData.skyDarken;
+    shader.uniforms.roycraftLightmap = { value: texture };
     shader.vertexShader = 'attribute vec2 minecraftLight;\nvarying vec2 vMinecraftLight;\nvarying float vMinecraftShade;\n' + shader.vertexShader;
     shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
       vMinecraftLight = minecraftLight;
       vec3 face = abs(normal);
       vMinecraftShade = face.y > 0.5 ? (normal.y > 0.0 ? 1.0 : 0.5) : (face.z > 0.5 ? 0.8 : 0.6);`);
-    shader.fragmentShader = 'uniform float roycraftSkyDarken;\nvarying vec2 vMinecraftLight;\nvarying float vMinecraftShade;\n' + shader.fragmentShader;
+    shader.fragmentShader = 'uniform sampler2D roycraftLightmap;\nvarying vec2 vMinecraftLight;\nvarying float vMinecraftShade;\n' + shader.fragmentShader;
     shader.fragmentShader = shader.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
-      float level = max(vMinecraftLight.x, max(0.0, vMinecraftLight.y - roycraftSkyDarken));
-      float brightness = pow(0.8, 15.0 - level);
-      diffuseColor.rgb *= brightness * vMinecraftShade;`);
+      vec3 light = texture2D(roycraftLightmap, (vMinecraftLight + 0.5) / 16.0).rgb;
+      diffuseColor.rgb *= light * vMinecraftShade;`);
   };
-  material.customProgramCacheKey = () => 'roycraft-propagated-light-v1';
+  material.customProgramCacheKey = () => 'roycraft-vanilla-lightmap-v2';
   return material;
 }
 
@@ -134,11 +146,7 @@ export function installViewerLightClient(viewer, socket) {
   const world = viewer.world;
   socket.on('adventureState', state => {
     if (!state.time) return;
-    const angle = (state.time.timeOfDay - 6000) * Math.PI / 12000;
-    // Vanilla daylight subtraction: 0 at midday, 11 at night. Only the sky
-    // channel is darkened, never light emitted by blocks inside the cave.
-    world.material.userData.skyDarken.value = state.dimension === 'overworld'
-      ? 11 * (1 - Math.max(0, Math.min(1, Math.cos(angle) * 2 + 0.5))) : 0;
+    world.material.userData.setTime(state.time.timeOfDay, state.dimension);
   });
   socket.on('lightColumn', ({ x, z, sections, light }) => {
     if (!world.loadedChunks[`${x},${z}`]) return;
@@ -170,9 +178,9 @@ export function patchViewerLightServer(source, installerSource) {
   return source.replace(before, `;(${installerSource})(bot, worldView, socket);\n    ${before}`);
 }
 
-export function patchViewerLightClient(source, materialSource, clientSource) {
+export function patchViewerLightClient(source, materialSource, clientSource, lightingSource) {
   const edits = [
-    ['new n.MeshLambertMaterial({vertexColors:!0,transparent:!0,alphaTest:.1})', `(${materialSource})(n)`],
+    ['new n.MeshLambertMaterial({vertexColors:!0,transparent:!0,alphaTest:.1})', `(${materialSource})(n,(${lightingSource}))`],
     ['r.setAttribute("color",new n.BufferAttribute(t.geometry.colors,3))', 'r.setAttribute("minecraftLight",new n.BufferAttribute(t.geometry.light,2)),r.setAttribute("color",new n.BufferAttribute(t.geometry.colors,3))'],
     ['const u=new r(l);', `const u=new r(l);(${clientSource})(u,o);`]
   ];
