@@ -66,58 +66,109 @@ test('real Pi registry dispatches native tool calls, validates plain schemas and
   } finally { await agent.close(); }
 });
 
-test('accepted execution and ahead queueing finish native turns without a narration request, retaining real tool results', async () => {
+test('saving controller candidates finishes native turns without narration and retains real staging results', async () => {
+  let version = 0;
   const f = await fixture([
-    call('execute', { code: 'gather' }),
-    call('queue_next', { code: 'craft' }),
-    answer('Observed both completed programs.'),
-  ], ['execute', 'queue_next'].map(name => ({
-    name, description: 'Schedule real work.', parameters: schema,
-    execute: async () => ({ actionId: name === 'execute' ? 'gather-handle' : 'craft-handle', queued: name === 'queue_next' }),
-  })));
-  const agent = await f.open();
+    call('controller_candidate', { code: 'gather controller' }),
+    call('controller_candidate', { code: 'craft controller' }),
+    answer('Inspected controller validation and activation outcomes.'),
+  ], [{
+    name: 'controller_candidate', description: 'Stage a controller version for validation.', parameters: schema,
+    execute: async () => ({ version: `candidate-${++version}`, status: 'pending_validation' }),
+  }]);
+  let agent = await f.open();
   try {
-    assert.equal((await agent.step({ action: null })).modelCalls, 1);
-    assert.equal((await agent.step({ action: { id: 'gather-handle', state: 'running' } })).modelCalls, 1);
+    const first = await agent.step({ controller: null });
+    assert.equal(first.modelCalls, 1);
+    assert.equal(first.toolCalls, 1);
+    assert.equal((await agent.step({ controller: { version: 'candidate-1', status: 'active' } })).modelCalls, 1);
+    assert.equal(version, 2);
     assert.equal(f.calls.length, 2, 'no additional final-answer model requests');
-    await agent.step({ action: { id: 'craft-handle', state: 'completed' } });
-    assert.match(JSON.stringify(f.calls[2].context), /gather-handle/);
-    assert.match(JSON.stringify(f.calls[2].context), /craft-handle/);
+    await agent.close();
+    agent = await f.open();
+    await agent.step({ controller: { version: 'candidate-2', status: 'active' } });
+    assert.match(JSON.stringify(f.calls[2].context), /candidate-1/);
+    assert.match(JSON.stringify(f.calls[2].context), /candidate-2/);
+    assert.match(JSON.stringify(f.calls[2].context), /pending_validation/);
   } finally { await agent.close(); }
 });
 
-test('mixed remember and action rounds skip narration in either order, but failed admission still permits correction', async () => {
+test('mixed remember and candidate rounds skip narration in either order, but failed admission permits correction', async () => {
   const mixed = order => fauxAssistantMessage(order.map(name => fauxToolCall(name, { code: name })), { stopReason: 'toolUse' });
+  const executed = [];
+  let failAdmission = false;
   const f = await fixture([
-    mixed(['remember', 'execute']), mixed(['queue_next', 'remember']),
-    mixed(['remember', 'execute']), answer('Correct the failed action.'),
-  ], ['remember', 'execute', 'queue_next'].map(name => ({
-    name, description: 'A player tool.', parameters: schema,
+    mixed(['remember', 'controller_candidate']), mixed(['controller_candidate', 'remember']),
+    mixed(['remember', 'controller_candidate']), answer('Correct the failed candidate.'),
+    mixed(['controller_candidate', 'remember']), answer('Correct the failed candidate again.'),
+  ], ['remember', 'controller_candidate'].map(name => ({
+    name, description: 'A controller engineering tool.', parameters: schema,
     execute: async () => {
-      if (name === 'execute' && failAdmission) throw new Error('Fresh life changed');
+      executed.push(name);
+      if (name === 'controller_candidate' && failAdmission) throw new Error('Controller state changed');
       return { accepted: true };
     },
   })));
-  let failAdmission = false;
   const agent = await f.open();
   try {
-    assert.equal((await agent.step({})).modelCalls, 1);
-    assert.equal((await agent.step({})).modelCalls, 1);
+    for (let round = 0; round < 2; round++) {
+      const result = await agent.step({});
+      assert.equal(result.modelCalls, 1);
+      assert.equal(result.toolCalls, 2);
+    }
+    assert.deepEqual(executed, ['remember', 'controller_candidate', 'controller_candidate', 'remember']);
     failAdmission = true;
     assert.equal((await agent.step({})).modelCalls, 2);
-    assert.match(JSON.stringify(f.calls[3].context), /Fresh life changed/);
+    assert.match(JSON.stringify(f.calls[3].context), /Controller state changed/);
+    assert.equal((await agent.step({})).modelCalls, 2);
+    assert.match(JSON.stringify(f.calls[5].context), /Controller state changed/);
+    assert.deepEqual(executed.slice(4), ['remember', 'controller_candidate', 'controller_candidate', 'remember']);
   } finally { await agent.close(); }
 });
 
-test('a failed action admission still reaches the model for correction rather than terminating the turn', async () => {
-  const f = await fixture([call('execute', { code: 'invalid' }), answer('I will correct the prerequisites.')], [{
-    name: 'execute', description: 'Start work.', parameters: schema,
-    execute: async () => { throw new Error('Player context changed'); },
+for (const failure of ['throw', 'error result']) {
+  test(`failed candidate admission (${failure}) reaches the model for correction rather than terminating`, async () => {
+    let admissions = 0;
+    const f = await fixture([
+      call('controller_candidate', { code: 'invalid' }),
+      call('controller_candidate', { code: 'corrected' }),
+      answer('Inspected the staged correction.'),
+    ], [{
+      name: 'controller_candidate', description: 'Stage a controller version.', parameters: schema,
+      execute: async ({ code }) => {
+        admissions++;
+        if (code === 'invalid') {
+          if (failure === 'throw') throw new Error('Controller context changed');
+          return { isError: true, output: [{ type: 'text', text: 'Controller context changed' }] };
+        }
+        return { version: 'corrected-candidate', status: 'pending_validation' };
+      },
+    }]);
+    const agent = await f.open();
+    try {
+      const result = await agent.step({});
+      assert.equal(result.modelCalls, 2);
+      assert.equal(result.toolCalls, 2);
+      assert.equal(admissions, 2);
+      assert.match(JSON.stringify(f.calls[1].context), /Controller context changed/);
+      await agent.step({});
+      assert.match(JSON.stringify(f.calls[2].context), /corrected-candidate/);
+    } finally { await agent.close(); }
+  });
+}
+
+test('remember without a controller candidate retains the ordinary native continuation', async () => {
+  const f = await fixture([call('remember', { code: 'known resource habitat' }), answer('Memory saved.')], [{
+    name: 'remember', description: 'Persist strategic memory.', parameters: schema,
+    execute: async () => ({ saved: 'resource-habitat-marker' }),
   }]);
   const agent = await f.open();
   try {
-    assert.equal((await agent.step({})).modelCalls, 2);
-    assert.match(JSON.stringify(f.calls[1].context), /Player context changed/);
+    const result = await agent.step({});
+    assert.equal(result.modelCalls, 2);
+    assert.equal(result.toolCalls, 1);
+    assert.equal(result.text, 'Memory saved.');
+    assert.match(JSON.stringify(f.calls[1].context), /resource-habitat-marker/);
   } finally { await agent.close(); }
 });
 
@@ -418,17 +469,25 @@ test('large-window player history compacts at a tactical working set instead of 
 
 test('automatic compaction passes through the same bounded and sanitized model boundary', async () => {
   const secret = 'SYNTHETIC_COMPACTION_SECRET_MARKER';
-  const f = await fixture([
-    answer('I will remember the useful surroundings.'),
-    fauxAssistantMessage('', { stopReason: 'error', errorMessage: secret }),
-  ], [], 50000);
+  const f = await fixture(Array.from({ length: 20 }, () => context => (
+    /summari|compact/i.test(JSON.stringify(context))
+      ? fauxAssistantMessage('', { stopReason: 'error', errorMessage: secret })
+      : answer('I will remember the useful surroundings.')
+  )), [], 50000);
   const agent = await f.open();
-  await agent.step({ terrain: 'observed terrain '.repeat(25000) });
-  await assert.rejects(agent.step({ health: 19 }), /model run failed/);
-  await agent.close();
-  assert.equal(f.calls.length, 2);
-  assert.equal(f.events.filter(event => event.type === 'model_start').length, 2);
-  assert.match(JSON.stringify(f.calls[1].context), /summari|compact/i);
+  try {
+    // Multiple completed turns give compaction older entries to summarize;
+    // a single oversized recent message is retained rather than compacted.
+    await assert.rejects(async () => {
+      for (let step = 0; step < 8; step++) {
+        await agent.step({ step, terrain: 'historical-block-data '.repeat(2000) });
+      }
+    }, /model run failed/);
+  } finally { await agent.close(); }
+  assert.ok(f.calls.length > 1);
+  assert.equal(f.events.filter(event => event.type === 'model_start').length, f.calls.length);
+  assert.equal(f.events.filter(event => event.type === 'model_error' && event.category === 'provider_request_failed').length, 1);
+  assert.match(JSON.stringify(f.calls.at(-1).context), /summari|compact/i);
   const database = await readFile(path.join(f.stateDir, 'worlds/fresh-one/agent.sqlite'));
   assert.equal(database.includes(Buffer.from(secret)), false);
 });
