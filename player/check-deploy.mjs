@@ -16,10 +16,10 @@ export async function checkFeed(io, url) {
   const page = await fetch(url, { signal: AbortSignal.timeout(5000) });
   if (!page.ok) throw new Error(`Feed HTTP ${page.status}`);
   await page.body.cancel();
-  const socket = io(url, { transports: ['websocket'], reconnection: false, autoConnect: false, timeout: 5000 });
+  const socket = io(url, { transports: ['websocket'], reconnection: false, autoConnect: false, timeout: 15000 });
   try {
     await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('Feed state timed out')), 5000);
+      const timer = setTimeout(() => reject(new Error('Feed state timed out')), 15000);
       const finish = callback => value => { clearTimeout(timer); callback(value); };
       socket.once('connect_error', finish(reject));
       socket.once('adventureState', finish(state => {

@@ -130,3 +130,24 @@ test('feed check requires live socket state and always disconnects', async t => 
   await assert.rejects(checkFeed(io('offline'), url), /offline/);
   assert.equal(disconnected, 2);
 });
+
+test('cold feed startup can publish its first real state after five seconds without reconnecting', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  t.mock.method(globalThis, 'fetch', async () => new Response('feed'));
+  let connected = 0;
+  let disconnected = 0;
+  const pending = checkFeed(() => {
+    const socket = new EventEmitter();
+    socket.connect = () => {
+      connected++;
+      setTimeout(() => socket.emit('adventureState', { status: 'online', at: Date.now() }), 6000);
+    };
+    socket.disconnect = () => disconnected++;
+    return socket;
+  }, 'http://feed.test/');
+  await new Promise(resolve => setImmediate(resolve));
+  t.mock.timers.tick(6000);
+  await pending;
+  assert.equal(connected, 1);
+  assert.equal(disconnected, 1);
+});

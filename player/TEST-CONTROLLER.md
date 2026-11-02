@@ -1,5 +1,13 @@
 # Real persistent-controller E2E
 
+## Observed result
+
+2026-11-02: the isolated 300-second probe passed with 10 actions, 99.53% action-active time, zero deaths and verified world effects in all five minutes (3, 7, 6, 4, 3). It crafted a workbench, wooden pickaxe and chest, retained supplies, and completed actions under both validated versions. Model/provider access was blocked by the OS. Report: `/var/lib/minecraft-controller-e2e/20261102T062031Z-2299602/output/report.json`.
+
+This establishes continuous local execution and safe hotpatching, not general gameplay competence. Held-out production-controller audits separately test resource dependencies, observed habitats, death and blocked routes; syntactically valid code can still make poor plans.
+
+## Run
+
 Run as an administrator on the Minecraft host:
 
 ```sh
