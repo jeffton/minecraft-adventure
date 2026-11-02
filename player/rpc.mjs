@@ -1,9 +1,13 @@
 import { randomUUID } from 'node:crypto';
+import { createWorldKnowledge, loadedBiome, registryInfo } from './world-knowledge.mjs';
 
 export const RPC_DESCRIPTION = `Skills are async JavaScript function bodies with mc.call(method,...args), mc.observe(), input.
 Await every call. Returned values are observations, not proof that your whole objective succeeded.
 observe() → health, food, oxygen, position, dimension, inventory, nearby entities/blocks.
 blockAt({x,y,z}), findBlocks({names:[name],radius:32,count:16}), itemInfo(name), blockInfo(name).
+registryInfo(type,{names:[name],search,limit:16}) queries real items/blocks/biomes/entities registry (provide names or search; max32 names/max64 results). Block entries include named drops and harvest tools; biome entries include category/temperature/dimension, NOT mob spawn guarantees.
+biomeAt({x,y,z}) returns biome only for a loaded block, or null if biome data is absent. observe() includes current biome.
+knownLocations({kind:'biome'|'block'|'entity'|'visited',names:[name],dimension,limit:16}) returns world-scoped historical observations, not live guarantees. Query visited/biome samples to guide exploration beyond the current radius; unobserved coordinates are never supplied. Entities may move and resources may be gone; verify on arrival.
 recipesAll(itemName,table=true) shows named ingredients including unmet requirements; recipesFor(itemName,minOutputCount=1,tablePosition=null) returns indexed currently available recipes; craft(itemName,repetitions=1,tablePosition=null,recipeIndex=0) applies a recipe N times (one plank recipe yields four planks).
 goto({x,y,z},range=1,{canDig:false,allow1by1towers:false,allowSprinting:false}), follow(entityId,range=2), lookAt({x,y,z}), control(state,boolean), clearControls(), waitTicks(ticks<=200).
 Navigation walks without digging, placing or sprinting by default: a failed path is NOT permission to excavate a shelter. goto options explicitly enable digging/towering/sprinting for that call only. Clear a deliberate exit with dig/place rather than asking navigation to tunnel blindly.
@@ -37,7 +41,7 @@ function packBlock(block) {
 }
 
 /** Explicit low-level Mineflayer boundary. No dynamic property traversal or executable host callbacks. */
-export function createMinecraftRpc(bot, { Vec3, goals, onEvent = () => {} }) {
+export function createMinecraftRpc(bot, { Vec3, goals, onEvent = () => {}, knowledge = createWorldKnowledge() }) {
   let busy = false;
   const idleWaiters = new Set();
   let epoch = 0;
@@ -94,12 +98,16 @@ export function createMinecraftRpc(bot, { Vec3, goals, onEvent = () => {} }) {
         }
       }
     }
-    return {
+    const biome = origin ? loadedBiome(bot, packPosition(origin), Vec3, false) : null;
+    const observation = {
       at: new Date().toISOString(), health: bot.health, food: bot.food, oxygen: bot.oxygenLevel,
+      biome,
       position: packPosition(origin), dimension: bot.game?.dimension,
       time: bot.time ? { timeOfDay: bot.time.timeOfDay, isDay: bot.time.isDay } : null,
       inventory: bot.inventory.items().map(packItem), heldItem: packItem(bot.heldItem), entities, blocks
     };
+    knowledge.observe(observation);
+    return observation;
   }
 
   function cancel() {
@@ -149,15 +157,28 @@ export function createMinecraftRpc(bot, { Vec3, goals, onEvent = () => {} }) {
 
   const methods = {
     observe,
-    blockAt: p => packBlock(bot.blockAt(vector(p))),
+    blockAt(p) {
+      const found = packBlock(bot.blockAt(vector(p)));
+      knowledge.observe({ dimension: bot.game?.dimension, blocks: found ? [found] : [] });
+      return found;
+    },
+    registryInfo: (type, query) => registryInfo(bot.registry, type, query),
+    biomeAt(p) {
+      const biome = loadedBiome(bot, position(p), Vec3);
+      knowledge.observe({ dimension: bot.game?.dimension, biome });
+      return biome;
+    },
+    knownLocations: query => knowledge.locations(query),
     findBlocks({ names, radius = 32, count = 16 }) {
       if (!Array.isArray(names) || names.length < 1 || names.length > 32) throw new Error('Provide 1–32 block names');
       const ids = names.map(name => {
         if (typeof name !== 'string' || !Object.hasOwn(bot.registry.blocksByName, name)) throw new Error(`Unknown block: ${name}`);
         return bot.registry.blocksByName[name].id;
       });
-      return bot.findBlocks({ matching: ids, maxDistance: number(radius, 'radius', 1, 64), count: integer(count, 'count', 1, 64) })
+      const found = bot.findBlocks({ matching: ids, maxDistance: number(radius, 'radius', 1, 64), count: integer(count, 'count', 1, 64) })
         .map(p => packBlock(bot.blockAt(p)));
+      knowledge.observe({ dimension: bot.game?.dimension, blocks: found });
+      return found;
     },
     itemInfo(name) {
       const id = itemType(name);
@@ -342,6 +363,7 @@ export function createMinecraftRpc(bot, { Vec3, goals, onEvent = () => {} }) {
 
   return {
     observe,
+    knowledge,
     cancel,
     waitForIdle() {
       if (!busy) return Promise.resolve();
