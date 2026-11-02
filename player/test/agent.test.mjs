@@ -7,7 +7,10 @@ import path from 'node:path';
 import { createModels } from '@earendil-works/pi-ai/models';
 import { openaiCodexProvider } from '@earendil-works/pi-ai/providers/openai-codex';
 import { fauxProvider, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/providers/faux';
-import { openPlayerAgent, playerModels } from '../agent.mjs';
+import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
+import { Harness, createRegistry, defineDoc } from '@earendil-works/pi-durable';
+import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
+import { openPlayerAgent, playerModels, PLAYER_INSTRUCTIONS } from '../agent.mjs';
 
 const answer = text => fauxAssistantMessage(text);
 const call = (name, args) => fauxAssistantMessage(fauxToolCall(name, args), { stopReason: 'toolUse' });
@@ -31,7 +34,7 @@ async function fixture(responses, tools = [], contextWindow = 131072, getFeedbac
     stateDir, worldId, models, tools, getFeedback,
     instructions: 'Runtime API documentation.', onEvent: event => events.push(event),
   });
-  return { open, calls, events, provider, stateDir };
+  return { open, calls, events, provider, stateDir, models };
 }
 
 function deferred() {
@@ -171,6 +174,107 @@ test('remember without a controller candidate retains the ordinary native contin
     assert.match(JSON.stringify(f.calls[1].context), /resource-habitat-marker/);
   } finally { await agent.close(); }
 });
+
+async function seedCheckpointedTurn(f, controllerMode) {
+  const context = BACKGROUND_CONTEXT;
+  const documents = defineDoc({
+    kind: 'minecraft.player-conversations', version: 1, scope: 'session',
+    initial: () => ({ diary: null, ...(controllerMode ? { controllerMode } : {}) }),
+    checkpointWhen: () => true,
+  });
+  const knowledge = defineDoc({
+    kind: 'minecraft.test-controller-knowledge', version: 1, scope: 'session',
+    initial: () => ({ skills: ['preserved-shelter-skill'], home: { x: 12, y: 64, z: 34 } }),
+    checkpointWhen: () => true,
+  });
+  const database = path.join(f.stateDir, 'worlds/fresh-one/agent.sqlite');
+  const harness = await Harness.open(await openNodeSqliteStorage(database), { models: f.models, registry: createRegistry() }, context);
+  const root = await harness.root(context);
+  await root.configure({
+    model: { provider: 'openai-codex', modelId: 'gpt-6.1-sol' },
+    instructions: controllerMode ? PLAYER_INSTRUCTIONS : 'Old turn-based player instructions.',
+  }, context);
+  const diary = await harness.createConversation({ ownership: { kind: 'ownerless' }, agent: { tools: [] } }, context);
+  await diary.configure({ model: { provider: 'openai-codex', modelId: 'gpt-6.1-terra' } }, context);
+  await root.commit(async tx => {
+    (await tx.doc(documents)).diary = diary.id;
+    await tx.doc(knowledge);
+  }, context);
+  const history = await root.submit({ type: 'input', content: 'preserved-root-landmark-marker' }, context);
+  await history.wait(context);
+  const diaryHistory = await diary.submit({ type: 'input', content: 'preserved-diary-facts-marker' }, context);
+  await diaryHistory.wait(context);
+  await root.submit({ type: 'input', content: 'checkpointed-controller-turn-marker' }, context);
+  return { harness, root, diary, documents, knowledge, database };
+}
+
+for (const controllerMode of [undefined, 'persistent-v1']) {
+  test(`${controllerMode ? 'current controller restart resumes' : 'legacy architecture migration retires'} a checkpointed generation without losing history or documents`, async () => {
+    const entered = deferred();
+    const f = await fixture([
+      answer('Preserved root survival lesson.'),
+      answer('Preserved diary paragraph.'),
+      async (_context, options) => {
+        entered.resolve();
+        // Closing the harness checkpoints this unfinished generation. The model
+        // must honor cancellation so close does not wait for an external service.
+        await new Promise(resolve => {
+          if (options.signal.aborted) resolve();
+          else options.signal.addEventListener('abort', resolve, { once: true });
+        });
+        return answer('Interrupted generation.');
+      },
+      ...Array.from({ length: 8 }, () => answer('Current controller inspection.')),
+    ]);
+    const seeded = await seedCheckpointedTurn(f, controllerMode);
+    await entered.promise;
+    await seeded.harness.close(BACKGROUND_CONTEXT);
+    const inspectHarness = await Harness.open(await openNodeSqliteStorage(seeded.database), { models: f.models, registry: createRegistry() }, BACKGROUND_CONTEXT);
+    const checkpoint = await inspectHarness.inspect(BACKGROUND_CONTEXT);
+    assert.ok(checkpoint.tasks.some(({ state }) => state.kind !== 'terminal'), 'a real unfinished generation was persisted');
+    await inspectHarness.close(BACKGROUND_CONTEXT);
+
+    let agent = await f.open();
+    try {
+      const expectedMigrations = controllerMode ? [] : ['migration_started', 'migration_completed'];
+      assert.deepEqual(f.events.filter(event => event.type.startsWith('migration_')).map(event => event.type), expectedMigrations);
+      const image = { type: 'image', mimeType: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6S8sAAAAASUVORK5CYII=' };
+      await agent.step({ controller: 'fresh-controller-observation-marker' }, { images: [image] });
+      const fresh = f.calls.at(-1).context;
+      assert.match(JSON.stringify(fresh), /background Minecraft controller engineer/);
+      assert.match(JSON.stringify(fresh), /preserved-root-landmark-marker/);
+      assert.match(JSON.stringify(fresh), /Preserved root survival lesson/);
+      const input = fresh.messages.filter(message => message.role === 'user').at(-1);
+      assert.deepEqual(input.content.find(block => block.type === 'image'), image);
+      assert.match(JSON.stringify(input), /fresh-controller-observation-marker/);
+      await agent.narrate({ events: ['fresh-diary-event'] });
+      assert.match(JSON.stringify(f.calls.at(-1).context), /preserved-diary-facts-marker/);
+      assert.match(JSON.stringify(f.calls.at(-1).context), /Preserved diary paragraph/);
+      await agent.close();
+      agent = await f.open();
+      assert.deepEqual(f.events.filter(event => event.type.startsWith('migration_')).map(event => event.type), expectedMigrations, 'ordinary reopen must not migrate again');
+      await agent.step({ controller: 'ordinary-reopen-marker' });
+      assert.match(JSON.stringify(f.calls.at(-1).context), /fresh-controller-observation-marker/);
+    } finally { await agent.close(); }
+
+    const verifiedStorage = await openNodeSqliteStorage(seeded.database);
+    const verified = await Harness.open(verifiedStorage, { models: f.models, registry: createRegistry() }, BACKGROUND_CONTEXT);
+    try {
+      assert.equal((await verified.root(BACKGROUND_CONTEXT)).id, seeded.root.id);
+      assert.deepEqual(await verified.snapshot(seeded.documents, BACKGROUND_CONTEXT), {
+        diary: seeded.diary.id, controllerMode: 'persistent-v1',
+      });
+      assert.deepEqual(await verified.snapshot(seeded.knowledge, BACKGROUND_CONTEXT), {
+        skills: ['preserved-shelter-skill'], home: { x: 12, y: 64, z: 34 },
+      });
+      const tasks = await verifiedStorage.scanTasks({ status: 'terminal' }, 100, undefined, BACKGROUND_CONTEXT);
+      const checkpointIds = new Set(checkpoint.tasks.map(({ record }) => record.id));
+      assert.ok(tasks.items.some(record => checkpointIds.has(record.id) &&
+        record.state.outcome.status === (controllerMode ? 'completed' : 'aborted')),
+      'the checkpointed generation reaches the appropriate terminal outcome');
+    } finally { await verified.close(BACKGROUND_CONTEXT); }
+  });
+}
 
 test('conversation survives reopen, and another world cannot inherit observations or prior answers', async () => {
   const f = await fixture([answer('I remember the old oak tree.'), answer('Continue here.'), answer('A fresh start.')]);

@@ -17,7 +17,8 @@ const MAX_TOOL_CALLS = 12;
 const context = BACKGROUND_CONTEXT;
 const Conversations = defineDoc({
   kind: 'minecraft.player-conversations', version: 1, scope: 'session',
-  initial: () => ({ diary: null }),
+  initial: () => ({ diary: null, controllerMode: 'persistent-v1' }),
+  checkpointWhen: () => true,
 });
 
 export const PLAYER_INSTRUCTIONS = `You are Roy's background Minecraft controller engineer. A persistent isolated JavaScript controller owns realtime gameplay: observe→decide→act→evaluate locally without model requests. Your job is to inspect its source, actual outcomes and POV images, maintain goals and reusable skills, and submit validated controller improvements. Never replace continuous play with individual model-driven turns or queue-next scripts. You have no host shell, filesystem, arbitrary network or credentials. Tools define the real API.
@@ -266,7 +267,18 @@ export async function openPlayerAgent({
     const inspection = await harness.inspect(context);
     const tasks = inspection.tasks.map(({ record, state }) => ({ id: record.id, taskKind: record.kind, ...state }));
     onStatus({ phase: tasks.some(task => task.kind === 'blocked') ? 'blocked' : 'recovering', tasks });
+    const controllerMode = (await harness.snapshot(Conversations, context))?.controllerMode;
     harness.resume();
+    if (controllerMode !== 'persistent-v1') {
+      emit({ type: 'migration_started', controllerMode: 'persistent-v1' });
+      // The engineer cannot resume a turn authored for the obsolete player role.
+      // Abort retires its work without resetting the conversation or its history.
+      await root.abort(context);
+      await root.commit(async tx => {
+        (await tx.doc(Conversations)).controllerMode = 'persistent-v1';
+      }, context);
+      emit({ type: 'migration_completed', controllerMode: 'persistent-v1' });
+    }
     await root.waitForIdle(context);
     await diary.waitForIdle(context);
     signal?.throwIfAborted();

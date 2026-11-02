@@ -55,6 +55,33 @@ test('real sandbox validates offline, activates, persists state and scopes world
   await assert.rejects(reopened.decide({ worldId: 'world-two' }), /world mismatch/);
 });
 
+test('controller accepts helpers and comments before the named exported decision', { skip: !canRun }, async () => {
+  const controller = await create('helper-world').open();
+  const helperCode = `// Example signature: export async function decide(observation, state, lastResult)
+/* Ordinary module helpers may precede the actual export. */
+const action = { name: 'Craft planks', code: 'return await mc.call("craft", input.item);', input: { item: 'oak_planks' } };
+const hasWood = observation => observation.hasWood;
+export async function decide(observation, state, lastResult) {
+  return hasWood(observation)
+    ? {state:{count:(state.count ?? 0) + 1},action}
+    : {state:{},action:null,reason:'Wood unavailable'};
+}`;
+  const candidate = await controller.candidate({ name: 'Module helpers', code: helperCode, fixtures });
+  const validated = await controller.validate(candidate.version);
+  assert.equal(validated.status, 'validated', validated.error);
+  await controller.activate(candidate.version);
+  const result = await controller.decide({ worldId: 'helper-world', hasWood: true });
+  assert.equal(result.action.name, 'Craft planks');
+  assert.equal(result.state.count, 1);
+  for (const prefix of [
+    '// export async function decide() {}',
+    'const example = "export async function decide() {}";',
+  ]) {
+    const hidden = await controller.candidate({ name: 'Not exported', code: `${prefix}\nasync function decide() {return {state:{},action:null,reason:'hidden'};}`, fixtures });
+    assert.equal((await controller.validate(hidden.version)).status, 'failed', 'A signature in a comment/string is not an exported entrypoint');
+  }
+});
+
 test('real fixture validation rejects imports, game access, invalid action syntax and missing state', { skip: !canRun }, async () => {
   const controller = await create('invalid-world').open();
   for (const body of [

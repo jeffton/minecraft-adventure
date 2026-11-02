@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
+import { Script } from 'node:vm';
 import { SkillSandbox, validateSkillRequest } from './sandbox.mjs';
 import { atomicJson, optionalJson } from './observations.mjs';
 
@@ -16,15 +17,28 @@ function boundedJson(value, bytes, label) {
 // not the security boundary. No Minecraft object or RPC is passed to the VM.
 export function controllerRunner(code) {
   if (typeof code !== 'string' || Buffer.byteLength(code) > 20_480) throw new Error('Controller source must be at most 20 KiB');
-  if (!/^\s*export\s+async\s+function\s+decide\s*\(/.test(code)) throw new Error('Controller must export async function decide(observation, state, lastResult)');
-  const source = code.replace(/^(\s*)export\s+/, '$1');
+  const entryMarker = `__controllerEntry_${randomUUID().replaceAll('-', '')}`;
+  let source;
+  for (const match of code.matchAll(/\bexport\s+async\s+function\s+decide\s*\(/g)) {
+    const candidate = code.slice(0, match.index) + `const ${entryMarker} = true; ` + code.slice(match.index + 'export'.length);
+    try {
+      // Parsing does not execute candidate code. Trying each match avoids treating
+      // an example declaration inside a comment/string as the actual entrypoint.
+      new Script(candidate);
+      source = candidate;
+      break;
+    } catch (error) {
+      if (!(error instanceof SyntaxError)) throw error;
+    }
+  }
+  if (source === undefined) throw new Error('Controller must export async function decide(observation, state, lastResult) with valid script syntax');
   return `
 const vm = await import('node:vm');
 const context = vm.createContext(Object.create(null), { codeGeneration: { strings: false, wasm: false } });
 const source = ${JSON.stringify(source)};
 // JSON is parsed inside the realm: no host functions/prototypes cross into it.
 new vm.Script('globalThis.args = JSON.parse(' + JSON.stringify(JSON.stringify(input)) + ')').runInContext(context, { timeout: 250 });
-new vm.Script(source + '\\n;globalThis.answer = decide(args.observation, args.state, args.lastResult);').runInContext(context, { timeout: 500 });
+new vm.Script(source + '\\n;if (typeof ${entryMarker} === "undefined") throw new Error("Missing exported decide entrypoint"); globalThis.answer = decide(args.observation, args.state, args.lastResult);').runInContext(context, { timeout: 500 });
 await context.answer;
 context.awaitedAnswer = await context.answer;
 const encoded = new vm.Script('JSON.stringify(awaitedAnswer)').runInContext(context, { timeout: 250 });
