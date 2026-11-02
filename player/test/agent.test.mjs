@@ -73,6 +73,19 @@ test('real Pi registry dispatches native tool calls, validates plain schemas and
   } finally { await agent.close(); }
 });
 
+test('accepted exact edits finish without an extra narration turn', async () => {
+  const f = await fixture([call('controller_edit', { code: 'exact correction' }), answer('must not be requested')], [{
+    name: 'controller_edit', description: 'Apply a version-aware exact edit.', parameters: schema,
+    execute: async () => ({ version: 'edited', status: 'pending_validation' }),
+  }]);
+  const agent = await f.open();
+  try {
+    const result = await agent.step({});
+    assert.equal(result.modelCalls, 1);
+    assert.equal(result.toolCalls, 1);
+  } finally { await agent.close(); }
+});
+
 test('saving controller candidates finishes native turns without narration and retains real staging results', async () => {
   let version = 0;
   const f = await fixture([
@@ -195,7 +208,7 @@ async function seedCheckpointedTurn(f, controllerMode) {
   const registry = createRegistry();
   const candidate = defineTool({
     name: 'controller_candidate', description: 'Stage controller code.',
-    parameters: Type.Unsafe(controllerMode === 'reactive-v2' ? versionedCandidateSchema : schema),
+    parameters: Type.Unsafe(controllerMode === 'hot-reload-v3' ? versionedCandidateSchema : schema),
     execute: async () => ({ output: [{ type: 'text', text: 'Staged.' }] }),
   });
   const extension = defineExtension({ name: 'minecraft.player', tools: [candidate] });
@@ -221,8 +234,8 @@ async function seedCheckpointedTurn(f, controllerMode) {
   return { harness, root, diary, documents, knowledge, database };
 }
 
-for (const controllerMode of [undefined, 'persistent-v1', 'reactive-v2']) {
-  const currentMode = controllerMode === 'reactive-v2';
+for (const controllerMode of [undefined, 'persistent-v1', 'reactive-v2', 'hot-reload-v3']) {
+  const currentMode = controllerMode === 'hot-reload-v3';
   test(`${currentMode ? 'current controller restart resumes' : `${controllerMode ?? 'legacy'} schema migration retires`} a checkpointed generation without losing history or documents`, async () => {
     const entered = deferred();
     const f = await fixture([
@@ -265,7 +278,7 @@ for (const controllerMode of [undefined, 'persistent-v1', 'reactive-v2']) {
       const freshSchema = fresh.messages.filter(message => message.role === 'system')
         .flatMap(message => message.toolsAdded ?? []).findLast(tool => tool.name === 'controller_candidate').parameters;
       assert.ok(freshSchema.required.includes('baseVersion'), 'the fresh native turn exposes the required versioned candidate interface');
-      assert.match(JSON.stringify(fresh), /background Minecraft controller engineer/);
+      assert.match(JSON.stringify(fresh), /controller_edit/);
       assert.match(JSON.stringify(fresh), /preserved-root-landmark-marker/);
       assert.match(JSON.stringify(fresh), /Preserved root survival lesson/);
       const input = fresh.messages.filter(message => message.role === 'user').at(-1);
@@ -286,7 +299,7 @@ for (const controllerMode of [undefined, 'persistent-v1', 'reactive-v2']) {
     try {
       assert.equal((await verified.root(BACKGROUND_CONTEXT)).id, seeded.root.id);
       assert.deepEqual(await verified.snapshot(seeded.documents, BACKGROUND_CONTEXT), {
-        diary: seeded.diary.id, controllerMode: 'reactive-v2',
+        diary: seeded.diary.id, controllerMode: 'hot-reload-v3',
       });
       assert.deepEqual(await verified.snapshot(seeded.knowledge, BACKGROUND_CONTEXT), {
         skills: ['preserved-shelter-skill'], home: { x: 12, y: 64, z: 34 },

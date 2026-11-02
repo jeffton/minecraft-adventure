@@ -25,13 +25,13 @@ export function playerState(bot, { worldId, session, events, action, thinking, e
     dimension: bot.game.dimension, inventory, held: bot.heldItem?.name ?? null,
     task: action || (thinking ? 'thinking about the next move' : 'observing'),
     action: action || (thinking ? 'planning' : 'observing'), error,
-    events: events.slice(-40), home: notes.home ?? null,
+    events, home: notes.home ?? null,
   };
   return {
     worldId, updatedAt: at, phase: 'survival', serverVersion: bot.version,
     objective: notes.goal ?? 'Survive, establish a beautiful home with a bed and storage, and prepare to defeat the Ender Dragon.',
     longTerm: 'Defeat the Ender Dragon through ordinary survival play.',
-    home: notes.home ?? null, bots: [actor], milestones: [], events: events.slice(-80),
+    home: notes.home ?? null, bots: [actor], milestones: [], events,
   };
 }
 

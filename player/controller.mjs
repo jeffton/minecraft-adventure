@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { Script } from 'node:vm';
+import { parse } from 'acorn';
 import { readFile } from 'node:fs/promises';
 import { SkillSandbox, validateSkillRequest } from './sandbox.mjs';
 import { MAX_FRAME_BYTES } from './sandbox-protocol.mjs';
@@ -21,20 +22,19 @@ function boundedJson(value, bytes, label) {
 export function controllerRunner(code) {
   if (typeof code !== 'string') throw new Error('Controller source must be a string');
   const entryMarker = `__controllerEntry_${randomUUID().replaceAll('-', '')}`;
-  let source;
-  for (const match of code.matchAll(/\bexport\s+async\s+function\s+decide\s*\(/g)) {
-    const candidate = code.slice(0, match.index) + `const ${entryMarker} = true; ` + code.slice(match.index + 'export'.length);
-    try {
-      // Parsing does not execute candidate code. Trying each match avoids treating
-      // an example declaration inside a comment/string as the actual entrypoint.
-      new Script(candidate);
-      source = candidate;
-      break;
-    } catch (error) {
-      if (!(error instanceof SyntaxError)) throw error;
-    }
+  const module = parse(code, { ecmaVersion: 'latest', sourceType: 'module' });
+  const entry = module.body.find(node => node.type === 'ExportNamedDeclaration' && node.declaration?.type === 'FunctionDeclaration' && node.declaration.id?.name === 'decide' && node.declaration.async && !node.declaration.generator);
+  if (!entry) throw new Error('Controller must export async function decide(observation, state, lastResult)');
+  const nodes = [module];
+  while (nodes.length) {
+    const node = nodes.pop();
+    if (!node || typeof node !== 'object') continue;
+    if (['ImportDeclaration', 'ImportExpression'].includes(node.type) || (node.type === 'MetaProperty' && node.meta.name === 'import')) throw new Error('Controller imports are not available in the isolated decision API');
+    nodes.push(...Object.values(node).filter(value => value && typeof value === 'object').flat());
   }
-  if (source === undefined) throw new Error('Controller must export async function decide(observation, state, lastResult) with valid script syntax');
+  const source = code.slice(0, entry.start) + `const ${entryMarker} = true; ` + code.slice(entry.declaration.start);
+  // Compile only: never execute generated module initialization in the host.
+  new Script(source);
   return `
 const vm = await import('node:vm');
 const context = vm.createContext(Object.create(null), { codeGeneration: { strings: false, wasm: false } });
@@ -57,9 +57,9 @@ export function validateControllerResult(value, worldId) {
   const state = boundedJson(value.state, MAX_FRAME_BYTES, 'Controller state');
   if (!state || typeof state !== 'object' || Array.isArray(state)) throw new Error('Controller state must be an object');
   if (value.action === null) {
-    if (typeof value.reason !== 'string' || !value.reason.trim() || value.reason.length > 500) throw new Error('Idle decision requires a reason (1–500 characters)');
+    if (typeof value.reason !== 'string' || !value.reason.trim()) throw new Error('Idle decision requires a nonempty reason');
     const wakeAfterMs = value.wakeAfterMs ?? 1000;
-    if (!Number.isSafeInteger(wakeAfterMs) || wakeAfterMs < 100 || wakeAfterMs > 60_000) throw new Error('Idle wakeAfterMs must be 100–60000');
+    if (!Number.isSafeInteger(wakeAfterMs) || wakeAfterMs < 0) throw new Error('Idle wakeAfterMs must be a nonnegative safe integer');
     return { state, action: null, reason: value.reason, wakeAfterMs };
   }
   const action = value.action;
@@ -78,9 +78,9 @@ export class PersistentController {
     this.busy = false;
     // A separate handle avoids gameplay callbacks, observations and cancellation.
     // It deliberately uses the SAME root-owned broker and OS-isolation boundary.
-    this.sandbox = new SkillSandbox({ socketPath, timeoutMs, rpc: {
+    this.sandbox = new SkillSandbox({ socketPath, timeoutMs, historyDirectory: path.join(path.dirname(this.file), 'decisions'), rpc: {
       observe: () => ({ worldId }),
-      call: async () => { throw new Error('Controller decisions and offline validation cannot call Minecraft RPC'); },
+      call: async () => { throw new Error('Controller decisions cannot call Minecraft RPC directly'); },
       cancel() {},
     } });
     this.writeTail = Promise.resolve();
@@ -89,15 +89,12 @@ export class PersistentController {
   async open() {
     this.data = await optionalJson(this.file, { worldId: this.worldId, activeVersion: null, state: {}, versions: [] });
     if (this.data.worldId !== this.worldId) throw new Error('Controller storage world mismatch');
-    // A process may have died during validation. Never promote an unfinished test.
+    // Preserve old records, but do not promote obsolete fixture-gated candidates.
     for (const version of this.data.versions) {
-      if (['candidate', 'validating', 'validated'].includes(version.status) && !Object.hasOwn(version, 'baseVersion')) {
+      if (['candidate', 'validating', 'validated'].includes(version.status)) {
         version.status = 'superseded';
-        version.error = 'Pending controller has no recorded base version';
+        version.error = 'Pending source predates immediate hot-reload admission; submit a fresh version-aware edit';
         version.errorCode = 'CONTROLLER_STALE_VERSION';
-      } else if (version.status === 'validating') {
-        version.status = 'failed';
-        version.error = 'Validation interrupted by restart';
       }
     }
     await this.save();
@@ -127,17 +124,39 @@ export class PersistentController {
     return record;
   }
 
-  async candidate({ name, code, fixtures, baseVersion = this.data.activeVersion, analysis }) {
-    if (baseVersion !== this.data.activeVersion) throw staleVersion('Controller candidate base version is not the active version');
-    validateSkillRequest(controllerRunner(code), { name, worldId: this.worldId });
-    if (typeof name !== 'string' || !name.trim() || name.length > 80) throw new Error('Controller name is required (1–80 characters)');
-    if (!Array.isArray(fixtures) || fixtures.length < 2 || fixtures.length > 8) throw new Error('Provide 2–8 offline fixtures');
-    fixtures = boundedJson(fixtures, MAX_FRAME_BYTES, 'Controller fixtures');
-    for (const fixture of fixtures) {
-      if (!fixture || typeof fixture.observation !== 'object' || !fixture.observation) throw new Error('Each fixture requires an observation');
+  editedSource(baseVersion, edits) {
+    if (!baseVersion || baseVersion !== this.data.activeVersion) throw staleVersion('Controller edit requires the active inspected base version');
+    if (!Array.isArray(edits) || !edits.length) throw new Error('Provide nonempty exact source edits');
+    const source = this.record(baseVersion).code;
+    const replacements = edits.map(({ oldText, newText }) => {
+      if (typeof oldText !== 'string' || !oldText || typeof newText !== 'string') throw new Error('Each edit requires nonempty oldText and string newText');
+      const start = source.indexOf(oldText);
+      if (start < 0 || source.indexOf(oldText, start + 1) >= 0) throw new Error('Each oldText must match exactly once in the original source');
+      return { start, end: start + oldText.length, newText };
+    }).sort((a, b) => a.start - b.start);
+    let result = '';
+    let end = 0;
+    for (const replacement of replacements) {
+      if (replacement.start < end) throw new Error('Source edits must not overlap; all match the original version');
+      result += source.slice(end, replacement.start) + replacement.newText;
+      end = replacement.end;
     }
-    const record = { version: randomUUID(), name: name.trim(), code, fixtures, baseVersion: this.data.activeVersion, sourceHash: createHash('sha256').update(code).digest('hex'), status: 'candidate', createdAt: timestamp() };
-    if (analysis !== undefined) record.analysis = boundedJson(analysis, MAX_FRAME_BYTES, 'Controller analysis metadata');
+    result += source.slice(end);
+    if (result === source) throw new Error('Source edits must change the controller');
+    return result;
+  }
+
+  async candidate({ name, code, edits, baseVersion = this.data.activeVersion, analysis }) {
+    if (baseVersion !== this.data.activeVersion) throw staleVersion('Controller candidate base version is not the active version');
+    if (edits !== undefined) {
+      if (code !== undefined) throw new Error('Provide source or edits, not both');
+      code = this.editedSource(baseVersion, edits);
+    }
+    validateSkillRequest(controllerRunner(code), { name, worldId: this.worldId });
+    if (typeof name !== 'string' || !name.trim()) throw new Error('Controller name is required');
+    const record = { version: randomUUID(), name: name.trim(), code, baseVersion: this.data.activeVersion, sourceHash: createHash('sha256').update(code).digest('hex'), status: 'admitted', createdAt: timestamp() };
+    if (edits !== undefined) record.edits = clone(edits);
+    if (analysis !== undefined) record.analysis = clone(analysis);
     this.data.versions.push(record);
     await this.save();
     return clone(record);
@@ -162,45 +181,16 @@ export class PersistentController {
   async run(code, observation, state, lastResult) {
     const { source, input } = this.decisionRequest(code, observation, state, lastResult);
     const id = this.sandbox.start(source, { name: 'controller: decide', input, worldId: this.worldId });
-    const result = await this.sandbox.wait(id);
+    const result = await this.sandbox.wait(id, { details: false });
     if (result.state !== 'completed') throw new Error(result.error ?? 'Controller sandbox failed');
     return validateControllerResult(result.value, this.worldId);
-  }
-
-  async validate(version) {
-    this.boundary();
-    const record = this.record(version);
-    if (record.version === this.data.activeVersion) throw new Error('Cannot validate the active controller');
-    if (record.status === 'superseded') throw staleVersion(record.error);
-    this.busy = true;
-    try {
-      record.status = 'validating';
-      delete record.error;
-      await this.save();
-      const results = [];
-      for (const fixture of record.fixtures) {
-        const output = await this.run(record.code, fixture.observation, fixture.state ?? {}, fixture.lastResult);
-        results.push({ action: output.action?.name ?? null, reason: output.reason ?? null });
-      }
-      record.status = 'validated';
-      record.validation = { at: timestamp(), results };
-      this.onEvent({ type: 'controller-validated', version });
-    } catch (error) {
-      record.status = 'failed';
-      record.error = error.message;
-      this.onEvent({ type: 'controller-error', version, error: error.message });
-    } finally {
-      this.busy = false;
-      await this.save();
-    }
-    return clone(record);
   }
 
   async activate(version) {
     this.boundary();
     const record = this.record(version);
     if (record.status === 'superseded') throw staleVersion(record.error);
-    if (record.status !== 'validated') throw new Error('Only a validated candidate can be activated');
+    if (record.status !== 'admitted') throw new Error('Only admitted source can be activated');
     this.busy = true;
     try {
       if (!Object.hasOwn(record, 'baseVersion') || record.baseVersion !== this.data.activeVersion) {

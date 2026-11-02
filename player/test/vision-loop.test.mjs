@@ -127,3 +127,36 @@ test('closing an invalidated pending render cannot schedule another capture', as
   assert.equal(count, 1);
   assert.equal(loop.peek(), null);
 });
+
+test('routine refresh of an attached valid image cannot generate image-only engineering loops', async () => {
+  let now = 45000;
+  const capture = deferred();
+  let engineeringWakes = 0;
+  const loop = new VisionLoop({ capture: () => capture.promise, contextKey: () => 'same-life', now: () => now,
+    onFrame: (frame, timing) => { if (timing.fulfillsMissingImage) engineeringWakes++; }, onError: assert.fail });
+  loop.frame = { at: 0, contextKey: 'same-life', frame: { image: 'actual-valid-cache' } };
+  assert.equal(loop.sample().frame.image, 'actual-valid-cache');
+  assert.equal(loop.awaitingImage, false);
+  now = 46000;
+  capture.resolve({ at: now, frame: { image: 'actual-new-frame' } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(engineeringWakes, 0);
+  assert.equal(loop.sample().frame.image, 'actual-new-frame');
+  loop.close();
+});
+
+test('a requested missing-context image produces exactly one follow-up when the actual frame arrives', async () => {
+  const capture = deferred();
+  let engineeringWakes = 0;
+  const loop = new VisionLoop({ capture: () => capture.promise, contextKey: () => 'new-life',
+    onFrame: (frame, timing) => { if (timing.fulfillsMissingImage) engineeringWakes++; }, onError: assert.fail });
+  loop.frame = { at: Date.now(), contextKey: 'old-life', frame: { image: 'invalid' } };
+  assert.equal(loop.sample(), null);
+  assert.equal(loop.sample(), null);
+  capture.resolve({ at: Date.now(), frame: { image: 'actual-new-life' } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(engineeringWakes, 1);
+  assert.equal(loop.awaitingImage, false);
+  assert.equal(loop.sample().frame.image, 'actual-new-life');
+  loop.close();
+});

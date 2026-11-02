@@ -15,6 +15,15 @@ export class VisionLoop {
     return this.frame?.contextKey === this.contextKey() && this.now() - this.frame.at <= maxAgeMs ? this.frame : null;
   }
 
+  sample({ refreshAfterMs = 5000 } = {}) {
+    const visual = this.peek();
+    // Only a missing image needs a follow-up engineering event. A routine
+    // refresh of already-delivered valid imagery must not keep the AI awake.
+    this.awaitingImage = !visual;
+    if (!visual || this.now() - visual.at > refreshAfterMs) this.request();
+    return visual;
+  }
+
   request() {
     if (this.closed || this.pending) return;
     const requestedContext = this.contextKey();
@@ -32,7 +41,9 @@ export class VisionLoop {
       const frame = await this.capture();
       if (key !== this.contextKey()) throw new Error('Player context changed during vision capture');
       this.frame = { ...frame, contextKey: key };
-      this.onFrame(this.frame, { captureMs: this.now() - startedAt });
+      const fulfillsMissingImage = Boolean(this.awaitingImage);
+      this.awaitingImage = false;
+      this.onFrame(this.frame, { captureMs: this.now() - startedAt, fulfillsMissingImage });
       return this.frame;
     })().finally(() => { this.pending = null; });
     return this.pending;

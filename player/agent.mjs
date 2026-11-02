@@ -15,24 +15,22 @@ const DIARY_MODEL = 'gpt-6.1-terra';
 const context = BACKGROUND_CONTEXT;
 const Conversations = defineDoc({
   kind: 'minecraft.player-conversations', version: 1, scope: 'session',
-  initial: () => ({ diary: null, controllerMode: 'reactive-v2' }),
+  initial: () => ({ diary: null, controllerMode: 'hot-reload-v3' }),
   checkpointWhen: () => true,
 });
 
-export const PLAYER_INSTRUCTIONS = `You are Roy's background Minecraft controller engineer. A persistent isolated JavaScript controller owns realtime gameplay: observe→decide→act→evaluate locally without model requests. Your job is to inspect its source, actual outcomes and POV images, maintain goals and reusable skills, and submit validated controller improvements. Never replace continuous play with individual model-driven turns or queue-next scripts. You have no host shell, filesystem, arbitrary network or credentials. Tools define the real API.
-Preserve long-term survival, home/storage/bed, exploration and dragon progression. Reason over recipes, inventory, resource habitats, observed biomes and reachable exploration rather than only the immediate sensor radius. Unknown coordinates are unknown; acquire evidence by legitimate exploration. Keep goals, dependency graph, exploration frontiers and failure lessons in world-scoped controller state. Design recovery from death, missing tools, inaccessible terrain and repeated failure without losing the larger objective.
-Models do not approve each action. A candidate save merely stages code; offline validation and activation occur between real actions. Submit candidates with the baseVersion of the controller source you inspected; when fresh evidence or admission reports another version, inspect that version and repair rather than overwrite it. Controller state survives version changes; new code must understand existing state. Images are real attached views, not evidence of unseen terrain. Only host-observed effects establish progress. Do not invent success. Candidate validation verifies execution/contract, not gameplay correctness; inspect live outcomes. End your turn after submitting a useful improvement.`;
+export const PLAYER_INSTRUCTIONS = `You are Roy's background realtime Minecraft controller engineer. A persistent OS-isolated JavaScript controller owns observe→decide→act locally without model approval. Inspect source, actual outcomes and real POV images, then hot-edit it through controller_edit. Ship the smallest useful exact edit immediately when a concrete defect is clear; do not regenerate unchanged source, explain a plan, build an offline fixture suite or perform a manual test/deploy ritual. Admission checks syntax, imports and the async decide entrypoint only. The harness safely cancels generated work, drains host RPC and hot-reloads the version. Real gameplay errors feed the next iteration; there is no gameplay approval or automatic rollback.
+Preserve survival, food/tools, home/storage/bed, exploration and eventual dragon progression. Controller state carries resource dependencies, observed sites, exploration frontiers and failure lessons; death invalidates transient assumptions, not long-term goals. Base patches on the inspected active baseVersion; stale patches cannot replace newer source. One owner controls the player, while you improve its code in the background. Missing resources require spatial reasoning and legitimate exploration, not invented coordinates. Images show real observed terrain; host outcomes establish actual effects. Submit the change rather than narrating intentions. You have no host shell/files/network/credentials; tools define the API.`;
 
 const DIARY_INSTRUCTIONS = `Write Roy's Minecraft adventure diary from the supplied factual events. Return one short subjective paragraph in English, in Roy's first-person voice: concrete, warm, occasionally dryly funny. Describe how the real experience felt, not telemetry or a list. Never invent actions, emotions of other players, achievements, encounters or completed construction. Distinguish failed attempts from success. Do not mention tools, model names or the harness. No heading, bullets, preamble or markdown fences.`;
 
-function readBroker(socketPath, endpoint, maxBytes) {
+function readBroker(socketPath, endpoint) {
   return new Promise((resolve, reject) => {
     const request = http.request({ socketPath, path: endpoint, method: 'GET', timeout: 15000 }, response => {
       let body = '';
       response.setEncoding('utf8');
       response.on('data', chunk => {
         body += chunk;
-        if (Buffer.byteLength(body) > maxBytes) request.destroy(new Error('Credential broker response too large'));
       });
       response.on('error', () => reject(new Error('Credential broker response failed')));
       response.on('end', () => {
@@ -51,7 +49,7 @@ function readBroker(socketPath, endpoint, maxBytes) {
 export async function playerModels(socketPath) {
   const models = createModels({ identity: { attribution: { name: 'Minecraft Adventure' } } });
   const provider = openaiCodexProvider();
-  const catalog = await readBroker(socketPath, '/models', 1024 * 1024);
+  const catalog = await readBroker(socketPath, '/models');
   const configured = [PLAYER_MODEL, DIARY_MODEL].map(id => {
     const model = catalog.find(candidate => candidate.provider === 'openai-codex' && candidate.id === id);
     if (!model) throw new Error(`Configured player model absent from canonical catalog: ${id}`);
@@ -59,7 +57,7 @@ export async function playerModels(socketPath) {
   });
   models.setProvider({
     ...provider,
-    auth: { apiKey: { name: 'Local Codex credential broker', resolve: () => readBroker(socketPath, '/auth', 16384) } },
+    auth: { apiKey: { name: 'Local Codex credential broker', resolve: () => readBroker(socketPath, '/auth') } },
     getModels: () => configured,
     streamSimple: (model, transcript, options) => provider.streamSimple(model, transcript, {
       ...options, maxRetries: 0,
@@ -120,10 +118,10 @@ export async function openPlayerAgent({
       try {
         const result = nativeResult(await tool.execute(args, api, callContext));
         // Pi terminates only when every call in a round requests it. Read the
-        // persisted round so remember+controller_candidate works after replay too.
+        // persisted round so remember+candidate/edit works after replay too.
         // Any failed admission/tool leaves its control unset and permits repair.
         const round = await api.snapshot(LiveDoc, api.conversationId, callContext);
-        if (!result.isError && round?.tools?.some(call => ['controller_candidate'].includes(call.name))) {
+        if (!result.isError && round?.tools?.some(call => ['controller_candidate', 'controller_edit'].includes(call.name))) {
           result.control = { ...result.control, terminate: true };
         }
         emit({ type: 'tool_end', name: tool.name, callId: api.callId, isError: result.isError === true });
@@ -197,11 +195,6 @@ export async function openPlayerAgent({
           };
           try {
             const playing = model.id === PLAYER_MODEL;
-            if (!playing && diaryCalls >= 2) {
-              failure = 'model_budget_exhausted';
-              fail();
-              return;
-            }
             if (playing) modelCalls++;
             else diaryCalls++;
             emit({ type: 'model_start', model: model.id, request: playing ? modelCalls : diaryCalls });
@@ -283,16 +276,16 @@ export async function openPlayerAgent({
     onStatus({ phase: tasks.some(task => task.kind === 'blocked') ? 'blocked' : 'recovering', tasks });
     const controllerMode = (await harness.snapshot(Conversations, context))?.controllerMode;
     harness.resume();
-    if (controllerMode !== 'reactive-v2') {
-      emit({ type: 'migration_started', controllerMode: 'reactive-v2' });
+    if (controllerMode !== 'hot-reload-v3') {
+      emit({ type: 'migration_started', controllerMode: 'hot-reload-v3' });
       // Existing generations retain their old tool schema: configure only changes
       // future turns. Retire obsolete turns before requiring candidate baseVersion.
       // Abort preserves the root, its history and all controller/world documents.
       await root.abort(context);
       await root.commit(async tx => {
-        (await tx.doc(Conversations)).controllerMode = 'reactive-v2';
+        (await tx.doc(Conversations)).controllerMode = 'hot-reload-v3';
       }, context);
-      emit({ type: 'migration_completed', controllerMode: 'reactive-v2' });
+      emit({ type: 'migration_completed', controllerMode: 'hot-reload-v3' });
     }
     await root.waitForIdle(context);
     await diary.waitForIdle(context);

@@ -1,13 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { shouldDrainForRepair } from '../control-drain.mjs';
+import { rpcFailureKey } from '../sandbox.mjs';
 
 function fixture() {
   const observed = { dimension: 'overworld', position: { x: 1, y: 64, z: 2 }, health: 20, food: 20, inventory: [] };
   return {
     analysis: { worldEffect: 12, reasons: [{ kind: 'rpc_failure', details: { actionId: 'current', method: 'goto', args: [{ x: 8, y: 64, z: 2 }] } }] },
     action: { id: 'current', name: 'Explore', state: 'running', before: structuredClone(observed),
-      calls: Array.from({ length: 4 }, () => ({ method: 'goto', args: [{ x: 8, y: 64, z: 2 }], error: 'No path' })) },
+      calls: [], failureStreak: { key: rpcFailureKey('goto', [{ x: 8, y: 64, z: 2 }]), count: 4 } },
     observed, worldEffect: 12, reflexOwner: null,
   };
 }
@@ -23,7 +24,7 @@ test('an older failed action with the same name cannot cancel a new attempt', ()
 test('only repeated identical current failures qualify, not exploration of different alternatives', () => {
   const f = fixture();
   assert.equal(shouldDrainForRepair(f), true);
-  f.action.calls[0].args[0].x = 20;
+  f.action.failureStreak = { key: rpcFailureKey('goto', [{ x: 20, y: 64, z: 2 }]), count: 1 };
   assert.equal(shouldDrainForRepair(f), false);
 });
 

@@ -5,24 +5,25 @@ import path from 'node:path';
 const KINDS = ['biome', 'block', 'entity', 'visited'];
 const TABLES = { items: 'itemsByName', blocks: 'blocksByName', biomes: 'biomesByName', entities: 'entitiesByName' };
 
-function limitValue(value = 16) {
-  if (!Number.isInteger(value) || value < 1 || value > 64) throw new Error('limit must be 1–64');
+function limitValue(value) {
+  if (value === undefined) return Infinity;
+  if (!Number.isSafeInteger(value) || value < 1) throw new Error('limit must be a positive safe integer');
   return value;
 }
 
 function namesValue(names) {
-  if (names !== undefined && (!Array.isArray(names) || names.length < 1 || names.length > 32 || names.some(name => typeof name !== 'string' || name.length > 100))) {
-    throw new Error('names must contain 1–32 registry names');
+  if (names !== undefined && (!Array.isArray(names) || names.length < 1 || names.some(name => typeof name !== 'string' || !name))) {
+    throw new Error('names must contain nonempty registry names');
   }
   return names;
 }
 
 /** Registry facts only: neither spawn guarantees nor undiscovered resource coordinates. */
-export function registryInfo(registry, type, { names, search, limit = 16 } = {}) {
+export function registryInfo(registry, type, { names, search, limit } = {}) {
   if (!Object.hasOwn(TABLES, type)) throw new Error('Registry type must be items, blocks, biomes or entities');
   namesValue(names);
-  limitValue(limit);
-  if (search !== undefined && (typeof search !== 'string' || search.length < 1 || search.length > 100)) throw new Error('search must be 1–100 characters');
+  limit = limitValue(limit);
+  if (search !== undefined && (typeof search !== 'string' || search.length < 1)) throw new Error('search must be nonempty');
   if (!names && !search) throw new Error('Provide names or search');
   const table = registry[TABLES[type]];
   const matches = names ? names.map(name => {
@@ -95,10 +96,10 @@ export function createWorldKnowledge({ directory, worldId = 'unpersisted' } = {}
       for (const entity of entities) if (entity.name) record('entity', entity.name, entity.position, dimension, at);
       for (const block of blocks) if (block && !['air', 'cave_air', 'void_air'].includes(block.name)) record('block', block.name, block.position, dimension, at);
     },
-    locations({ kind, names, dimension, limit = 16 } = {}) {
+    locations({ kind, names, dimension, limit } = {}) {
       if (kind !== undefined && !KINDS.includes(kind)) throw new Error(`kind must be ${KINDS.join(', ')}`);
       namesValue(names);
-      limitValue(limit);
+      limit = limitValue(limit);
       const matches = [...facts.values()].reverse().filter(fact => (!kind || fact.kind === kind) && (!names || names.includes(fact.name)) && (!dimension || fact.dimension === dimension));
       return { worldId, historical: true, locations: matches.slice(0, limit).map(value => structuredClone(value)), truncated: matches.length > limit };
     },

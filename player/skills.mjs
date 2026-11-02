@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { validateSkillRequest } from './sandbox.mjs';
 
 function validName(name) {
-  if (typeof name !== 'string' || !/^[a-z][a-z0-9_-]{0,63}$/.test(name)) throw new Error('Skill name must be a lowercase slug (1–64 characters)');
+  if (typeof name !== 'string' || !/^[a-z][a-z0-9_-]*$/.test(name) || Buffer.byteLength(`${name}.json`) > 255) throw new Error('Skill name must be a lowercase slug fitting a filesystem filename');
   return name;
 }
 function count(snapshot, name) {
@@ -35,7 +35,7 @@ export class SkillLibrary {
     validName(name);
     if (typeof code !== 'string' || !code) throw new Error('Skill source must be a nonempty string');
     validateSkillRequest(code, { name, worldId: 'skill-library' });
-    if (typeof description !== 'string' || !description || description.length > 2048) throw new Error('Skill description must contain 1–2048 characters');
+    if (typeof description !== 'string' || !description) throw new Error('Skill description must be a nonempty string');
     const hash = createHash('sha256').update(code).digest('hex');
     let previous;
     try { previous = this.get(name); } catch (error) { if (error.code !== 'ENOENT') throw error; }
@@ -45,7 +45,7 @@ export class SkillLibrary {
   }
 
   list() {
-    return readdirSync(this.directory).filter(file => /^[a-z][a-z0-9_-]{0,63}\.json$/.test(file)).sort().map(file => {
+    return readdirSync(this.directory).filter(file => /^[a-z][a-z0-9_-]*\.json$/.test(file)).sort().map(file => {
       const { name, description, hash, verification } = this.get(file.slice(0, -5));
       return { name, description, hash, verifiedWorlds: [...new Set(verification.map(entry => entry.worldId))] };
     });
@@ -128,7 +128,7 @@ export class SkillLibrary {
     }
     if (!conditions || !changed) throw new Error('Verification requires explicit postconditions and relevant observed progress');
     const evidence = { worldId, actionId: action.id, sourceHash: skill.hash, verifiedAt: new Date().toISOString(), checks };
-    skill.verification = [...skill.verification.filter(entry => entry.actionId !== action.id), evidence].slice(-32);
+    skill.verification = [...skill.verification.filter(entry => entry.actionId !== action.id), evidence];
     this.write(skill);
     return evidence;
   }

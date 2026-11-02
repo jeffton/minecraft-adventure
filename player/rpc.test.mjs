@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { createMinecraftRpc } from './rpc.mjs';
 
 class Vec3 {
@@ -58,6 +59,23 @@ test('waitForIdle waits for cancelled inventory RPC server acknowledgement, not 
   await rejected;
   await barrier;
   assert.equal(idle, true);
+  assert.equal((await rpc.call('observe')).health, 20);
+});
+
+test('long tick waits have no fixed tick quota and cancellation drains without leaving listeners', async () => {
+  const { bot, rpc } = fixture();
+  const events = new EventEmitter();
+  bot.on = events.on.bind(events);
+  bot.removeListener = events.removeListener.bind(events);
+  const completed = rpc.call('waitTicks', [250]);
+  for (let tick = 0; tick < 250; tick++) events.emit('physicsTick');
+  assert.equal((await completed).health, 20);
+  const pending = rpc.call('waitTicks', [1_000_000]);
+  const rejected = assert.rejects(pending, /cancelled/);
+  rpc.cancel();
+  await rejected;
+  await rpc.waitForIdle();
+  assert.equal(events.listenerCount('physicsTick'), 0);
   assert.equal((await rpc.call('observe')).health, 20);
 });
 

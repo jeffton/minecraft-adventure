@@ -8,7 +8,7 @@ const action = fields => ({ name: 'scout', state: 'completed', startedAt: '2026-
 test('resource-free travel and active waiting do not masquerade as material progress', () => {
   const history = new ProgressHistory();
   history.completed(action({}));
-  history.completed(action({ name: 'wait', after: snapshot(0, 20), callCount: 2, calls: [{ method: 'observe' }, { method: 'waitTicks' }] }));
+  history.completed(action({ name: 'wait', after: snapshot(0, 20), callCount: 2, calls: [], waitingOnly: true }));
   const result = history.observation();
   assert.equal(result.lastMaterialProgressAt, null);
   assert.equal(result.actions[0].displacement, 30);

@@ -2,7 +2,7 @@ import { createServer } from 'node:net';
 import { spawn, execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { readFrames, sendFrame } from './sandbox-protocol.mjs';
+import { MAX_FRAME_BYTES, readFrames, sendFrame } from './sandbox-protocol.mjs';
 
 export function sandboxCommand(root, unit, timeoutMs) {
   return [
@@ -37,7 +37,6 @@ export function createSandboxBroker({ root, timeoutMs = 120_000, onEvent = () =>
     let completed = false;
     let resultMessage;
     let childClosed = false;
-    let frames = 0;
     const stop = () => {
       if (stopped) return;
       stopped = true;
@@ -68,8 +67,8 @@ export function createSandboxBroker({ root, timeoutMs = 120_000, onEvent = () =>
       if (message.type === 'start' && !started) {
         if (busy) throw new Error('Sandbox already has an active action');
         if (typeof message.code !== 'string') throw new Error('Skill code must be a string');
-        if (typeof message.worldId !== 'string' || !message.worldId || message.worldId.length > 128) {
-          throw new Error('A worldId of at most 128 characters is required');
+        if (typeof message.worldId !== 'string' || !message.worldId) {
+          throw new Error('A worldId is required');
         }
         started = true;
         busy = true;
@@ -80,7 +79,14 @@ export function createSandboxBroker({ root, timeoutMs = 120_000, onEvent = () =>
         });
         timer = setTimeout(() => fail(new Error('Skill execution deadline exceeded')), timeoutMs + 3000);
         let stderr = '';
-        child.stderr.on('data', data => { stderr = (stderr + data.toString()).slice(-4096); });
+        child.stderr.on('data', data => {
+          if (stopped) return;
+          if (Buffer.byteLength(stderr) + data.length > MAX_FRAME_BYTES) {
+            fail(new Error('Sandbox stderr exceeds the 1 MiB transport boundary'));
+            return;
+          }
+          stderr += data.toString();
+        });
         child.on('error', fail);
         child.stdin.on('error', error => {
           if (!completed && !stopped) fail(error);
@@ -107,7 +113,6 @@ export function createSandboxBroker({ root, timeoutMs = 120_000, onEvent = () =>
         });
         readFrames(child.stdout, response => {
           if (stopped) return;
-          if (++frames > 2048) throw new Error('Skill exceeded RPC/output frame budget');
           if (completed) throw new Error('Output after skill result');
           if (response.type === 'rpc') {
             if (rpcPending !== undefined) throw new Error('Only one Minecraft RPC may be active');

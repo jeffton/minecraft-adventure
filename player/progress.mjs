@@ -28,10 +28,8 @@ export class ProgressHistory {
       durationMs: Date.parse(action.completedAt) - Date.parse(action.startedAt),
       error: action.error?.split('\n')[0], effects, displacement: Math.round(travel),
       // A running wait is not productive work. Keep its identity distinct from idle latency.
-      waitingOnly: action.callCount === action.calls.length && action.calls.length > 0 &&
-        action.calls.every(call => ['observe', 'waitTicks', 'blockAt'].includes(call.method)),
+      waitingOnly: action.callCount > 0 && action.waitingOnly,
     });
-    this.state.actions = this.state.actions.slice(-12);
   }
 
   observation(now = Date.now()) {

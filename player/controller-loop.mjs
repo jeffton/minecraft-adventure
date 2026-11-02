@@ -13,7 +13,16 @@ export class ControllerLoop {
   stage(record) {
     this.pending.push(record.version);
     this.nextAt = 0;
-    return { version: record.version, status: 'pending_validation' };
+    return { version: record.version, status: 'pending_activation' };
+  }
+
+  /** Swap admitted source at the first fully drained boundary, not an action deadline. */
+  async hotReload(record, interrupt) {
+    this.stage(record);
+    await interrupt('Controller hot reload');
+    await this.tick();
+    const { status, error } = this.controller.inspect(record.version);
+    return { version: record.version, status, ...(error ? { error } : {}) };
   }
 
   invalidate(reason) {
@@ -36,13 +45,12 @@ export class ControllerLoop {
       const version = this.pending.shift();
       if (version) {
         try {
-          const stored = this.controller.inspect(version);
-          const candidate = stored.status === 'validated' ? stored : await this.controller.validate(version);
-          if (candidate.status !== 'validated') {
-            this.onEvent('controller_error', 'Controller candidate rejected.', { version, error: candidate.error });
+          const candidate = this.controller.inspect(version);
+          if (candidate.status !== 'admitted') {
+            this.onEvent('controller_error', 'Controller source was not admitted.', { version, error: candidate.error });
           } else if (epoch === this.epoch && this.available()) {
             await this.controller.activate(version);
-            this.onEvent('controller_activated', 'Activated validated controller between actions.', { version });
+            this.onEvent('controller_activated', 'Hot-reloaded compiled controller after control drain.', { version });
           } else {
             this.pending.unshift(version);
             return;

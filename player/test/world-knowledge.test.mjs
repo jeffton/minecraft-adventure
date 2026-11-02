@@ -23,9 +23,13 @@ function fixture(knowledge = createWorldKnowledge({ worldId: 'test-world' })) {
       if (!loaded.has(`${Math.floor(p.x)},${Math.floor(p.y)},${Math.floor(p.z)}`)) return null;
       return { name: 'grass_block', type: registry.blocksByName.grass_block.id, position: p, biome: registry.biomesByName.plains };
     },
-    findBlocks: () => [new Vec3(200, 64, 0)],
+    world: {
+      getColumns: () => [{ chunkX: 12, chunkZ: 0, column }],
+      getColumn: () => column,
+    },
     recipesAll: id => Recipe.find(id, null)
   };
+  const column = { minY: 64, sections: [{ palette: [registry.blocksByName.grass_block.minStateId] }], getBlockType: p => p.x === 8 && p.y === 64 && p.z === 0 ? registry.blocksByName.grass_block.id : 0 };
   return { bot, loaded, rpc: createMinecraftRpc(bot, { Vec3, goals: {}, knowledge }) };
 }
 
@@ -55,7 +59,9 @@ test('registry searches are bounded, explicit and cannot traverse prototype prop
   assert.throws(() => registryInfo(registry, '__proto__', { names: ['plains'] }), /Registry type/);
   assert.throws(() => registryInfo(registry, 'items', { names: ['__proto__'] }), /Unknown/);
   assert.throws(() => registryInfo(registry, 'items', {}), /Provide/);
-  assert.throws(() => registryInfo(registry, 'items', { search: 'ore', limit: 1000 }), /limit/);
+  assert.ok(registryInfo(registry, 'items', { search: 'ore', limit: 1000 }).items.length > 0);
+  assert.equal(registryInfo(registry, 'items', { search: 'ore', limit: 1000 }).truncated, false);
+  assert.throws(() => registryInfo(registry, 'items', { search: 'ore', limit: -1 }), /limit/);
 });
 
 test('loaded-only biome lookup records historical facts without revealing unknown terrain', async () => {

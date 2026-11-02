@@ -1,11 +1,12 @@
 import { skillEvidence } from './observations.mjs';
+import { rpcFailureKey } from './sandbox.mjs';
 
 /** Only repeated identical RPC failures in THIS stationary attempt justify patch interruption. */
 export function shouldDrainForRepair({ analysis, action, observed, worldEffect, reflexOwner }) {
   if (!analysis || action?.state !== 'running' || reflexOwner || worldEffect !== analysis.worldEffect || !action.before) return false;
   const demonstratedFailure = analysis.reasons.some(reason => reason.kind === 'rpc_failure' &&
-    reason.details.actionId === action.id && action.calls.filter(call => call.error &&
-      call.method === reason.details.method && JSON.stringify(call.args) === JSON.stringify(reason.details.args)).length >= 4);
+    reason.details.actionId === action.id && action.failureStreak?.key === rpcFailureKey(reason.details.method, reason.details.args) &&
+    action.failureStreak.count >= 4);
   if (!demonstratedFailure) return false;
   const effects = skillEvidence(action.before, observed);
   const displacement = Math.hypot(...['x', 'y', 'z'].map(axis => observed.position[axis] - action.before.position[axis]));

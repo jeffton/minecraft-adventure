@@ -1,15 +1,16 @@
 import { randomUUID } from 'node:crypto';
+import { findLoadedBlocks } from './world-search.mjs';
 import { createWorldKnowledge, loadedBiome, registryInfo } from './world-knowledge.mjs';
 
 export const RPC_DESCRIPTION = `Skills are async JavaScript function bodies with mc.call(method,...args), mc.observe(), input.
 Await every call. Returned values are observations, not proof that your whole objective succeeded.
 observe() → health, food, oxygen, position, dimension, inventory, nearby entities/blocks.
-blockAt({x,y,z}), findBlocks({names:[name],radius:32,count:16}), itemInfo(name), blockInfo(name).
-registryInfo(type,{names:[name],search,limit:16}) returns {type,items:[entries],truncated}; queries real items/blocks/biomes/entities registry (provide names or search; max32 names/max64 results). Block entries include named drops and harvest tools; biome entries include category/temperature/dimension, NOT mob spawn guarantees.
+blockAt({x,y,z}), findBlocks({names:[name],radius,count}) searches currently loaded columns, with optional caller-selected distance/count filters, itemInfo(name), blockInfo(name).
+registryInfo(type,{names:[name],search,limit}) returns {type,items:[entries],truncated}; queries real items/blocks/biomes/entities registry (provide names or search; optional limit is caller-selected). Block entries include named drops and harvest tools; biome entries include category/temperature/dimension, NOT mob spawn guarantees.
 biomeAt({x,y,z}) returns biome only for a loaded block, or null if biome data is absent. observe() includes current biome.
-knownLocations({kind:'biome'|'block'|'entity'|'visited',names:[name],dimension,limit:16}) returns {worldId,historical:true,locations:[{kind,name,position,dimension,observedAt}],truncated}, NOT an array. These are world-scoped historical observations, not live guarantees. Query visited/biome samples to guide exploration beyond the current radius; unobserved coordinates are never supplied. Entities may move and resources may be gone; verify on arrival.
+knownLocations({kind:'biome'|'block'|'entity'|'visited',names:[name],dimension,limit}) returns {worldId,historical:true,locations:[{kind,name,position,dimension,observedAt}],truncated}, NOT an array. These are world-scoped historical observations, not live guarantees. Query visited/biome samples to guide exploration beyond the current radius; unobserved coordinates are never supplied. Entities may move and resources may be gone; verify on arrival.
 recipesAll(itemName,table=true) shows named ingredients including unmet requirements; recipesFor(itemName,minOutputCount=1,tablePosition=null) returns indexed currently available recipes; craft(itemName,repetitions=1,tablePosition=null,recipeIndex=0) applies a recipe N times (one plank recipe yields four planks).
-goto({x,y,z},range=1,{canDig:false,allow1by1towers:false,allowSprinting:false}), follow(entityId,range=2), lookAt({x,y,z}), control(state,boolean), clearControls(), waitTicks(ticks<=200).
+goto({x,y,z},range=1,{canDig:false,allow1by1towers:false,allowSprinting:false}), follow(entityId,range=2), lookAt({x,y,z}), control(state,boolean), clearControls(), waitTicks(ticks) (interruptible; the action watchdog still applies).
 Navigation walks without digging, placing or sprinting by default: a failed path is NOT permission to excavate a shelter. goto options explicitly enable digging/towering/sprinting for that call only. Clear a deliberate exit with dig/place rather than asking navigation to tunnel blindly.
 harvest(position) approaches one observed resource block, selects the best available tool, breaks it, and collects nearby item drops using nondestructive movement. Returns actual inventoryDelta and remainingDrops: breaking a block is not collecting its drops. Compose harvest in bounded loops and stop/replan on missing resources or inaccessible drops.
 dig({x,y,z}), placeBlock(referencePosition,{x,y,z} unit face), activateBlock(position), activateEntity(id), attack(id), equip(itemName,destination='hand'), unequip(destination), consume(), activateItem(offhand=false), deactivateItem(), toss(itemName,count).
@@ -22,13 +23,13 @@ function number(value, name, min = -30_000_000, max = 30_000_000) {
   if (!Number.isFinite(value) || value < min || value > max) throw new Error(`Invalid ${name}`);
   return value;
 }
-function integer(value, name, min = 0, max = 1_000_000) {
+function integer(value, name, min = 0, max = Number.MAX_SAFE_INTEGER) {
   number(value, name, min, max);
   if (!Number.isSafeInteger(value)) throw new Error(`Invalid integer ${name}`);
   return value;
 }
 function position(value) {
-  return { x: number(value?.x, 'x'), y: number(value?.y, 'y', -2048, 2048), z: number(value?.z, 'z') };
+  return { x: number(value?.x, 'x'), y: number(value?.y, 'y'), z: number(value?.z, 'z') };
 }
 function packPosition(value) {
   return value ? { x: value.x, y: value.y, z: value.z } : null;
@@ -48,6 +49,7 @@ export function createMinecraftRpc(bot, { Vec3, goals, onEvent = () => {}, knowl
   let window;
   let windowHandle;
   let windowKind;
+  let cancelWait;
   const vector = value => { const p = position(value); return new Vec3(p.x, p.y, p.z); };
   const block = value => {
     const found = bot.blockAt(vector(value));
@@ -112,6 +114,7 @@ export function createMinecraftRpc(bot, { Vec3, goals, onEvent = () => {}, knowl
 
   function cancel() {
     epoch++;
+    cancelWait?.();
     bot.pathfinder?.setGoal(null);
     bot.stopDigging();
     bot.clearControlStates();
@@ -169,14 +172,12 @@ export function createMinecraftRpc(bot, { Vec3, goals, onEvent = () => {}, knowl
       return biome;
     },
     knownLocations: query => knowledge.locations(query),
-    findBlocks({ names, radius = 32, count = 16 }) {
-      if (!Array.isArray(names) || names.length < 1 || names.length > 32) throw new Error('Provide 1–32 block names');
-      const ids = names.map(name => {
-        if (typeof name !== 'string' || !Object.hasOwn(bot.registry.blocksByName, name)) throw new Error(`Unknown block: ${name}`);
-        return bot.registry.blocksByName[name].id;
+    async findBlocks({ names, radius, count }) {
+      if (!Array.isArray(names) || !names.length) throw new Error('Provide block names');
+      const started = epoch;
+      const found = await findLoadedBlocks(bot, Vec3, names, { radius, count, pack: p => packBlock(bot.blockAt(p)) }, () => {
+        if (started !== epoch) throw new Error('Block search was cancelled');
       });
-      const found = bot.findBlocks({ matching: ids, maxDistance: number(radius, 'radius', 1, 64), count: integer(count, 'count', 1, 64) })
-        .map(p => packBlock(bot.blockAt(p)));
       knowledge.observe({ dimension: bot.game?.dimension, blocks: found });
       return found;
     },
@@ -191,7 +192,7 @@ export function createMinecraftRpc(bot, { Vec3, goals, onEvent = () => {}, knowl
       return { id: value.id, name: value.name, hardness: value.hardness, diggable: value.diggable, harvestTools: value.harvestTools, drops: value.drops };
     },
     recipesFor(name, count = 1, table = null) {
-      return bot.recipesFor(itemType(name), null, integer(count, 'count', 1, 64), table ? block(table) : null)
+      return bot.recipesFor(itemType(name), null, integer(count, 'count', 1), table ? block(table) : null)
         .map(packRecipe);
     },
     recipesAll(name, table = true) {
@@ -199,7 +200,7 @@ export function createMinecraftRpc(bot, { Vec3, goals, onEvent = () => {}, knowl
       return bot.recipesAll(itemType(name), null, table).map(packRecipe);
     },
     async craft(name, count = 1, table = null, recipeIndex = 0) {
-      integer(count, 'count', 1, 64);
+      integer(count, 'count', 1);
       const tableBlock = table ? block(table) : null;
       const recipes = bot.recipesFor(itemType(name), null, 1, tableBlock);
       const recipe = recipes[integer(recipeIndex, 'recipe index', 0, Math.max(0, recipes.length - 1))];
@@ -214,10 +215,10 @@ export function createMinecraftRpc(bot, { Vec3, goals, onEvent = () => {}, knowl
     },
     async goto(p, range = 1, options = {}) {
       const goal = position(p);
-      return navigate(new goals.GoalNear(goal.x, goal.y, goal.z, number(range, 'range', 0, 16)), options);
+      return navigate(new goals.GoalNear(goal.x, goal.y, goal.z, number(range, 'range', 0, Infinity)), options);
     },
     async follow(id, range = 2) {
-      return navigate(new goals.GoalFollow(entity(id), number(range, 'range', 1, 16)));
+      return navigate(new goals.GoalFollow(entity(id), number(range, 'range', 0, Infinity)));
     },
     async harvest(p) {
       const started = epoch;
@@ -273,7 +274,22 @@ export function createMinecraftRpc(bot, { Vec3, goals, onEvent = () => {}, knowl
       return { state, value };
     },
     clearControls() { bot.clearControlStates(); return null; },
-    async waitTicks(ticks) { await bot.waitForTicks(integer(ticks, 'ticks', 1, 200)); return observe(); },
+    async waitTicks(ticks) {
+      integer(ticks, 'ticks', 1);
+      await new Promise((resolve, reject) => {
+        let remaining = ticks;
+        const finish = error => {
+          bot.removeListener('physicsTick', tick);
+          cancelWait = undefined;
+          if (error) reject(error);
+          else resolve();
+        };
+        const tick = () => { if (--remaining === 0) finish(); };
+        cancelWait = () => finish(new Error('Tick wait was cancelled'));
+        bot.on('physicsTick', tick);
+      });
+      return observe();
+    },
     dig: mine,
     async placeBlock(p, face) {
       const direction = position(face);
@@ -303,7 +319,7 @@ export function createMinecraftRpc(bot, { Vec3, goals, onEvent = () => {}, knowl
       bot.activateItem(offhand); return null;
     },
     deactivateItem() { bot.deactivateItem(); return null; },
-    async toss(name, count) { await bot.toss(itemType(name), null, integer(count, 'count', 1, 64)); return observe(); },
+    async toss(name, count) { await bot.toss(itemType(name), null, integer(count, 'count', 1)); return observe(); },
     async openContainer(p) {
       if (window) throw new Error('Close the current container first');
       const started = epoch;
@@ -317,12 +333,12 @@ export function createMinecraftRpc(bot, { Vec3, goals, onEvent = () => {}, knowl
     containerItems(handle) { return containerItems(getWindow(handle, 'container')); },
     async deposit(handle, name, count) {
       const container = getWindow(handle, 'container');
-      await container.deposit(itemType(name), null, integer(count, 'count', 1, 64));
+      await container.deposit(itemType(name), null, integer(count, 'count', 1));
       return { inventory: bot.inventory.items().map(packItem), items: containerItems(container) };
     },
     async withdraw(handle, name, count) {
       const container = getWindow(handle, 'container');
-      await container.withdraw(itemType(name), null, integer(count, 'count', 1, 64));
+      await container.withdraw(itemType(name), null, integer(count, 'count', 1));
       return { inventory: bot.inventory.items().map(packItem), items: containerItems(container) };
     },
     closeContainer(handle) {
@@ -341,12 +357,12 @@ export function createMinecraftRpc(bot, { Vec3, goals, onEvent = () => {}, knowl
     furnaceItems(handle) { return furnaceItems(getWindow(handle, 'furnace')); },
     async furnacePutInput(handle, name, count) {
       const furnace = getWindow(handle, 'furnace');
-      await furnace.putInput(itemType(name), null, integer(count, 'count', 1, 64));
+      await furnace.putInput(itemType(name), null, integer(count, 'count', 1));
       return furnaceItems(furnace);
     },
     async furnacePutFuel(handle, name, count) {
       const furnace = getWindow(handle, 'furnace');
-      await furnace.putFuel(itemType(name), null, integer(count, 'count', 1, 64));
+      await furnace.putFuel(itemType(name), null, integer(count, 'count', 1));
       return furnaceItems(furnace);
     },
     async furnaceTakeInput(handle) { return packItem(await getWindow(handle, 'furnace').takeInput()); },
@@ -371,7 +387,7 @@ export function createMinecraftRpc(bot, { Vec3, goals, onEvent = () => {}, knowl
     },
     async call(method, args = [], { signal } = {}) {
       if (!Object.hasOwn(methods, method)) throw new Error(`Minecraft RPC method is not allowed: ${method}`);
-      if (!Array.isArray(args) || args.length > 4) throw new Error('RPC arguments must be an array of at most four values');
+      if (!Array.isArray(args)) throw new Error('RPC arguments must be an array');
       signal?.throwIfAborted();
       if (busy) throw new Error('A previous Minecraft RPC is still settling; inspect action status before retry');
       busy = true;
@@ -383,8 +399,6 @@ export function createMinecraftRpc(bot, { Vec3, goals, onEvent = () => {}, knowl
         signal?.throwIfAborted();
         if (started !== epoch && method !== 'stop') throw new Error('Minecraft RPC was cancelled');
         const result = value ?? null;
-        // Bound host serialization before it reaches the sandbox protocol.
-        if (Buffer.byteLength(JSON.stringify(result)) > 60_000) throw new Error('Minecraft RPC result exceeds 60 KiB');
         onEvent({ type: 'minecraft-rpc', method, args, result });
         return result;
       } finally {

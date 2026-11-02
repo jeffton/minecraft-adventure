@@ -12,8 +12,7 @@ function fixture() {
   const pipeline = { current: () => current, start: program => { calls.push(['start', program]); current = { id: 'action', name: program.name, state: 'running', settled: false, calls: [] }; } };
   const controller = {
     current: () => active,
-    inspect: () => ({ state: {} }),
-    validate: async version => { calls.push(['validate', version]); return { status: 'validated' }; },
+    inspect: version => version ? { status: 'admitted' } : { state: {} },
     activate: async version => { calls.push(['activate', version]); active = { version }; },
     resetState: async reason => calls.push(['reset', reason]),
     decide: async observation => { calls.push(['decide', observation]); return { state: {}, action: { name: 'Acquire useful supplies', code: 'return await mc.observe();' } }; },
@@ -35,7 +34,7 @@ test('local control keeps selecting after actions without any model or queued su
   assert.ok(f.calls.filter(call => call[0] === 'decide').every(([, obs]) => obs.session === 'session' && obs.worldId === 'fresh'));
 });
 
-test('candidate saved during play cannot validate or activate until action and cancellation drain', async () => {
+test('admitted source cannot activate until action and cancellation drain', async () => {
   const f = fixture();
   f.loop.stage({ version: 'second' });
   f.setCurrent({ state: 'running', settled: false });
@@ -45,7 +44,7 @@ test('candidate saved during play cannot validate or activate until action and c
   assert.equal(f.calls.length, 0);
   f.setCurrent(null);
   await f.loop.tick();
-  assert.deepEqual(f.calls.slice(0, 2), [['validate', 'second'], ['activate', 'second']]);
+  assert.deepEqual(f.calls[0], ['activate', 'second']);
 });
 
 test('death during a decision discards its action and preserves goals with fresh life', async () => {
@@ -70,7 +69,7 @@ test('death during a decision discards its action and preserves goals with fresh
 
 test('failed candidate leaves working controller in charge and idle deadlines do not spin', async () => {
   const f = fixture();
-  f.controller.validate = async () => ({ status: 'failed', error: 'Syntax rejected' });
+  f.controller.inspect = version => version ? { status: 'failed', error: 'Syntax rejected' } : { state: {} };
   f.controller.decide = async () => ({ state: {}, action: null, reason: 'Explicit bounded idle', wakeAfterMs: 5000 });
   f.loop.stage({ version: 'broken' });
   await f.loop.tick();
@@ -81,12 +80,12 @@ test('failed candidate leaves working controller in charge and idle deadlines do
   assert.equal(f.calls.length, count);
 });
 
-test('safety interruption during validation defers promotion; invalidated decision never starts', async () => {
+test('safety interruption before activation defers promotion; invalidated decision never starts', async () => {
   const f = fixture();
-  f.controller.validate = async () => {
+  f.controller.inspect = () => {
     f.context.reflexOwner = 'surfacing';
     f.loop.invalidate('surfacing');
-    return { status: 'validated' };
+    return { status: 'admitted' };
   };
   f.loop.stage({ version: 'second' });
   await f.loop.tick();
@@ -163,13 +162,12 @@ test('oversized thrown error remains a failure but cannot prevent local recovery
   assert.equal(f.calls.filter(call => call[0] === 'start').length, 1);
 });
 
-test('restored validated candidate activates without repeating tests', async () => {
+test('admitted source activates directly without offline decision execution', async () => {
   const f = fixture();
-  f.controller.inspect = version => version ? { status: 'validated' } : { state: {} };
-  f.loop.stage({ version: 'validated-before-restart' });
+  f.controller.validate = () => { throw new Error('Offline validation is not part of hot reload'); };
+  f.loop.stage({ version: 'parsed-source' });
   await f.loop.tick();
-  assert.equal(f.calls.filter(call => call[0] === 'validate').length, 0);
-  assert.deepEqual(f.calls[0], ['activate', 'validated-before-restart']);
+  assert.deepEqual(f.calls[0], ['activate', 'parsed-source']);
 });
 
 test('a newly staged patch wakes a locally idle controller immediately', async () => {
@@ -177,8 +175,7 @@ test('a newly staged patch wakes a locally idle controller immediately', async (
   f.loop.nextAt = Date.now() + 60000;
   f.loop.stage({ version: 'urgent-repair' });
   await f.loop.tick();
-  assert.deepEqual(f.calls[0], ['validate', 'urgent-repair']);
-  assert.deepEqual(f.calls[1], ['activate', 'urgent-repair']);
+  assert.deepEqual(f.calls[0], ['activate', 'urgent-repair']);
 });
 
 test('a failed background open can retry once while local play continues, without concurrent openers', async () => {
@@ -228,8 +225,78 @@ test('a settled sandbox cannot admit a patch or successor while host RPC and tra
   await interruption;
   await f.loop.tick();
   assert.equal(cleaned, true);
-  assert.deepEqual(f.calls.slice(0, 2), [['validate', 'after-full-drain'], ['activate', 'after-full-drain']]);
+  assert.deepEqual(f.calls[0], ['activate', 'after-full-drain']);
   assert.equal(drain.active, false);
+});
+
+test('hot reload interrupts a running action and waits for host control drain, not its deadline', async () => {
+  const f = fixture();
+  const drain = new ControlDrain();
+  const context = f.loop.context;
+  f.loop.context = () => ({ ...context(), draining: drain.active });
+  const records = { replacement: { status: 'admitted' } };
+  f.controller.inspect = version => version ? records[version] : { state: {} };
+  const activate = f.controller.activate;
+  f.controller.activate = async version => {
+    assert.equal(drain.active, false);
+    assert.equal(f.loop.pipeline.current()?.settled, true);
+    await activate(version);
+    records[version].status = 'active';
+  };
+  f.setCurrent({ id: 'long-action', state: 'running', settled: false });
+  let releaseRpc;
+  const rpcIdle = new Promise(resolve => { releaseRpc = resolve; });
+  const reloading = f.loop.hotReload({ version: 'replacement' }, async reason => {
+    assert.equal(reason, 'Controller hot reload');
+    await drain.run(async () => {
+      f.loop.invalidate(reason);
+      f.setCurrent({ id: 'long-action', state: 'cancelled', settled: true, calls: [] });
+      await rpcIdle;
+    });
+  });
+  await f.loop.tick();
+  assert.deepEqual(f.calls, []);
+  assert.equal(drain.active, true);
+  releaseRpc();
+  const result = await reloading;
+  assert.deepEqual(result, { version: 'replacement', status: 'active' });
+  assert.deepEqual(f.calls[0], ['activate', 'replacement']);
+  assert.equal(f.calls.filter(call => call[0] === 'start').length, 1);
+  assert.equal(f.loop.inspect().epoch, 1);
+});
+
+test('hot reload wakes idle code immediately and reports failed admission without replacing it', async () => {
+  const f = fixture();
+  f.loop.nextAt = Date.now() + 120000;
+  const rejected = { status: 'failed', error: 'Invalid module export' };
+  f.controller.inspect = version => version ? rejected : { state: {} };
+  const result = await f.loop.hotReload({ version: 'broken' }, async reason => f.loop.invalidate(reason));
+  assert.deepEqual(result, { version: 'broken', ...rejected });
+  assert.equal(f.controller.current().version, 'first');
+  assert.equal(f.calls.some(call => call[0] === 'activate'), false);
+  assert.equal(f.calls.filter(call => call[0] === 'start').length, 1);
+  assert.ok(f.calls.some(call => call[0] === 'event' && call[1] === 'controller_error'));
+});
+
+test('hot reload during an in-flight decision discards its stale action before the new code runs', async () => {
+  const f = fixture();
+  let finishDecision;
+  f.controller.decide = () => new Promise(resolve => { finishDecision = resolve; });
+  const deciding = f.loop.tick();
+  await Promise.resolve();
+  let status = 'admitted';
+  f.controller.inspect = version => version ? { status } : { state: {} };
+  const result = await f.loop.hotReload({ version: 'replacement' }, async reason => f.loop.invalidate(reason));
+  assert.deepEqual(result, { version: 'replacement', status: 'admitted' });
+  finishDecision({ action: { name: 'Obsolete action', code: 'return 1;' } });
+  await deciding;
+  assert.equal(f.calls.filter(call => call[0] === 'start').length, 0);
+  const activate = f.controller.activate;
+  f.controller.activate = async version => { await activate(version); status = 'active'; };
+  f.controller.decide = async () => ({ action: { name: 'Fresh action', code: 'return 2;' } });
+  await f.loop.tick();
+  assert.equal(status, 'active');
+  assert.deepEqual(f.calls.filter(call => call[0] === 'start').map(call => call[1].name), ['Fresh action']);
 });
 
 test('failed or overlapping interruption cleanup releases only its own drain lease', async () => {

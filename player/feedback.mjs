@@ -29,11 +29,11 @@ export function actionFeedback(action) {
   return {
     id: action.id, name: action.name, state: action.state, settled: action.settled,
     startedAt: action.startedAt, completedAt: action.completedAt,
-    error: action.error?.split('\n')[0], stopError: action.stopError,
+    error: action.error, stopError: action.stopError,
     before: playerFacts(action.before), after: playerFacts(action.after),
     effects: action.before && action.after ? skillEvidence(action.before, action.after) : undefined,
-    totalCalls: action.callCount,
-    calls: action.calls.slice(-8).map(({ method, args, error, completedAt }) => ({ method, args, error: error?.split('\n')[0], completedAt })),
+    totalCalls: action.callCount, history: action.history, waitingOnly: action.waitingOnly, failureStreak: action.failureStreak,
+    calls: action.calls.map(({ method, args, error, completedAt }) => ({ method, args, error, completedAt })),
     untrustedValue: valueFeedback(action.value),
   };
 }

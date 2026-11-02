@@ -108,11 +108,9 @@ export async function auditController({ sourceFile, stateFile, goalKey = 'goal',
       };
       const state = { ...structuredClone(productionState), [goalKey]: scenario.goal };
       const controller = await new PersistentController({ directory, worldId, socketPath }).open();
-      const candidate = await controller.candidate({ name: 'Actual production source: held-out audit', code: source, fixtures: [{ observation, state }, { observation: { ...observation, entities: [] }, state }] });
-      const validation = await controller.validate(candidate.version);
-      const record = { id: scenario.id, requestedGoal: scenario.goal, observation, initialState: state, validation, decisions: [] };
+      const candidate = await controller.candidate({ name: 'Actual production source: held-out audit', code: source });
+      const record = { id: scenario.id, requestedGoal: scenario.goal, observation, initialState: state, admission: candidate.status, decisions: [] };
       evidence.scenarios.push(record);
-      if (validation.status !== 'validated') continue;
       await controller.activate(candidate.version);
       // Isolated clone only; production storage is never opened for writing.
       controller.data.state = structuredClone(state);
