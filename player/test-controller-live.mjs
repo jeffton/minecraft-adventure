@@ -93,12 +93,12 @@ try {
   const source = await readFile(fileURLToPath(new URL('./test/fixtures/controller-survival.mjs', import.meta.url)), 'utf8');
   const fixtures = [{ observation: observe() }, { observation: observe(), state: { generation: 5 }, lastResult: { state: 'failed', error: 'Observed path failure' } }];
   const first = await controller.candidate({ name: 'AI-authored survival revision one', code: source, fixtures });
-  const second = await controller.candidate({ name: 'AI-authored survival revision two', code: source.replace("revision: 'one'", "revision: 'two'").replace('Establish supplies and a crafting foothold', 'Expand retained materials and crafting supplies'), fixtures });
-  for (const version of [first.version, second.version]) {
-    const validation = await controller.validate(version);
-    assert.equal(validation.status, 'validated', validation.error);
-  }
+  const firstValidation = await controller.validate(first.version);
+  assert.equal(firstValidation.status, 'validated', firstValidation.error);
   await controller.activate(first.version);
+  const second = await controller.candidate({ name: 'AI-authored survival revision two', baseVersion: first.version, code: source.replace("revision: 'one'", "revision: 'two'").replace('Establish supplies and a crafting foothold', 'Expand retained materials and crafting supplies'), fixtures });
+  const secondValidation = await controller.validate(second.version);
+  assert.equal(secondValidation.status, 'validated', secondValidation.error);
   const started = Date.now();
   const initial = observe();
   const samples = [{ elapsedMs: 0, observation: initial }];

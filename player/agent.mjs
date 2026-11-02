@@ -23,7 +23,7 @@ const Conversations = defineDoc({
 
 export const PLAYER_INSTRUCTIONS = `You are Roy's background Minecraft controller engineer. A persistent isolated JavaScript controller owns realtime gameplay: observe→decide→act→evaluate locally without model requests. Your job is to inspect its source, actual outcomes and POV images, maintain goals and reusable skills, and submit validated controller improvements. Never replace continuous play with individual model-driven turns or queue-next scripts. You have no host shell, filesystem, arbitrary network or credentials. Tools define the real API.
 Preserve long-term survival, home/storage/bed, exploration and dragon progression. Reason over recipes, inventory, resource habitats, observed biomes and reachable exploration rather than only the immediate sensor radius. Unknown coordinates are unknown; acquire evidence by legitimate exploration. Keep goals, dependency graph, exploration frontiers and failure lessons in world-scoped controller state. Design recovery from death, missing tools, inaccessible terrain and repeated failure without losing the larger objective.
-Models do not approve each action. A candidate save merely stages code; offline validation and activation occur between real actions. Controller state survives version changes; new code must understand existing state. Images are real attached views, not evidence of unseen terrain. Only host-observed effects establish progress. Do not invent success. Candidate validation verifies execution/contract, not gameplay correctness; inspect live outcomes. End your turn after submitting a useful improvement.`;
+Models do not approve each action. A candidate save merely stages code; offline validation and activation occur between real actions. Submit candidates with the baseVersion of the controller source you inspected; when fresh evidence or admission reports another version, inspect that version and repair rather than overwrite it. Controller state survives version changes; new code must understand existing state. Images are real attached views, not evidence of unseen terrain. Only host-observed effects establish progress. Do not invent success. Candidate validation verifies execution/contract, not gameplay correctness; inspect live outcomes. End your turn after submitting a useful improvement.`;
 
 const DIARY_INSTRUCTIONS = `Write Roy's Minecraft adventure diary from the supplied factual events. Return one short subjective paragraph in English, in Roy's first-person voice: concrete, warm, occasionally dryly funny. Describe how the real experience felt, not telemetry or a list. Never invent actions, emotions of other players, achievements, encounters or completed construction. Distinguish failed attempts from success. Do not mention tools, model names or the harness. No heading, bullets, preamble or markdown fences.`;
 
@@ -82,8 +82,10 @@ function nativeResult(value) {
  * tools: plain {name, description, parameters: JSONSchema, execute(args, api, context)}[]
  * or native Pi tool definitions. Plain results become tool text; native results pass through.
  * step() does not own the game loop: action handles/programs keep running during model calls.
- * getFeedback(): null | {key, needsAction, observation, images?}; keys identify
- * state changes, not clock ticks. Fresh idle feedback can continue a native run.
+ * getFeedback({phase: 'beforeRequest' | 'onYield'}):
+ * null | {key, needsEngineering, baseVersion, reasons, observation, images?}.
+ * Existing requests accept refreshed snapshots with the same semantic key;
+ * only a new key at onYield can request another model round.
  */
 export async function openPlayerAgent({
   stateDir, worldId, socketPath, tools, instructions = '', onEvent = () => {}, models, getFeedback,
@@ -118,7 +120,7 @@ export async function openPlayerAgent({
       try {
         const result = nativeResult(await tool.execute(args, api, callContext));
         // Pi terminates only when every call in a round requests it. Read the
-        // persisted round so remember+execute works too, including after replay.
+        // persisted round so remember+controller_candidate works after replay too.
         // Any failed admission/tool leaves its control unset and permits repair.
         const round = await api.snapshot(LiveDoc, api.conversationId, callContext);
         if (!result.isError && round?.tools?.some(call => ['controller_candidate'].includes(call.name))) {
@@ -132,21 +134,41 @@ export async function openPlayerAgent({
       }
     },
   }));
+  async function readFreshFeedback(phase) {
+    const feedback = await getFeedback?.({ phase });
+    if (!feedback?.needsEngineering || (phase === 'onYield' && feedback.key === lastFeedbackKey)) return;
+    lastFeedbackKey = feedback.key;
+    return feedback;
+  }
+  function feedbackContent(feedback) {
+    const text = JSON.stringify({
+      worldId, observation: feedback.observation,
+      feedback: {
+        key: feedback.key, baseVersion: feedback.baseVersion, reasons: feedback.reasons,
+        instruction: 'Inspect this fresh controller evidence. Keep local play running; submit improvements against this baseVersion, not an obsolete version.',
+      },
+    });
+    return feedback.images?.length ? [{ type: 'text', text }, ...feedback.images] : text;
+  }
   const player = defineExtension({
     name: 'minecraft.player', tools: registeredTools,
     hooks: [hook(GenerationTask, {
+      async beforeRequest(request) {
+        const feedback = await readFreshFeedback('beforeRequest');
+        if (!feedback) return;
+        emit({ type: 'feedback_injected', key: feedback.key, baseVersion: feedback.baseVersion });
+        // Request-only evidence must be sampled again: reusing a cached snapshot
+        // after newer tool results would put obsolete state last in the context.
+        return {
+          messages: [...request.messages, { role: 'user', content: feedbackContent(feedback), timestamp: Date.now() }],
+        };
+      },
       async onYield() {
-        if (!getFeedback || modelCalls >= MAX_MODEL_CALLS - 1 || toolCalls >= MAX_TOOL_CALLS - 1) return;
-        const feedback = await getFeedback();
-        if (!feedback?.needsAction || feedback.key === lastFeedbackKey ||
-            feedback.observation.action?.state === 'running' || feedback.observation.reflexOwner) return;
-        lastFeedbackKey = feedback.key;
-        const text = JSON.stringify({
-          worldId, observation: feedback.observation,
-          feedback: { key: feedback.key, instruction: 'Use this fresh server-backed state to start the next useful action.' },
-        });
-        emit({ type: 'feedback_continue', key: feedback.key });
-        return { continue: feedback.images?.length ? [{ type: 'text', text }, ...feedback.images] : text };
+        if (modelCalls >= MAX_MODEL_CALLS - 1 || toolCalls >= MAX_TOOL_CALLS - 1) return;
+        const feedback = await readFreshFeedback('onYield');
+        if (!feedback) return;
+        emit({ type: 'feedback_continue', key: feedback.key, baseVersion: feedback.baseVersion });
+        return { continue: feedbackContent(feedback) };
       },
     })],
   });
@@ -300,17 +322,17 @@ export async function openPlayerAgent({
     }
 
     return {
-      async step(observation, { images = [] } = {}) {
+      async step(observation, { images = [], feedbackKey } = {}) {
         if (closed) throw new Error('Player agent is closed');
         if (busy) throw new Error('Player agent step already running');
         busy = true;
         modelCalls = 0;
         toolCalls = 0;
-        lastFeedbackKey = undefined;
+        lastFeedbackKey = feedbackKey;
         try {
           const text = JSON.stringify({ worldId, observation });
           const result = await run(root, images.length ? [{ type: 'text', text }, ...images] : text, PLAYER_MODEL);
-          return { ...result, modelCalls, toolCalls };
+          return { ...result, modelCalls, toolCalls, feedbackKey: lastFeedbackKey };
         } finally { busy = false; }
       },
       async narrate(facts) {

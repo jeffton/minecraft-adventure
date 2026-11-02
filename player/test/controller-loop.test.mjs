@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ControllerLoop, budgetControllerInput } from '../controller-loop.mjs';
 import { BackgroundAgent } from '../background-agent.mjs';
+import { ControlDrain } from '../control-drain.mjs';
 
 function fixture() {
   const calls = [];
@@ -174,4 +175,75 @@ test('restored validated candidate activates without repeating tests', async () 
   await f.loop.tick();
   assert.equal(f.calls.filter(call => call[0] === 'validate').length, 0);
   assert.deepEqual(f.calls[0], ['activate', 'validated-before-restart']);
+});
+
+test('a newly staged patch wakes a locally idle controller immediately', async () => {
+  const f = fixture();
+  f.loop.nextAt = Date.now() + 60000;
+  f.loop.stage({ version: 'urgent-repair' });
+  await f.loop.tick();
+  assert.deepEqual(f.calls[0], ['validate', 'urgent-repair']);
+  assert.deepEqual(f.calls[1], ['activate', 'urgent-repair']);
+});
+
+test('a failed background open can retry once while local play continues, without concurrent openers', async () => {
+  const f = fixture();
+  let opens = 0;
+  let closed = 0;
+  const failures = [];
+  const engineer = new BackgroundAgent({ open: async () => {
+    opens++;
+    if (opens === 1) throw new Error('Transient broker failure');
+    return { close: async () => { closed++; } };
+  }, onError: error => failures.push(error.message) });
+  await engineer.opening;
+  await f.loop.tick();
+  assert.equal(f.calls.filter(call => call[0] === 'start').length, 1);
+  const retry = engineer.retry();
+  assert.equal(engineer.retry(), retry);
+  await retry;
+  assert.equal(opens, 2);
+  assert.deepEqual(failures, ['Transient broker failure']);
+  assert.equal(engineer.error, null);
+  await engineer.close();
+  await engineer.retry();
+  assert.equal(opens, 2);
+  assert.equal(closed, 1);
+});
+
+test('a settled sandbox cannot admit a patch or successor while host RPC and trailing controls drain', async () => {
+  const f = fixture();
+  const drain = new ControlDrain();
+  let releaseHost;
+  const hostIdle = new Promise(resolve => { releaseHost = resolve; });
+  const context = f.loop.context;
+  f.loop.context = () => ({ ...context(), draining: drain.active });
+  f.setCurrent(null);
+  f.loop.stage({ version: 'after-full-drain' });
+  let cleaned = false;
+  const interruption = drain.run(async () => {
+    // Sandbox settlement is already complete, but the host RPC still owns control.
+    await hostIdle;
+    cleaned = true;
+  });
+  await f.loop.tick();
+  assert.equal(f.calls.length, 0);
+  assert.equal(drain.active, true);
+  releaseHost();
+  await interruption;
+  await f.loop.tick();
+  assert.equal(cleaned, true);
+  assert.deepEqual(f.calls.slice(0, 2), [['validate', 'after-full-drain'], ['activate', 'after-full-drain']]);
+  assert.equal(drain.active, false);
+});
+
+test('failed or overlapping interruption cleanup releases only its own drain lease', async () => {
+  const drain = new ControlDrain();
+  let release;
+  const pending = drain.run(() => new Promise(resolve => { release = resolve; }));
+  await assert.rejects(drain.run(async () => { throw new Error('Cleanup failed'); }), /Cleanup failed/);
+  assert.equal(drain.active, true);
+  release();
+  await pending;
+  assert.equal(drain.active, false);
 });

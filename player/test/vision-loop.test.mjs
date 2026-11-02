@@ -57,3 +57,17 @@ test('an expired image waits for a real replacement instead of silently sending 
   capture.resolve({ at: now, frame: { image: 'new' } });
   assert.equal((await current).frame.image, 'new');
 });
+
+test('reactive analysis requests a newer image than the ordinary cache and shares its capture', async () => {
+  const capture = deferred();
+  let count = 0;
+  const loop = new VisionLoop({ capture: () => { count++; return capture.promise; }, contextKey: () => 'life', onFrame: () => {}, onError: assert.fail, now: () => 45000 });
+  loop.frame = { at: 0, contextKey: 'life', frame: { image: 'old-but-valid-for-passive-view' } };
+  assert.equal((await loop.current()).frame.image, 'old-but-valid-for-passive-view');
+  const engineer = loop.current({ maxAgeMs: 5000 });
+  const sameEvidence = loop.current({ maxAgeMs: 5000 });
+  assert.equal(count, 1);
+  capture.resolve({ at: 45000, frame: { image: 'new-evidence' } });
+  assert.equal((await engineer).frame.image, 'new-evidence');
+  assert.equal((await sameEvidence).frame.image, 'new-evidence');
+});

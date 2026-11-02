@@ -1,6 +1,6 @@
 import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, chmod } from 'node:fs/promises';
+import { mkdtemp, chmod, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { PersistentController, validateControllerResult } from '../controller.mjs';
 import { createSandboxBroker } from '../sandbox-broker.mjs';
@@ -231,6 +231,51 @@ test('invalidated decisions restore controller state and metadata after run or s
     assert.equal(persisted.error, previous.error);
     assert.ok(persisted.versions.some(version => version.version === staged.version), 'Rollback preserves concurrently staged candidates');
   }
+});
+
+test('candidate provenance persists and obsolete same-base patches cannot overwrite a newer controller', { skip: !canRun }, async () => {
+  const controller = await create('provenance-world').open();
+  const initial = await controller.candidate({ name: 'Bootstrap', code, fixtures, baseVersion: null });
+  assert.equal(initial.baseVersion, null);
+  await controller.validate(initial.version);
+  await controller.activate(initial.version);
+  await controller.decide({ worldId: 'provenance-world', hasWood: false });
+  await assert.rejects(controller.candidate({ name: 'Stale bootstrap', code, fixtures, baseVersion: null }), { code: 'CONTROLLER_STALE_VERSION' });
+  const analysis = { reasonIds: ['navigation-failed'], analysisId: 'analysis-one' };
+  const first = await controller.candidate({ name: 'First patch', code, fixtures, baseVersion: initial.version, analysis });
+  const second = await controller.candidate({ name: 'Concurrent patch', code, fixtures, baseVersion: initial.version });
+  analysis.reasonIds.push('outside mutation');
+  await controller.validate(first.version);
+  await controller.validate(second.version);
+  await controller.activate(first.version);
+  await assert.rejects(controller.activate(second.version), { code: 'CONTROLLER_STALE_VERSION' });
+  assert.equal(controller.current().version, first.version);
+  assert.equal(controller.inspect().state.count, 1);
+  assert.equal(controller.inspect(second.version).status, 'superseded');
+  const reopened = await create('provenance-world').open();
+  assert.equal(reopened.inspect(first.version).baseVersion, initial.version);
+  assert.deepEqual(reopened.inspect(first.version).analysis, { reasonIds: ['navigation-failed'], analysisId: 'analysis-one' });
+  assert.equal(reopened.inspect(second.version).errorCode, 'CONTROLLER_STALE_VERSION');
+  await assert.rejects(reopened.candidate({ name: 'Stale previous base', code, fixtures, baseVersion: initial.version }), { code: 'CONTROLLER_STALE_VERSION' });
+});
+
+test('restart rejects pending legacy provenance without altering the legacy active version', { skip: !canRun }, async () => {
+  const controller = await create('legacy-provenance-world').open();
+  const active = await controller.candidate({ name: 'Active', code, fixtures });
+  await controller.validate(active.version);
+  await controller.activate(active.version);
+  const pending = await controller.candidate({ name: 'Pending legacy', code, fixtures });
+  await controller.validate(pending.version);
+  const data = JSON.parse(await readFile(controller.file, 'utf8'));
+  for (const version of data.versions) delete version.baseVersion;
+  await writeFile(controller.file, JSON.stringify(data));
+  const reopened = await create('legacy-provenance-world').open();
+  assert.equal(reopened.current().version, active.version);
+  assert.equal(reopened.current().status, 'active');
+  assert.equal(reopened.inspect(pending.version).status, 'superseded');
+  assert.match(reopened.inspect(pending.version).error, /no recorded base/);
+  await assert.rejects(reopened.activate(pending.version), { code: 'CONTROLLER_STALE_VERSION' });
+  await assert.rejects(reopened.validate(pending.version), { code: 'CONTROLLER_STALE_VERSION' });
 });
 
 test('decision output rejects unbounded state and non-explicit idle', () => {

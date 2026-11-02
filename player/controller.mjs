@@ -6,6 +6,7 @@ import { atomicJson, optionalJson } from './observations.mjs';
 
 const timestamp = () => new Date().toISOString();
 const clone = value => structuredClone(value);
+const staleVersion = message => Object.assign(new Error(message), { code: 'CONTROLLER_STALE_VERSION' });
 
 function boundedJson(value, bytes, label) {
   const json = JSON.stringify(value);
@@ -88,7 +89,11 @@ export class PersistentController {
     if (this.data.worldId !== this.worldId) throw new Error('Controller storage world mismatch');
     // A process may have died during validation. Never promote an unfinished test.
     for (const version of this.data.versions) {
-      if (version.status === 'validating') {
+      if (['candidate', 'validating', 'validated'].includes(version.status) && !Object.hasOwn(version, 'baseVersion')) {
+        version.status = 'superseded';
+        version.error = 'Pending controller has no recorded base version';
+        version.errorCode = 'CONTROLLER_STALE_VERSION';
+      } else if (version.status === 'validating') {
         version.status = 'failed';
         version.error = 'Validation interrupted by restart';
       }
@@ -120,7 +125,8 @@ export class PersistentController {
     return record;
   }
 
-  async candidate({ name, code, fixtures }) {
+  async candidate({ name, code, fixtures, baseVersion = this.data.activeVersion, analysis }) {
+    if (baseVersion !== this.data.activeVersion) throw staleVersion('Controller candidate base version is not the active version');
     controllerRunner(code);
     if (typeof name !== 'string' || !name.trim() || name.length > 80) throw new Error('Controller name is required (1–80 characters)');
     if (!Array.isArray(fixtures) || fixtures.length < 2 || fixtures.length > 8) throw new Error('Provide 2–8 offline fixtures');
@@ -128,7 +134,8 @@ export class PersistentController {
     for (const fixture of fixtures) {
       if (!fixture || typeof fixture.observation !== 'object' || !fixture.observation) throw new Error('Each fixture requires an observation');
     }
-    const record = { version: randomUUID(), name: name.trim(), code, fixtures, sourceHash: createHash('sha256').update(code).digest('hex'), status: 'candidate', createdAt: timestamp() };
+    const record = { version: randomUUID(), name: name.trim(), code, fixtures, baseVersion: this.data.activeVersion, sourceHash: createHash('sha256').update(code).digest('hex'), status: 'candidate', createdAt: timestamp() };
+    if (analysis !== undefined) record.analysis = boundedJson(analysis, 8192, 'Controller analysis metadata');
     this.data.versions.push(record);
     await this.save();
     return clone(record);
@@ -150,6 +157,7 @@ export class PersistentController {
     this.boundary();
     const record = this.record(version);
     if (record.version === this.data.activeVersion) throw new Error('Cannot validate the active controller');
+    if (record.status === 'superseded') throw staleVersion(record.error);
     this.busy = true;
     try {
       record.status = 'validating';
@@ -177,9 +185,17 @@ export class PersistentController {
   async activate(version) {
     this.boundary();
     const record = this.record(version);
+    if (record.status === 'superseded') throw staleVersion(record.error);
     if (record.status !== 'validated') throw new Error('Only a validated candidate can be activated');
     this.busy = true;
     try {
+      if (!Object.hasOwn(record, 'baseVersion') || record.baseVersion !== this.data.activeVersion) {
+        record.status = 'superseded';
+        record.error = 'Controller candidate base version is no longer active';
+        record.errorCode = 'CONTROLLER_STALE_VERSION';
+        await this.save();
+        throw staleVersion(record.error);
+      }
       const previous = this.current();
       if (previous) this.record(previous.version).status = 'retired';
       record.status = 'active';

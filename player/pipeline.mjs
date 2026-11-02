@@ -16,7 +16,7 @@ export class ActionPipeline {
 
   validate(program) {
     const current = this.context();
-    if (current.stopping || current.health <= 0) throw new Error('Player cannot act in this state');
+    if (current.stopping || current.draining || current.health <= 0) throw new Error('Player cannot act in this state');
     if (current.reflexOwner) throw new Error(`Local safety owns control: ${current.reflexOwner}`);
     if (program.session !== current.session || program.life !== current.life) throw new Error('Player context changed: observe before acting');
     const { name } = validateSkillRequest(program.code, { ...program, worldId: this.worldId });

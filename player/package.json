@@ -10,7 +10,7 @@
     "test": "node --test test/*.test.mjs rpc.test.mjs skills.test.mjs sandbox-name.test.mjs",
     "test:sandbox": "node --test sandbox.test.mjs sandbox-access.test.mjs",
     "start": "node runtime.mjs",
-    "check": "node --check runtime.mjs && node --check background-agent.mjs && node --check controller.mjs && node --check controller-loop.mjs && node --check world-knowledge.mjs && node --check lifecycle.mjs && node --check pipeline.mjs && node --check decision-gate.mjs && node --check feedback.mjs && node --check vision-loop.mjs && node --check viewer.mjs && node --check reflexes.mjs && node --check observations.mjs && node --check agent.mjs",
+    "check": "node --check runtime.mjs && node --check background-agent.mjs && node --check engineering-signals.mjs && node --check control-drain.mjs && node --check controller.mjs && node --check controller-loop.mjs && node --check world-knowledge.mjs && node --check lifecycle.mjs && node --check pipeline.mjs && node --check decision-gate.mjs && node --check feedback.mjs && node --check vision-loop.mjs && node --check viewer.mjs && node --check reflexes.mjs && node --check observations.mjs && node --check agent.mjs",
     "test:agent": "node --test test/agent.test.mjs",
     "check:agent": "node --check agent.mjs"
   },

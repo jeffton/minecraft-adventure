@@ -38,6 +38,7 @@ export class ControllerLoop {
 
   stage(record) {
     this.pending.push(record.version);
+    this.nextAt = 0;
     return { version: record.version, status: 'pending_validation' };
   }
 
@@ -53,7 +54,7 @@ export class ControllerLoop {
 
   async tick(now = Date.now()) {
     const context = this.context();
-    if (this.busy || context.stopping || context.reflexOwner || context.health <= 0 ||
+    if (this.busy || context.stopping || context.reflexOwner || context.draining || context.health <= 0 ||
         this.pipeline.current()?.settled === false || now < this.nextAt) return;
     this.busy = true;
     const epoch = this.epoch;
@@ -123,7 +124,7 @@ export class ControllerLoop {
 
   available() {
     const context = this.context();
-    return !context.stopping && !context.reflexOwner && context.health > 0 &&
+    return !context.stopping && !context.reflexOwner && !context.draining && context.health > 0 &&
       this.pipeline.current()?.settled !== false;
   }
 }

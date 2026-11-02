@@ -25,8 +25,8 @@ export class VisionLoop {
     return this.pending;
   }
 
-  async current() {
-    if (this.frame?.contextKey === this.contextKey() && this.now() - this.frame.at <= this.maxAgeMs) return this.frame;
+  async current({ maxAgeMs = this.maxAgeMs } = {}) {
+    if (this.frame?.contextKey === this.contextKey() && this.now() - this.frame.at <= maxAgeMs) return this.frame;
     return this.refresh();
   }
 
