@@ -6,13 +6,13 @@ source_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 target=/opt/minecraft-adventure/bots
 getent passwd minecraft-bots >/dev/null
 getent group minecraft-adventure-project >/dev/null
-[[ -x /opt/node-minecraft22/bin/node && -d /opt/minecraft-mindcraft/node_modules ]]
+[[ -x /usr/bin/node && $(/usr/bin/node -p 'process.versions.node.split(".")[0]') == 26 && -d /opt/minecraft-mindcraft/node_modules ]]
 install -d -m0755 "$target"
 for file in "$source_dir"/*.mjs "$source_dir"/package.json; do
   install -o root -g root -m0644 "$file" "$target/"
 done
-/opt/node-minecraft22/bin/node "$target/build-viewer.mjs"
-/opt/node-minecraft22/bin/node "$target/build-entity-assets.mjs"
+/usr/bin/node "$target/build-viewer.mjs"
+/usr/bin/node "$target/build-entity-assets.mjs"
 install -d -o minecraft-bots -g minecraft-bots -m0750 /var/lib/minecraft-adventure/bots
 install -d -o root -g root -m0700 /etc/minecraft-adventure
 python3 - <<'PY'

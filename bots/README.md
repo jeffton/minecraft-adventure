@@ -20,7 +20,7 @@ Authored commands add a surveyed shared site, incremental survival lodge constru
 ## Files and services
 
 - Source dependency: `/opt/minecraft-mindcraft`, commit `e1c1fc3ffa481506c2445fc639e16dba504b5920`.
-- Node runtime: `/opt/node-minecraft22`, Node 22.23.4; native canvas/gl dependencies match this ABI.
+- Node runtime: system `/usr/bin/node` 26.13.0; native canvas/gl dependencies are built for Node module ABI 147. The retained `/opt/node-minecraft22` binary is not a ready rollback: its ABI 127 cannot load the rebuilt ABI-147 `gl` addon.
 - Writable bot memory: `/var/lib/minecraft-adventure/bots`.
 - Shared mission: `/var/lib/minecraft-adventure/control/mission.json`.
 - Atomic state: `/var/lib/minecraft-adventure/observations/state.json`, every 10 seconds; per-bot observations every 5 seconds.
@@ -29,6 +29,46 @@ Authored commands add a surveyed shared site, incremental survival lodge constru
 - Mindcraft's private management socket: `127.0.0.1:8930`; never expose it through nginx.
 
 The bot account belongs only to its private group and `minecraft-adventure-project`, not the server's secret-bearing group. Its network access is loopback-only. The service cannot write code or read home directories.
+
+### Rebuild native graphics for Node 26
+
+Mindcraft's locked `gl@8.1.6` has no Node 26 prebuild here. With Node 26.13.0 (ABI 147), install the build tools and headers:
+
+```sh
+sudo apt-get install -y build-essential python-is-python3 pkg-config libxi-dev libglu1-mesa-dev libglew-dev clang-19 xvfb xauth
+test "$(/usr/bin/node -p 'process.versions.node')" = 26.13.0
+test "$(/usr/bin/node -p 'process.versions.modules')" = 147
+```
+
+In `/opt/minecraft-mindcraft/node_modules/gl/angle/src/compiler/preprocessor/Macro.h`, add `#include "Token.h"` after the `<vector>` include; the bundled ANGLE source otherwise fails to compile with `Token` incomplete. Rebuild the lockfile-installed package:
+
+```sh
+CC=clang-19 CXX=clang++-19 MAKEFLAGS=-j4 npm --prefix /opt/minecraft-mindcraft rebuild gl --foreground-scripts
+```
+
+Check imports and a real WebGL draw without starting a bot or world:
+
+```sh
+cd /opt/minecraft-mindcraft
+xvfb-run -a /usr/bin/node --input-type=module <<'NODE'
+import assert from 'node:assert/strict';
+import * as mineflayer from 'mineflayer';
+import * as protocol from 'minecraft-protocol';
+import prismarine from 'prismarine-viewer';
+import vec3 from 'vec3';
+import { Camera } from './src/agent/vision/camera.js';
+import { VisionInterpreter } from './src/agent/vision/vision_interpreter.js';
+import { createCanvas as create2dCanvas } from 'canvas';
+import { createCanvas } from 'node-canvas-webgl/lib/index.js';
+import THREE from 'three';
+assert.ok(mineflayer.createBot && protocol.createClient && prismarine.mineflayer && vec3.Vec3 && Camera && VisionInterpreter);
+assert.ok(create2dCanvas(8, 8).toBuffer().length);
+const renderer = new THREE.WebGLRenderer({ canvas: createCanvas(16, 16) });
+renderer.render(new THREE.Scene(), new THREE.PerspectiveCamera(60, 1, 0.1, 10));
+assert.ok(renderer.getContext());
+console.log(`Node ${process.version}, ABI ${process.versions.modules}: vision and WebGL OK`);
+NODE
+```
 
 ## Verification
 

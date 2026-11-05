@@ -13,7 +13,7 @@ EnvironmentFile=/etc/minecraft-adventure/bots.env
 Environment=ADVENTURE_ROOT=/var/lib/minecraft-adventure
 Environment=BOT_DATA_DIR=/var/lib/minecraft-adventure/bots
 Environment="NODE_OPTIONS=--max-old-space-size=192 --import=/opt/minecraft-adventure/bots/bootstrap.mjs"
-ExecStart=/opt/node-minecraft22/bin/node /opt/minecraft-adventure/bots/launch.mjs
+ExecStart=/usr/bin/node /opt/minecraft-adventure/bots/launch.mjs
 Restart=on-failure
 RestartSec=15
 TimeoutStopSec=15
