@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { createMinecraftRpc } from './rpc.mjs';
+import { observationFeedback } from './feedback.mjs';
+import { planningObservation } from './mission.mjs';
 
 class Vec3 {
   constructor(x, y, z) { Object.assign(this, { x, y, z }); }
@@ -31,6 +33,26 @@ function fixture() {
   };
   return { bot, inventory, counts, rpc: createMinecraftRpc(bot, { Vec3, goals: { GoalNear } }) };
 }
+
+test('fresh RPC and strategic observations expose game clock and distinguish rain from thunder', () => {
+  const { bot, rpc } = fixture();
+  bot.time = { day: 8, timeOfDay: 11600, isDay: true, doDaylightCycle: true };
+  bot.isRaining = true;
+  bot.rainState = 1;
+  for (const thunderLevel of [0, 1, 0.4]) {
+    bot.thunderState = thunderLevel;
+    const payload = planningObservation(observationFeedback(rpc.observe()));
+    assert.equal(payload.time.day, 8);
+    assert.equal(payload.time.minecraftTime, '17:36');
+    assert.equal(payload.time.secondsUntilNextNightAt20Tps, 70);
+    assert.equal(payload.time.secondsUntilNextSunsetAt20Tps, 20);
+    assert.deepEqual(payload.weather, { isRaining: true, rainLevel: 1, thunderLevel });
+  }
+  bot.isRaining = false;
+  bot.rainState = 0;
+  bot.thunderState = 0;
+  assert.deepEqual(rpc.observe().weather, { isRaining: false, rainLevel: 0, thunderLevel: 0 });
+});
 
 test('recipe inspection reveals unmet requirements but crafting still rejects missing live materials', async () => {
   const { rpc, inventory } = fixture();

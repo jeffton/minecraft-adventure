@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
+import { worldClock } from './clock.mjs';
 import { findLoadedBlocks } from './world-search.mjs';
 import { createWorldKnowledge, loadedBiome, registryInfo } from './world-knowledge.mjs';
 
 export const RPC_DESCRIPTION = `Skills are async JavaScript function bodies with mc.call(method,...args), mc.observe(), input.
 Await every call. Returned values are observations, not proof that your whole objective succeeded.
-observe() → health, food, oxygen, position, dimension, inventory, nearby entities/blocks.
+observe() → health, food, oxygen, position, dimension, inventory, nearby entities/blocks, time and weather. time includes world day, Minecraft HH:mm, Overworld sunrise/sunset intervals and seconds until their next occurrence/night at the normal 20 ticks/second; daylightCycleRunning reports a frozen clock and server lag stretches those estimates. weather includes isRaining, rainLevel and thunderLevel (0–1); rain alone does not mean thunder.
 blockAt({x,y,z}), findBlocks({names:[name],radius,count}) searches currently loaded columns, with optional caller-selected distance/count filters, itemInfo(name), blockInfo(name).
 registryInfo(type,{names:[name],search,limit}) returns {type,items:[entries],truncated}; queries real items/blocks/biomes/entities registry (provide names or search; optional limit is caller-selected). Block entries include named drops and harvest tools; biome entries include category/temperature/dimension, NOT mob spawn guarantees.
 biomeAt({x,y,z}) returns biome only for a loaded block, or null if biome data is absent. observe() includes current biome.
@@ -105,7 +106,8 @@ export function createMinecraftRpc(bot, { Vec3, goals, onEvent = () => {}, knowl
       at: new Date().toISOString(), health: bot.health, food: bot.food, oxygen: bot.oxygenLevel,
       biome,
       position: packPosition(origin), dimension: bot.game?.dimension,
-      time: bot.time ? { timeOfDay: bot.time.timeOfDay, isDay: bot.time.isDay } : null,
+      time: worldClock(bot.time, bot.game?.dimension),
+      weather: { isRaining: bot.isRaining, rainLevel: bot.rainState, thunderLevel: bot.thunderState },
       inventory: bot.inventory.items().map(packItem), heldItem: packItem(bot.heldItem), entities, blocks
     };
     knowledge.observe(observation);
