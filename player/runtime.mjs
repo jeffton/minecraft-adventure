@@ -1,6 +1,7 @@
 import { trackViewerLightColumns } from './viewer.mjs';
 import { withDoorPassage } from './door-navigation.mjs';
 import { startPlayerLifecycle } from './lifecycle.mjs';
+import { attachGameChat, openGameChat, sendGameChat, gameChatTools, chatBlocksController, GAME_CHAT_INSTRUCTIONS } from './game-chat.mjs';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { appendFile, mkdir } from 'node:fs/promises';
 import { createRequire } from 'node:module';
@@ -122,8 +123,15 @@ export async function runPlayer(env = process.env) {
       }
     };
     const fail = failure => { error = failure.message; console.error(failure); };
+    const chat = await openGameChat(path.join(stateDir, 'player-chat.json'), {
+      send: message => sendGameChat(bot, message), onEvent: emit,
+    });
     const bot = mineflayer.createBot({ host: '127.0.0.1', port: 25567, username: 'Roy', auth: 'offline', version: '1.21.4' });
     cleanup.push(async () => { stopping = true; bot.quit(); });
+    const detachChat = attachGameChat(bot, chat, {
+      componentText: value => require('prismarine-chat')(bot.registry).fromNotch(value).toString(), onError: fail,
+    });
+    cleanup.push(async () => { detachChat(); await chat.flush(); });
     signal.throwIfAborted();
     trackViewerLightColumns(bot);
     bot.loadPlugin(pathfinder);
@@ -220,6 +228,7 @@ export async function runPlayer(env = process.env) {
     stopActions = () => interrupt('player shutdown');
     lifecycle.details(() => ({
       online: !bot._client.ended, thinking, action: actionFeedback(action()), error: error ?? visionError,
+      chat: { pending: chat.snapshot().pending.length, activeTasks: chat.snapshot().tasks.length, uncertainReplies: chat.snapshot().uncertain.length },
       controller: controllerLoop ? { version: controller.current()?.version, ...controllerLoop.inspect() } : null,
     }));
     viewer.mineflayer(bot, { port: 8931, viewDistance: 4, firstPerson: true });
@@ -313,6 +322,7 @@ export async function runPlayer(env = process.env) {
       tool('action_inspect', 'Read a complete retained action record including all original RPC calls/results, errors and before/after observations. Useful for investigating any outcome projection.', { actionId: STRING }, ['actionId'], async ({ actionId }) => sandbox.inspect(actionId)),
       tool('read_events', 'Read complete persisted event records, including original errors and RPC/model events. Defaults to this player session; supply another session to inspect its history. afterSequence and types select evidence without byte/line truncation.', { session: STRING, afterSequence: { type: 'integer', minimum: 0 }, types: { type: 'array', items: STRING } }, [], async args => readPlayerEvents(path.join(stateDir, 'events.jsonl'), { ...args, session: args.session ?? session })),
       ...planningMemoryTools(memory),
+      ...gameChatTools(chat),
       tool('skills', 'List reusable JavaScript skills, fetch one by name, save source, or verify it against a completed action and explicit expected postconditions. Source is reusable; evidence is world-scoped, not current inventory. expected supports inventory minimum counts, inventoryDelta minimum increases, position {x,y,z,within}, health {min}, blocks [{x,y,z,name}]. Verification requires host-observed change, not returned claims.', { name: STRING, description: STRING, code: STRING, actionId: STRING, expected: { type: 'object' } }, [], async args => {
         if (!args.name) return skills.list();
         if (args.code) await skills.save({ name: args.name, description: args.description ?? '', code: args.code });
@@ -320,7 +330,7 @@ export async function runPlayer(env = process.env) {
         return skills.get(args.name);
       }),
     ];
-    const instructions = `All gameplay runs through the versioned isolated controller. mission creates a one-shot controller automatically; controller_candidate/edit remain available for reusable local behavior. For an explicit planning boundary a controller returns {state,action:null,replan:true,reason}. Supply the active inspected baseVersion. State and skills remain world-scoped. Do not replay obsolete routes from legacy controller state. Full source/outcomes remain available through inspect tools.\n\nMinecraft RPC:\n${RPC_DESCRIPTION}`;
+    const instructions = `${GAME_CHAT_INSTRUCTIONS}\n\nAll gameplay runs through the versioned isolated controller. mission creates a one-shot controller automatically; controller_candidate/edit remain available for reusable local behavior. For an explicit planning boundary a controller returns {state,action:null,replan:true,reason}. Supply the active inspected baseVersion. State and skills remain world-scoped. Do not replay obsolete routes from legacy controller state. Full source/outcomes remain available through inspect tools.\n\nMinecraft RPC:\n${RPC_DESCRIPTION}`;
     const capture = async () => {
       const generation = life;
       const observed = state();
@@ -355,9 +365,16 @@ export async function runPlayer(env = process.env) {
       modelEventSequence = sequence;
       return delta;
     };
+    const chatObservation = () => {
+      const snapshot = chat.snapshot();
+      if (action()?.settled === false) return { ...snapshot, pending: [] };
+      if (snapshot.pending.length && activeAnalysis) activeAnalysis.chat = true;
+      return snapshot;
+    };
     const modelObservation = visual => planningObservation({
       worldId, session, life, reflexOwner, ...observationFeedback(rpc.observe()),
       notes: memory.notes, home: memory.home,
+      playerChat: chatObservation(),
       progress: progress.observation({ session, since: controller.current()?.activatedAt }),
       controller: controllerFeedback(), scheduler: controllerLoop.inspect(),
       action: actionFeedback(action()),
@@ -455,12 +472,13 @@ export async function runPlayer(env = process.env) {
     lifecycle.update({ phase: 'ready', ready: true });
     emit('spawn', 'Roy connected to the current survival world.', { worldId });
     let background;
+    let chatNotified = null;
     const improve = async batch => {
       thinking = true;
       deliveredFeedbackKey = batch.key;
       activeAnalysis = {
         ...batch, id: randomUUID(), baseVersion: controller.current()?.version ?? null,
-        startedAt: Date.now(), worldEffect: lastWorldEffect, patched: false,
+        startedAt: Date.now(), worldEffect: lastWorldEffect, patched: false, chat: chat.hasPending(),
       };
       emit('engineering_analysis', 'Started reactive controller analysis while local play continues.', {
         analysisId: activeAnalysis.id, feedbackKey: batch.key, baseVersion: activeAnalysis.baseVersion,
@@ -515,13 +533,22 @@ export async function runPlayer(env = process.env) {
         if (!engineer.agent) void engineer.retry();
         else engineering.notify({ kind: 'engineering_retry', key: String(engineerFailures), version: controller.current()?.version ?? null, life, sequence });
       }
+      // A pending conversation takes the next strategic boundary, never the
+      // running skill. Park the old controller while the model handles chat.
+      if (chat.hasPending() && !thinking && action()?.settled !== false) {
+        const key = JSON.stringify([chat.snapshot().pending.map(message => message.id), metrics.modelRuns]);
+        if (chatNotified !== key) {
+          chatNotified = key;
+          engineering.notify({ kind: 'player_chat', key, details: { messages: chat.snapshot().pending.map(message => message.id) } });
+        }
+      }
       if (engineer.agent && !thinking && !retryAt && bot.health > 0 &&
           action()?.settled !== false && controllerLoop.inspect().pending.length === 0) {
         const batch = engineering.start();
         if (batch) background = improve(batch);
       }
       try {
-        await controllerLoop.tick();
+        await controllerLoop.tick(Date.now(), { activateOnly: chatBlocksController(chat, activeAnalysis) });
       } catch (failure) {
         fail(failure);
         emit('controller_error', failure.message);

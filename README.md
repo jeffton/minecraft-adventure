@@ -10,6 +10,8 @@ Host history retains full original actions on disk, including position and inven
 
 Versioned controller admission, safe cancellation/RPC drain and hot reload remain available. Exactly one owner controls gameplay; death and emergency reflexes invalidate stale decisions. Generated JavaScript runs through the existing nonroot OS sandbox and explicit Minecraft RPC. Recipes, registry queries and observed-world spatial memory support legitimate exploration; no world-seed knowledge is exposed.
 
+Talk to Roy in ordinary Minecraft chat, or privately with `/tell Roy ...`. Human messages enter a world-scoped durable inbox and reach strategic planning after the running skill finishes. Roy answers in the original channel; accepted tasks persist across missions and restarts. Public conversation clearly addressed to someone else is ignored. Replies are recorded before network submission to avoid duplicate sends after a crash; ambiguous delivery is retained rather than automatically resent. Signed/player-chat packets have stable deduplication identities; profileless vanilla whispers have no replay identity and each distinct received packet is retained.
+
 Goals: survive, acquire tools and food, establish an attractive home with a bed and storage, then prepare for the Ender Dragon. This is an experiment, not a claim of competent autonomous completion. [Periodic evaluation](player/EVALUATION.md) measures real outcomes and makes targeted improvements while the player runs; a user stop ends autonomous evaluation.
 
 ## World and presentation

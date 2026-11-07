@@ -37,7 +37,7 @@ export class ControllerLoop {
     return { pending: [...this.pending], nextDecisionAt: this.nextAt, epoch: this.epoch };
   }
 
-  async tick(now = Date.now()) {
+  async tick(now = Date.now(), { activateOnly = false } = {}) {
     const context = this.context();
     if (this.busy || context.stopping || context.reflexOwner || context.draining || context.health <= 0 ||
         this.pipeline.current()?.settled === false || now < this.nextAt) return;
@@ -65,7 +65,7 @@ export class ControllerLoop {
           throw error;
         }
       }
-      if (!this.controller.current() || epoch !== this.epoch || !this.available()) return;
+      if (activateOnly || !this.controller.current() || epoch !== this.epoch || !this.available()) return;
       const observation = this.snapshot();
       const outcome = actionFeedback(this.pipeline.current());
       const lastResult = outcome && {
