@@ -102,6 +102,7 @@ export async function openPlayerAgent({
   let diaryCalls = 0;
   let toolCalls = 0;
   let lastFeedbackKey;
+  let initialEvidence;
   let busy = false;
   let narrating = false;
   let closed = false;
@@ -153,7 +154,14 @@ export async function openPlayerAgent({
     hooks: [hook(GenerationTask, {
       async beforeRequest(request) {
         const feedback = await readFreshFeedback('beforeRequest');
-        if (!feedback) return;
+        const initial = initialEvidence;
+        initialEvidence = undefined;
+        if (!feedback) {
+          if (!initial) return;
+          return {
+            messages: [...request.messages, { role: 'user', content: initial, timestamp: Date.now() }],
+          };
+        }
         emit({ type: 'feedback_injected', key: feedback.key, baseVersion: feedback.baseVersion });
         // Request-only evidence must be sampled again: reusing a cached snapshot
         // after newer tool results would put obsolete state last in the context.
@@ -269,7 +277,7 @@ export async function openPlayerAgent({
       await archive.abort(context);
     }
     const strategyId = conversations?.strategy;
-    const root = strategyId
+    let root = strategyId
       ? await harness.conversation(strategyId, context)
       : await harness.createConversation({ ownership: { kind: 'ownerless' }, agent: { extensions: [player], tools: registeredTools } }, context);
     await archive.commit(async tx => {
@@ -280,11 +288,13 @@ export async function openPlayerAgent({
     if (conversations && conversations.controllerMode !== 'mission-v1') {
       emit({ type: 'migration_completed', controllerMode: 'mission-v1' });
     }
-    await root.configure({
+    const strategyConfiguration = {
       model: { provider: 'openai-codex', modelId: PLAYER_MODEL }, thinkingLevel: 'medium',
       extensions: [player], tools: registeredTools,
       instructions: `${MISSION_INSTRUCTIONS}\n\nWorld identity: ${worldId}\n\n${instructions}`,
-    }, context);
+    };
+    await root.configure(strategyConfiguration, context);
+    let strategyUsed = Boolean(strategyId);
     let diaryId = (await harness.snapshot(Conversations, context))?.diary;
     const diary = diaryId
       ? await harness.conversation(diaryId, context)
@@ -327,10 +337,27 @@ export async function openPlayerAgent({
         toolCalls = 0;
         lastFeedbackKey = feedbackKey;
         try {
-          const text = JSON.stringify({ worldId, observation });
-          const result = await run(root, images.length ? [{ type: 'text', text }, ...images] : text, PLAYER_MODEL);
+          if (strategyUsed) {
+            // Completed episodes remain readable in SQLite, not in the next
+            // mission's sensor context. The pointer still identifies interrupted
+            // work, which is recovered and settled during open.
+            const next = await harness.createConversation({ ownership: { kind: 'ownerless' }, agent: { extensions: [player], tools: registeredTools } }, context);
+            await next.configure(strategyConfiguration, context);
+            await archive.commit(async tx => { (await tx.doc(Conversations)).strategy = next.id; }, context);
+            root = next;
+          }
+          strategyUsed = true;
+          const observationText = JSON.stringify({ worldId, observation });
+          initialEvidence = getFeedback
+            ? (images.length ? [{ type: 'text', text: observationText }, ...images] : observationText)
+            : undefined;
+          const text = getFeedback
+            ? JSON.stringify({ worldId, instruction: 'Choose the next mission from fresh observations, durable notes and verified outcomes.' })
+            : observationText;
+          const content = !getFeedback && images.length ? [{ type: 'text', text }, ...images] : text;
+          const result = await run(root, content, PLAYER_MODEL);
           return { ...result, modelCalls, toolCalls, feedbackKey: lastFeedbackKey };
-        } finally { busy = false; }
+        } finally { initialEvidence = undefined; busy = false; }
       },
       async narrate(facts) {
         if (closed) throw new Error('Player agent is closed');

@@ -107,9 +107,9 @@ test('saving controller candidates finishes native turns without narration and r
     await agent.close();
     agent = await f.open();
     await agent.step({ controller: { version: 'candidate-2', status: 'active' } });
-    assert.match(JSON.stringify(f.calls[2].context), /candidate-1/);
+    assert.doesNotMatch(JSON.stringify(f.calls[2].context), /candidate-1/);
     assert.match(JSON.stringify(f.calls[2].context), /candidate-2/);
-    assert.match(JSON.stringify(f.calls[2].context), /pending_validation/);
+    assert.doesNotMatch(JSON.stringify(f.calls[2].context), /pending_validation/);
   } finally { await agent.close(); }
 });
 
@@ -174,7 +174,7 @@ for (const failure of ['throw', 'error result']) {
       assert.equal(admissions, 2);
       assert.match(JSON.stringify(f.calls[1].context), /Controller context changed/);
       await agent.step({});
-      assert.match(JSON.stringify(f.calls[2].context), /corrected-candidate/);
+      assert.doesNotMatch(JSON.stringify(f.calls[2].context), /corrected-candidate/);
     } finally { await agent.close(); }
   });
 }
@@ -290,8 +290,7 @@ for (const controllerMode of [undefined, 'persistent-v1', 'reactive-v2', 'hot-re
       assert.ok(freshSchema.required.includes('baseVersion'), 'the fresh native turn exposes the required versioned candidate interface');
       assert.match(JSON.stringify(fresh), /Minecraft strategist and skill author/);
       assert.doesNotMatch(JSON.stringify(fresh), /preserved-root-landmark-marker|Preserved root survival lesson/);
-      if (currentMode) assert.match(JSON.stringify(fresh), /checkpointed-controller-turn-marker/);
-      else assert.doesNotMatch(JSON.stringify(fresh), /checkpointed-controller-turn-marker/);
+      assert.doesNotMatch(JSON.stringify(fresh), /checkpointed-controller-turn-marker/);
       const input = fresh.messages.filter(message => message.role === 'user').at(-1);
       assert.deepEqual(input.content.find(block => block.type === 'image'), image);
       assert.match(JSON.stringify(input), /fresh-controller-observation-marker/);
@@ -302,7 +301,7 @@ for (const controllerMode of [undefined, 'persistent-v1', 'reactive-v2', 'hot-re
       agent = await f.open();
       assert.deepEqual(f.events.filter(event => event.type.startsWith('migration_')).map(event => event.type), expectedMigrations, 'ordinary reopen must not migrate again');
       await agent.step({ controller: 'ordinary-reopen-marker' });
-      assert.match(JSON.stringify(f.calls.at(-1).context), /fresh-controller-observation-marker/);
+      assert.doesNotMatch(JSON.stringify(f.calls.at(-1).context), /fresh-controller-observation-marker/);
     } finally { await agent.close(); }
 
     const verifiedStorage = await openNodeSqliteStorage(seeded.database);
@@ -313,7 +312,11 @@ for (const controllerMode of [undefined, 'persistent-v1', 'reactive-v2', 'hot-re
       assert.equal(saved.diary, seeded.diary.id);
       assert.equal(saved.controllerMode, 'mission-v1');
       assert.notEqual(saved.strategy, seeded.root.id);
-      if (seeded.strategy) assert.equal(saved.strategy, seeded.strategy.id);
+      if (seeded.strategy) {
+        assert.notEqual(saved.strategy, seeded.strategy.id);
+        const recovered = await verified.conversation(seeded.strategy.id, BACKGROUND_CONTEXT);
+        assert.match(JSON.stringify(await recovered.context(BACKGROUND_CONTEXT)), /checkpointed-controller-turn-marker/);
+      }
       const archive = await verified.root(BACKGROUND_CONTEXT);
       assert.match(JSON.stringify(await archive.context(BACKGROUND_CONTEXT)), /preserved-root-landmark-marker/);
       assert.match(JSON.stringify(await archive.context(BACKGROUND_CONTEXT)), /Preserved root survival lesson/);
@@ -329,7 +332,7 @@ for (const controllerMode of [undefined, 'persistent-v1', 'reactive-v2', 'hot-re
   });
 }
 
-test('conversation survives reopen, and another world cannot inherit observations or prior answers', async () => {
+test('completed episodes start fresh after reopen, and worlds remain isolated', async () => {
   const f = await fixture([answer('I remember the old oak tree.'), answer('Continue here.'), answer('A fresh start.')]);
   let agent = await f.open();
   try {
@@ -337,8 +340,7 @@ test('conversation survives reopen, and another world cannot inherit observation
     await agent.close();
     agent = await f.open();
     await agent.step({ health: 19 });
-    assert.match(JSON.stringify(f.calls[1].context), /unique-oak-coordinate-marker/);
-    assert.match(JSON.stringify(f.calls[1].context), /I remember the old oak tree/);
+    assert.doesNotMatch(JSON.stringify(f.calls[1].context), /unique-oak-coordinate-marker|I remember the old oak tree/);
     await agent.close();
     agent = await f.open('fresh-two');
     await agent.step({ health: 20 });
@@ -393,7 +395,7 @@ test('Terra narrates in an independent persistent conversation without tools or 
     assert.equal(f.calls[1].context.messages.filter(message => message.role === 'system').flatMap(message => message.toolsAdded ?? []).length, 0);
     assert.doesNotMatch(JSON.stringify(f.calls[1].context), /player-only-marker|private-landmark/);
     await agent.step({ health: 20 });
-    assert.match(JSON.stringify(f.calls[2].context), /player-only-marker/);
+    assert.doesNotMatch(JSON.stringify(f.calls[2].context), /player-only-marker/);
     assert.doesNotMatch(JSON.stringify(f.calls[2].context), /diary-only-marker/);
     await agent.close();
     agent = await f.open();
@@ -541,6 +543,7 @@ test('new engineer feedback during model thinking continues with persisted fresh
     agent = await f.open();
     await agent.step({ controller: { version: 'v1' } }, { feedbackKey: result.feedbackKey });
     assert.match(JSON.stringify(f.calls[2].context), /server-confirmed-failure-marker/);
+    assert.doesNotMatch(JSON.stringify(f.calls[2].context), /The controller is still working/);
   } finally { release.resolve(); await agent.close(); }
 });
 
@@ -666,7 +669,7 @@ test('a stale candidate is rejected, refreshed and repaired against the current 
     assert.match(JSON.stringify(f.calls[1].context.messages.at(-1)), /active:v2/);
     assert.equal(f.events.filter(event => event.type === 'feedback_continue').length, 0);
     await agent.step({}, { feedbackKey: result.feedbackKey });
-    assert.match(JSON.stringify(f.calls[2].context), /staged/);
+    assert.doesNotMatch(JSON.stringify(f.calls[2].context), /staged/);
   } finally { await agent.close(); }
 });
 
@@ -697,7 +700,13 @@ for (const [name, feedback] of [
     const f = await fixture([answer('Finished thinking.')], [], 131072, () => feedback);
     const agent = await f.open();
     try {
-      assert.equal((await agent.step({}, { feedbackKey: 'already-observed' })).modelCalls, 1);
+      const image = { type: 'image', mimeType: 'image/png', data: 'initial-evidence-frame' };
+      assert.equal((await agent.step({ marker: 'initial-observation-evidence' }, { feedbackKey: 'already-observed', images: [image] })).modelCalls, 1);
+      const transcript = JSON.stringify(f.calls[0].context);
+      if (name !== 'unchanged key') {
+        assert.equal(transcript.split('initial-observation-evidence').length - 1, 1);
+        assert.equal(transcript.split('initial-evidence-frame').length - 1, 1);
+      } else assert.doesNotMatch(transcript, /initial-observation-evidence|initial-evidence-frame/);
       assert.equal(f.events.filter(event => event.type === 'feedback_injected').length, name === 'unchanged key' ? 1 : 0);
       assert.equal(f.events.filter(event => event.type === 'feedback_continue').length, 0);
     } finally { await agent.close(); }
@@ -747,42 +756,103 @@ test('existing requests receive fresh evidence after a large tool round', async 
   } finally { await agent.close(); }
 });
 
-test('large-window history is preserved beyond the former 64k tactical cap', async () => {
-  const f = await fixture(Array.from({ length: 20 }, () => answer('Persistent tactical summary: keep the tools and known home.')), [], 262144);
+test('large sensor snapshots stay within their completed episode instead of accumulating across missions', async () => {
+  const f = await fixture(Array.from({ length: 9 }, () => answer('Mission assessed.')), [], 50000);
   const agent = await f.open();
   try {
     for (let step = 0; step < 8; step++) {
-      await agent.step({ step, terrain: 'historical-block-data '.repeat(2000) });
+      await agent.step({ step, terrain: ('episode-' + step + '-terrain ').repeat(2000) });
     }
-    await agent.step({ health: 20, inventory: ['pickaxe'] });
+    await agent.step({ health: 20, notes: { lesson: 'verified durable lesson' } });
     const requests = f.calls.map(call => JSON.stringify(call.context));
     assert.equal(requests.some(request => /context summarization assistant|history before this point was compacted/i.test(request)), false);
-    assert.match(requests.at(-1), /historical-block-data/);
-    assert.match(requests.at(-1), /known home/);
+    for (let step = 0; step < 8; step++) {
+      assert.match(requests[step], new RegExp('episode-' + step + '-terrain'));
+      if (step) assert.doesNotMatch(requests[step], new RegExp('episode-' + (step - 1) + '-terrain'));
+    }
+    assert.doesNotMatch(requests.at(-1), /episode-\d-terrain/);
+    assert.match(requests.at(-1), /verified durable lesson/);
   } finally { await agent.close(); }
 });
 
-test('automatic compaction passes through the same bounded and sanitized model boundary', async () => {
-  const secret = 'SYNTHETIC_COMPACTION_SECRET_MARKER';
-  const f = await fixture(Array.from({ length: 20 }, () => context => (
-    /context summarization assistant/i.test(JSON.stringify(context))
-      ? fauxAssistantMessage('', { stopReason: 'error', errorMessage: secret })
-      : answer('I will remember the useful surroundings.')
-  )), [], 50000);
-  const agent = await f.open();
+test('mission tool rounds share current evidence, next mission starts fresh, and all episode archives remain stored', async () => {
+  const documents = defineDoc({
+    kind: 'minecraft.player-conversations', version: 1, scope: 'session',
+    initial: () => ({ diary: null, strategy: null, controllerMode: 'mission-v1' }),
+    checkpointWhen: () => true,
+  });
+  let episode = 1;
+  const f = await fixture([
+    call('observe', {}),
+    call('mission', { code: 'first purposeful skill' }),
+    answer('Diary continuity marker.'),
+    call('mission', { code: 'next purposeful skill' }),
+    answer('Another diary paragraph.'),
+  ], [
+    {
+      name: 'observe', description: 'Inspect the current obstacle.', parameters: { type: 'object', properties: {} },
+      execute: async () => ({ obstacle: 'episode-one-obstacle-detail' }),
+    },
+    {
+      name: 'mission', description: 'Start a finite skill.', parameters: schema,
+      execute: async ({ code }) => ({ accepted: code }),
+    },
+  ], 131072, () => ({
+    key: 'episode-' + episode, needsEngineering: true,
+    observation: {
+      terrain: episode === 1 ? 'episode-one-large-sensor-marker' : 'episode-two-fresh-sensor-marker',
+      notes: { lesson: 'authoritative-durable-lesson' },
+    },
+    images: [{ type: 'image', mimeType: 'image/png', data: 'fresh-frame-' + episode }],
+  }));
+  let agent = await f.open();
   try {
-    // Multiple completed turns give compaction older entries to summarize;
-    // a single oversized recent message is retained rather than compacted.
-    await assert.rejects(async () => {
-      for (let step = 0; step < 8; step++) {
-        await agent.step({ step, terrain: 'historical-block-data '.repeat(2000) });
-      }
-    }, /model run failed/);
+    const result = await agent.step({ terrain: 'duplicate-step-snapshot' }, {
+      images: [{ type: 'image', mimeType: 'image/png', data: 'duplicate-step-frame' }],
+      feedbackKey: 'episode-1',
+    });
+    assert.equal(result.modelCalls, 2);
+    assert.match(JSON.stringify(f.calls[1].context), /episode-one-obstacle-detail/);
+    assert.match(JSON.stringify(f.calls[1].context), /episode-one-large-sensor-marker/);
+    for (const call of f.calls) {
+      const serialized = JSON.stringify(call.context);
+      assert.doesNotMatch(serialized, /duplicate-step-snapshot|duplicate-step-frame/);
+      assert.equal(serialized.split('episode-one-large-sensor-marker').length - 1, 1);
+      assert.equal(serialized.split('fresh-frame-1').length - 1, 1);
+    }
+    await agent.narrate({ event: 'persisted diary fact' });
   } finally { await agent.close(); }
-  assert.ok(f.calls.length > 1);
-  assert.equal(f.events.filter(event => event.type === 'model_start').length, f.calls.length);
-  assert.equal(f.events.filter(event => event.type === 'model_error' && event.category === 'provider_request_failed').length, 1);
-  assert.match(JSON.stringify(f.calls.at(-1).context), /context summarization assistant/i);
-  const database = await readFile(path.join(f.stateDir, 'worlds/fresh-one/agent.sqlite'));
-  assert.equal(database.includes(Buffer.from(secret)), false);
+
+  const database = path.join(f.stateDir, 'worlds/fresh-one/agent.sqlite');
+  let harness = await Harness.open(await openNodeSqliteStorage(database), { models: f.models, registry: createRegistry() }, BACKGROUND_CONTEXT);
+  let firstStrategy;
+  let diaryId;
+  try {
+    const saved = await harness.snapshot(documents, BACKGROUND_CONTEXT);
+    firstStrategy = saved.strategy;
+    diaryId = saved.diary;
+    assert.match(JSON.stringify(await (await harness.conversation(firstStrategy, BACKGROUND_CONTEXT)).context(BACKGROUND_CONTEXT)), /episode-one-obstacle-detail/);
+  } finally { await harness.close(BACKGROUND_CONTEXT); }
+
+  episode = 2;
+  agent = await f.open();
+  try {
+    await agent.step({ terrain: 'another-duplicate-step-snapshot' }, { feedbackKey: 'episode-2' });
+    const next = JSON.stringify(f.calls.at(-1).context);
+    assert.match(next, /episode-two-fresh-sensor-marker|authoritative-durable-lesson/);
+    assert.doesNotMatch(next, /episode-one-large-sensor-marker|episode-one-obstacle-detail|first purposeful skill/);
+    await agent.narrate({ event: 'second diary fact' });
+    assert.match(JSON.stringify(f.calls.at(-1).context), /persisted diary fact/);
+  } finally { await agent.close(); }
+
+  harness = await Harness.open(await openNodeSqliteStorage(database), { models: f.models, registry: createRegistry() }, BACKGROUND_CONTEXT);
+  try {
+    const saved = await harness.snapshot(documents, BACKGROUND_CONTEXT);
+    assert.notEqual(saved.strategy, firstStrategy);
+    assert.equal(saved.diary, diaryId);
+    const archived = await harness.conversation(firstStrategy, BACKGROUND_CONTEXT);
+    assert.match(JSON.stringify(await archived.context(BACKGROUND_CONTEXT)), /episode-one-obstacle-detail|first purposeful skill/);
+    const current = await harness.conversation(saved.strategy, BACKGROUND_CONTEXT);
+    assert.match(JSON.stringify(await current.context(BACKGROUND_CONTEXT)), /next purposeful skill/);
+  } finally { await harness.close(BACKGROUND_CONTEXT); }
 });

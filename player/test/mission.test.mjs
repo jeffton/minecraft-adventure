@@ -23,12 +23,13 @@ const makeMission = async () => import(`data:text/javascript,${encodeURIComponen
 test('a strategic mission executes once then returns actual failure to planning instead of repeating', async () => {
   const { decide } = await makeMission();
   const first = await decide(observation, { discoveries: ['observed tree'] }, null);
-  const failure = { id: 'action-id', state: 'failed', error: 'No path to tree', effects: { inventoryDelta: {} } };
+  const failure = { id: 'action-id', state: 'failed', error: 'No path to tree', effects: { inventoryDelta: {} }, value: { blocks: Array(100).fill({ name: 'stone' }) } };
   const second = validateControllerResult(await decide(observation, first.state, failure), 'test-world');
   assert.equal(first.action.name, 'Collect reachable timber');
   assert.equal(second.action, null);
   assert.equal(second.replan, true);
-  assert.deepEqual(second.state.mission.outcome, failure);
+  const { value, ...receipt } = failure;
+  assert.deepEqual(second.state.mission.outcome, receipt);
   assert.deepEqual(second.state.discoveries, ['observed tree']);
   assert.equal((await decide(observation, second.state, failure)).action, null);
 });

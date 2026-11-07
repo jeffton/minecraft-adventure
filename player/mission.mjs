@@ -21,7 +21,10 @@ export function missionController({ objective, expectedOutcome, code, input = {}
     return { state: next, action: { name: mission.objective, code: ${JSON.stringify(code)}, input: ${JSON.stringify(input)} } };
   }
   const interrupted = next.mission.session !== observation.session || next.mission.life !== observation.life;
-  next.mission.outcome = interrupted ? { interrupted: true, reason: 'Session or life changed; reassess the mission from fresh evidence.' } : lastResult;
+  // Full returned query data already lives in action history and the current
+  // action feedback. Keep an outcome receipt, not another copy of world sensors.
+  const { value, ...receipt } = lastResult || {};
+  next.mission.outcome = interrupted ? { interrupted: true, reason: 'Session or life changed; reassess the mission from fresh evidence.' } : receipt;
   return { state: next, action: null, replan: true, reason: interrupted ? 'Reassess interrupted mission' : 'Evaluate mission outcome and choose the next concrete approach' };
 }
 `;
