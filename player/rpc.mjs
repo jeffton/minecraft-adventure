@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { itemNavigationGoal } from './item-navigation.mjs';
 import { worldClock } from './clock.mjs';
 import { findLoadedBlocks } from './world-search.mjs';
 import { createWorldKnowledge, loadedBiome, registryInfo } from './world-knowledge.mjs';
@@ -272,7 +273,7 @@ export function createMinecraftRpc(bot, { Vec3, goals, onEvent = () => {}, homeS
         const drop = drops().find(value => !visited.has(value.id));
         if (!drop) break;
         visited.add(drop.id);
-        await navigate(new goals.GoalNear(drop.position.x, drop.position.y, drop.position.z, 0.5));
+        await navigate(itemNavigationGoal(bot, goals, drop));
         active();
         await bot.waitForTicks(8);
         active();
