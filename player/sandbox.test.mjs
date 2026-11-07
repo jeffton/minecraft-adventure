@@ -1,6 +1,6 @@
 import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, chmodSync } from 'node:fs';
+import { mkdtempSync, chmodSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
@@ -25,8 +25,11 @@ before(async () => {
 });
 
 after(async () => {
-  if (broker) await new Promise(resolve => broker.close(resolve));
-  // Leave the bounded runtime-only fixture for inspection; no production files or worlds are touched.
+  try {
+    if (broker) await new Promise(resolve => broker.close(resolve));
+  } finally {
+    if (directory) rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 function fakeRpc() {

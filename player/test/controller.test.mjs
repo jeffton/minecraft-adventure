@@ -1,6 +1,6 @@
 import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, chmod, readFile, readdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, chmod, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { PersistentController, validateControllerResult } from '../controller.mjs';
 import { createSandboxBroker } from '../sandbox-broker.mjs';
@@ -20,7 +20,13 @@ before(async () => {
   broker = createSandboxBroker({ root: path.join(directory, 'root'), timeoutMs: 4000 });
   await new Promise(resolve => broker.listen(socketPath, resolve));
 });
-after(async () => { if (broker) await new Promise(resolve => broker.close(resolve)); });
+after(async () => {
+  try {
+    if (broker) await new Promise(resolve => broker.close(resolve));
+  } finally {
+    if (directory) await rm(directory, { recursive: true, force: true });
+  }
+});
 
 const code = `export async function decide(observation, state, lastResult) {
   const count = (state.count ?? 0) + 1;

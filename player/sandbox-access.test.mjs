@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, chmodSync, chownSync, copyFileSync } from 'node:fs';
+import { mkdtempSync, chmodSync, chownSync, copyFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
@@ -10,21 +10,23 @@ import { prepareSandboxRoot } from './sandbox-install.mjs';
 const run = promisify(execFile);
 
 test('nonroot minecraft-bots client can execute through the group-restricted root broker', { skip: process.getuid?.() !== 0 }, async () => {
-  const directory = mkdtempSync('/var/lib/minecraft-sandbox-access-test-');
-  chmodSync(directory, 0o755);
-  prepareSandboxRoot(join(directory, 'root'));
-  for (const name of ['sandbox.mjs', 'sandbox-protocol.mjs']) {
-    const path = join(directory, name);
-    copyFileSync(new URL(name, import.meta.url), path);
-    chmodSync(path, 0o644);
-  }
-  const socketPath = join(directory, 'broker.sock');
-  const broker = createSandboxBroker({ root: join(directory, 'root') });
-  await new Promise(resolve => broker.listen(socketPath, resolve));
-  const { stdout: group } = await run('/usr/bin/getent', ['group', 'minecraft-adventure-project']);
-  chownSync(socketPath, 0, Number(group.split(':')[2]));
-  chmodSync(socketPath, 0o660);
+  let directory;
+  let broker;
   try {
+    directory = mkdtempSync('/var/lib/minecraft-sandbox-access-test-');
+    chmodSync(directory, 0o755);
+    prepareSandboxRoot(join(directory, 'root'));
+    for (const name of ['sandbox.mjs', 'sandbox-protocol.mjs']) {
+      const path = join(directory, name);
+      copyFileSync(new URL(name, import.meta.url), path);
+      chmodSync(path, 0o644);
+    }
+    const socketPath = join(directory, 'broker.sock');
+    broker = createSandboxBroker({ root: join(directory, 'root') });
+    await new Promise(resolve => broker.listen(socketPath, resolve));
+    const { stdout: group } = await run('/usr/bin/getent', ['group', 'minecraft-adventure-project']);
+    chownSync(socketPath, 0, Number(group.split(':')[2]));
+    chmodSync(socketPath, 0o660);
     const code = `
       import { SkillSandbox } from ${JSON.stringify(new URL(`file://${directory}/sandbox.mjs`).href)};
       let count=0;
@@ -49,6 +51,10 @@ test('nonroot minecraft-bots client can execute through the group-restricted roo
     `]);
     assert.equal(denied.stdout.trim(), 'EACCES');
   } finally {
-    await new Promise(resolve => broker.close(resolve));
+    try {
+      if (broker) await new Promise(resolve => broker.close(resolve));
+    } finally {
+      if (directory) rmSync(directory, { recursive: true, force: true });
+    }
   }
 });
