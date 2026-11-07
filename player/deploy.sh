@@ -12,12 +12,12 @@ trap 'trash -- "$stage"' EXIT
 # Test and prepare everything before interrupting play. No legacy gameplay files.
 npm --prefix "$source_dir" test
 npm --prefix "$source_dir" run check
-node --test "$source_dir"/../bots/test/viewer*.test.mjs
+node --test "$source_dir"/../bots/test/viewer*.test.mjs "$source_dir"/../bots/test/client-light.test.mjs
 install -d -m0755 "$stage/player" "$stage/bots"
 install -m0644 "$source_dir"/*.mjs "$source_dir"/package*.json "$stage/player/"
 install -m0644 "$source_dir"/../bots/viewer*.mjs \
     "$source_dir"/../bots/compat-loader.mjs "$source_dir"/../bots/inventory-controller.mjs \
-    "$source_dir"/../bots/chunk-light.mjs \
+    "$source_dir"/../bots/chunk-light.mjs "$source_dir"/../bots/client-light.mjs \
     "$source_dir"/../bots/build-viewer.mjs "$stage/bots/"
 npm ci --prefix "$stage/player" --omit=dev --ignore-scripts --no-audit --no-fund
 chmod -R a+rX "$stage/player/node_modules"

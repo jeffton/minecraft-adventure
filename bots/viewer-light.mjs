@@ -1,4 +1,7 @@
-// Server-propagated light only: no client flood fill or synthetic point lights.
+import { createClientRelighter } from './client-light.mjs';
+
+// Vanilla sends chunk light and border updates; nearby block edits are relit by
+// the client. Keep those real light channels current before viewer mesh events.
 export function trackViewerLightColumns(bot) {
   const ready = new Set();
   bot.roycraftLightColumns = ready;
@@ -7,6 +10,15 @@ export function trackViewerLightColumns(bot) {
   // Mineflayer retains columns on same-dimension respawn. Invalidate only the
   // columns it actually unloads (also covers a real dimension/world switch).
   bot.on('chunkColumnUnload', pos => ready.delete(`${pos.x},${pos.z}`));
+  let relight;
+  const update = (oldBlock, newBlock) => {
+    if (oldBlock.stateId === newBlock.stateId) return;
+    relight ??= createClientRelighter(bot, { hasSkylight: () => bot.game.dimension === 'overworld' }).relight;
+    const changed = relight(oldBlock, newBlock);
+    if (changed.size) bot.emit('roycraftLightChanged', changed);
+  };
+  bot.on('blockUpdate', update);
+  bot.once('end', () => bot.off('blockUpdate', update));
 }
 
 // Installed after Mineflayer's synchronous update_light handler. Each viewer has
@@ -50,7 +62,16 @@ export function installViewerLightStream(bot, worldView, socket) {
     loads.delete(key);
     if (worldView.loadedChunks[key]) worldView.unloadChunk(pos);
   };
+  const receiveLocal = changes => {
+    for (const [key, changedSections] of changes) {
+      if (!worldView.loadedChunks[key] || !bot.roycraftLightColumns.has(key)) continue;
+      const sections = pending.get(key) ?? new Set();
+      for (const section of changedSections) sections.add(section);
+      pending.set(key, sections);
+    }
+  };
   bot._client.on('update_light', receive);
+  bot.on('roycraftLightChanged', receiveLocal);
   bot.on('chunkColumnUnload', unload);
   const timer = setInterval(() => {
     for (const [key, sections] of pending) {
@@ -67,6 +88,7 @@ export function installViewerLightStream(bot, worldView, socket) {
     pending.clear();
     clearInterval(timer);
     bot._client.off('update_light', receive);
+    bot.off('roycraftLightChanged', receiveLocal);
     bot.off('chunkColumnUnload', unload);
   });
 }

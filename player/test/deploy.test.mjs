@@ -20,7 +20,7 @@ async function fixture(t) {
     await writeFile(path.join(dir, name), 'fixture');
   }
   for (const name of await readdir(new URL('../../bots/', import.meta.url))) {
-    if ((name.startsWith('viewer') && name.endsWith('.mjs')) || ['compat-loader.mjs', 'inventory-controller.mjs', 'chunk-light.mjs'].includes(name)) {
+    if ((name.startsWith('viewer') && name.endsWith('.mjs')) || ['compat-loader.mjs', 'inventory-controller.mjs', 'chunk-light.mjs', 'client-light.mjs'].includes(name)) {
       await copyFile(new URL(`../../bots/${name}`, import.meta.url), path.join(dir, 'bots', name));
     }
   }

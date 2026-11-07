@@ -207,6 +207,41 @@ test('real bundled mesher attaches finite water lighting and applies light-only 
   assert.ok([...dark.light].every(value => value === 0));
 });
 
+test('nearby block edits relight once for all viewers and stream actual torch light without a server packet', async t => {
+  const f = fixture(t);
+  f.bot.registry = registry;
+  f.bot.game = { minY: -64, height: 384, dimension: 'overworld' };
+  f.bot._client.emit('map_chunk', { x: 0, z: 0 });
+  const column = f.columns.get('0,0');
+  const position = new Vec3(8, 65, 8);
+  const edit = stateId => {
+    const oldBlock = column.getBlock(position);
+    oldBlock.position = position;
+    column.setBlockStateId(position, stateId);
+    const newBlock = column.getBlock(position);
+    newBlock.position = position;
+    f.bot.emit('blockUpdate', oldBlock, newBlock);
+  };
+  edit(registry.blocksByName.torch.minStateId);
+  assert.equal(column.getBlockLight(position), 14);
+  assert.equal(column.getBlockLight(position.offset(1, 0, 0)), 13);
+  await pause();
+  assert.equal(f.packets.length, 1);
+  const receiver = new Chunk();
+  loadLight(receiver, f.packets[0].light);
+  assert.equal(receiver.getBlockLight(position.offset(1, 0, 0)), 13);
+  assert.ok(f.packets[0].sections.includes(64));
+  edit(registry.blocksByName.air.minStateId);
+  await pause();
+  loadLight(receiver, f.packets.at(-1).light);
+  assert.equal(receiver.getBlockLight(position.offset(1, 0, 0)), 0, 'Removing the torch must remove its propagated light');
+  f.socket.emit('disconnect');
+  assert.equal(f.bot.listenerCount('roycraftLightChanged'), 0);
+  assert.equal(f.bot.listenerCount('blockUpdate'), 1, 'The single world-light owner is independent of viewers');
+  f.bot.emit('end');
+  assert.equal(f.bot.listenerCount('blockUpdate'), 0);
+});
+
 test('server coalesces actual column light after partial/empty masks, including boundary sections', async t => {
   const f = fixture(t);
   await f.worldView.loadChunk({ x: -16, z: 0 });
