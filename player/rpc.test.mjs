@@ -201,6 +201,27 @@ test('home chest RPCs expose crafting, placement and verified storage/retrieval 
   assert.equal(closed, 2);
 });
 
+test('sleep RPC waits for bed-use acknowledgement, exposes wake state and rejects failed bed use', async () => {
+  const { bot, rpc } = fixture();
+  bot.isSleeping = false;
+  let acknowledge;
+  bot.sleep = bed => new Promise(resolve => {
+    assert.deepEqual(bed.position, new Vec3(0, 64, 0));
+    acknowledge = () => { bot.isSleeping = true; resolve(); };
+  });
+  let settled = false;
+  const sleeping = rpc.call('sleep', [{ x: 0, y: 64, z: 0 }]).then(result => { settled = true; return result; });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(settled, false, 'a click/pending call is not acknowledged sleep');
+  acknowledge();
+  assert.deepEqual(await sleeping, { isSleeping: true });
+  bot.wake = async () => { bot.isSleeping = false; };
+  assert.deepEqual(await rpc.call('wake'), { isSleeping: false });
+  bot.sleep = async () => { throw new Error('there are monsters nearby'); };
+  await assert.rejects(rpc.call('sleep', [{ x: 0, y: 64, z: 0 }]), /monsters nearby/);
+  assert.equal(bot.isSleeping, false);
+});
+
 test('abort stops Minecraft host work, not only the isolated JavaScript process', async () => {
   const { bot, rpc, counts } = fixture();
   let rejectGoto;

@@ -62,6 +62,11 @@ test('actual strategist request receives the chosen objective above historical n
     assert.match(JSON.stringify(system), /stronghold/);
     assert.match(JSON.stringify(system), /Beds explode in the Nether and End/);
     assert.match(JSON.stringify(system), /no web\/Google tool/);
+    assert.match(JSON.stringify(system), /prefer actually sleeping through the night/);
+    assert.match(JSON.stringify(system), /Before a night trip, first secure the home respawn/);
+    assert.match(JSON.stringify(system), /server-acknowledged sleep/);
+    assert.match(JSON.stringify(system), /carry only the equipment, food and materials needed for that trip/);
+    assert.match(JSON.stringify(system), /world\/compass spawn, not proof of personal bed respawn/);
     const injected = request.messages.filter(message => message.role === 'user').at(-1);
     const payload = JSON.parse(injected.content).observation;
     assert.equal(payload.objective, PLAYER_OBJECTIVE);
