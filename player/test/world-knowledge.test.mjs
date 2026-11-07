@@ -20,8 +20,10 @@ function fixture(knowledge = createWorldKnowledge({ worldId: 'test-world' })) {
     entities: { 2: { id: 2, name: 'sheep', type: 'mob', position: new Vec3(2, 64, 0) } },
     inventory: { items: () => [] }, registry, game: { dimension: 'overworld' },
     blockAt(p) {
-      if (!loaded.has(`${Math.floor(p.x)},${Math.floor(p.y)},${Math.floor(p.z)}`)) return null;
-      return { name: 'grass_block', type: registry.blocksByName.grass_block.id, position: p, biome: registry.biomesByName.plains };
+      if (!loaded.size || p.x < 0 || p.x > 200 || p.y < 64 || p.y > 67 || p.z < 0 || p.z > 1) return null;
+      const ground = loaded.has(`${Math.floor(p.x)},${Math.floor(p.y)},${Math.floor(p.z)}`);
+      return { name: ground ? 'grass_block' : 'air', type: ground ? registry.blocksByName.grass_block.id : 0,
+        position: p.floored(), shapes: ground ? [[0, 0, 0, 1, 1, 1]] : [], biome: registry.biomesByName.plains };
     },
     world: {
       getColumns: () => [{ chunkX: 12, chunkZ: 0, column }],

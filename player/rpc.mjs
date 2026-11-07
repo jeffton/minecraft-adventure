@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { createBlockVisibility, PERCEPTION_VERSION } from './block-visibility.mjs';
 import { itemNavigationGoal } from './item-navigation.mjs';
 import { worldClock } from './clock.mjs';
 import { findLoadedBlocks } from './world-search.mjs';
@@ -7,7 +8,7 @@ import { createWorldKnowledge, loadedBiome, registryInfo } from './world-knowled
 export const RPC_DESCRIPTION = `Skills are async JavaScript function bodies with mc.call(method,...args), mc.observe(), input.
 Await every call. Returned values are observations, not proof that your whole objective succeeded.
 observe() → health, food, oxygen, position, dimension, inventory, nearby entities/blocks, time and weather. Sheep include woolColor, sheared and baby when their metadata has arrived; dropped item entities include item stacks once received. Shearing is entity activation with shears equipped, not attack. Activation only sends an interaction: verify changed sheep state, actual dropped wool and inventory pickup separately. Sheared sheep regrow wool by eating grass. Time includes world day, Minecraft HH:mm, Overworld sunrise/sunset intervals and seconds until their next occurrence/night at the normal 20 ticks/second; daylightCycleRunning reports a frozen clock and server lag stretches those estimates. weather includes isRaining, rainLevel and thunderLevel (0–1); rain alone does not mean thunder. light samples the player's feet: {position,blockLight,skyLight}, raw received values (0–15 when available), not a spawn-safety verdict. skyLight is the raw sky channel, not adjusted for night/weather.
-blockAt({x,y,z}) returns the loaded block including blockLight and skyLight (query the air where a mob would stand, not just its floor). findBlocks({names:[name],radius,count}) searches currently loaded columns, with optional caller-selected distance/count filters, itemInfo(name), blockInfo(name).
+blockAt({x,y,z}) returns a currently visible loaded block including blockLight and skyLight, or null when unseen/unloaded (null means unknown, NOT air). findBlocks({names:[name],radius,count}) searches visible blocks only, with optional caller-selected distance/count filters. No X-ray: opaque walls, terrain and leaves conceal blocks/entities; glass and water allow sight. Turn/explore or remove exposed covering blocks to reveal more; don't treat unknown neighbors as guaranteed safe. itemInfo(name), blockInfo(name).
 registryInfo(type,{names:[name],search,limit}) returns {type,items:[entries],truncated}; queries real items/blocks/biomes/entities registry (provide names or search; optional limit is caller-selected). Block entries include named drops and harvest tools; biome entries include category/temperature/dimension, NOT mob spawn guarantees.
 biomeAt({x,y,z}) returns biome only for a loaded block, or null if biome data is absent. observe() includes current biome.
 knownLocations({kind:'biome'|'block'|'entity'|'visited',names:[name],dimension,limit}) returns {worldId,historical:true,locations:[{kind,name,position,dimension,observedAt}],truncated}, NOT an array. These are world-scoped historical observations, not live guarantees. Query visited/biome samples to guide exploration beyond the current radius; unobserved coordinates are never supplied. Entities may move and resources may be gone; verify on arrival.
@@ -46,6 +47,7 @@ function packBlock(block) {
 
 /** Explicit low-level Mineflayer boundary. No dynamic property traversal or executable host callbacks. */
 export function createMinecraftRpc(bot, { Vec3, goals, onEvent = () => {}, homeState = () => null, knowledge = createWorldKnowledge() }) {
+  const { visibleBlock, visibleEntity } = createBlockVisibility(bot, Vec3);
   let busy = false;
   const idleWaiters = new Set();
   let epoch = 0;
@@ -56,7 +58,7 @@ export function createMinecraftRpc(bot, { Vec3, goals, onEvent = () => {}, homeS
   const vector = value => { const p = position(value); return new Vec3(p.x, p.y, p.z); };
   const block = value => {
     const found = bot.blockAt(vector(value));
-    if (!found) throw new Error('Block is not loaded');
+    if (!visibleBlock(found)) throw new Error('Block is not visible or not loaded');
     return found;
   };
   const itemType = name => {
@@ -77,7 +79,7 @@ export function createMinecraftRpc(bot, { Vec3, goals, onEvent = () => {}, homeS
   };
   const entity = id => {
     integer(id, 'entity id');
-    if (!Object.hasOwn(bot.entities, id)) throw new Error(`Entity ${id} is no longer visible`);
+    if (!Object.hasOwn(bot.entities, id) || !visibleEntity(bot.entities[id])) throw new Error(`Entity ${id} is no longer visible`);
     return bot.entities[id];
   };
   const getWindow = (handle, kind) => {
@@ -108,7 +110,7 @@ export function createMinecraftRpc(bot, { Vec3, goals, onEvent = () => {}, homeS
 
   function observe() {
     const origin = bot.entity?.position;
-    const entities = origin ? Object.values(bot.entities).filter(value => value.position && value.id !== bot.entity.id)
+    const entities = origin ? Object.values(bot.entities).filter(value => value.position && value.id !== bot.entity.id && visibleEntity(value))
       .map(value => packEntity(value, origin))
       .sort((a, b) => a.distance - b.distance) : [];
     const blocks = [];
@@ -117,7 +119,7 @@ export function createMinecraftRpc(bot, { Vec3, goals, onEvent = () => {}, homeS
         for (let x = -2; x <= 2; x++) {
           for (let z = -2; z <= 2; z++) {
             const found = bot.blockAt(new Vec3(Math.floor(origin.x) + x, Math.floor(origin.y) + y, Math.floor(origin.z) + z));
-            if (found) blocks.push(packBlock(found));
+            if (visibleBlock(found)) blocks.push(packBlock(found));
           }
         }
       }
@@ -133,7 +135,7 @@ export function createMinecraftRpc(bot, { Vec3, goals, onEvent = () => {}, homeS
       weather: { isRaining: bot.isRaining, rainLevel: bot.rainState, thunderLevel: bot.thunderState },
       inventory: bot.inventory.items().map(packItem), heldItem: packItem(bot.heldItem), entities, blocks
     };
-    knowledge.observe(observation);
+    knowledge.observe({ ...observation, perception: PERCEPTION_VERSION });
     return observation;
   }
 
@@ -178,7 +180,8 @@ export function createMinecraftRpc(bot, { Vec3, goals, onEvent = () => {}, homeS
     const target = block(p);
     const before = packBlock(target);
     await bot.dig(target);
-    const after = packBlock(bot.blockAt(vector(p)));
+    const result = bot.blockAt(vector(p));
+    const after = visibleBlock(result) ? packBlock(result) : null;
     if (after && after.type !== before.type) onEvent({ type: 'block-mined', block: before, result: after });
     return after;
   }
@@ -186,24 +189,29 @@ export function createMinecraftRpc(bot, { Vec3, goals, onEvent = () => {}, homeS
   const methods = {
     observe,
     blockAt(p) {
-      const found = packBlock(bot.blockAt(vector(p)));
-      knowledge.observe({ dimension: bot.game?.dimension, blocks: found ? [found] : [] });
+      const target = bot.blockAt(vector(p));
+      const found = visibleBlock(target) ? packBlock(target) : null;
+      knowledge.observe({ dimension: bot.game?.dimension, blocks: found ? [found] : [], perception: PERCEPTION_VERSION });
       return found;
     },
     registryInfo: (type, query) => registryInfo(bot.registry, type, query),
     biomeAt(p) {
+      block(p);
       const biome = loadedBiome(bot, position(p), Vec3);
       knowledge.observe({ dimension: bot.game?.dimension, biome });
       return biome;
     },
-    knownLocations: query => knowledge.locations(query),
+    knownLocations: query => knowledge.locations({ ...query, perception: PERCEPTION_VERSION }),
     async findBlocks({ names, radius, count }) {
       if (!Array.isArray(names) || !names.length) throw new Error('Provide block names');
       const started = epoch;
-      const found = await findLoadedBlocks(bot, Vec3, names, { radius, count, pack: p => packBlock(bot.blockAt(p)) }, () => {
+      const found = await findLoadedBlocks(bot, Vec3, names, { radius, count, pack: p => {
+        const target = bot.blockAt(p);
+        return visibleBlock(target) ? packBlock(target) : null;
+      } }, () => {
         if (started !== epoch) throw new Error('Block search was cancelled');
       });
-      knowledge.observe({ dimension: bot.game?.dimension, blocks: found });
+      knowledge.observe({ dimension: bot.game?.dimension, blocks: found, perception: PERCEPTION_VERSION });
       return found;
     },
     itemInfo(name) {
@@ -265,7 +273,7 @@ export function createMinecraftRpc(bot, { Vec3, goals, onEvent = () => {}, homeS
       active();
       await bot.waitForTicks(8);
       active();
-      const drops = () => Object.values(bot.entities).filter(value => value.name === 'item' &&
+      const drops = () => Object.values(bot.entities).filter(value => value.name === 'item' && visibleEntity(value) &&
         value.position.distanceTo(target.position) <= 6).sort((a, b) =>
         a.position.distanceTo(bot.entity.position) - b.position.distanceTo(bot.entity.position));
       const visited = new Set();
@@ -323,7 +331,8 @@ export function createMinecraftRpc(bot, { Vec3, goals, onEvent = () => {}, homeS
       }
       const reference = block(p);
       await bot.placeBlock(reference, vector(direction));
-      return packBlock(bot.blockAt(reference.position.plus(vector(direction))));
+      const placed = bot.blockAt(reference.position.plus(vector(direction)));
+      return visibleBlock(placed) ? packBlock(placed) : null;
     },
     async activateBlock(p) {
       const target = block(p);

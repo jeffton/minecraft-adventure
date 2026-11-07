@@ -77,30 +77,33 @@ export function createWorldKnowledge({ directory, worldId = 'unpersisted' } = {}
   let dirty = false;
   let writing = Promise.resolve();
 
-  function record(kind, name, position, dimension, at) {
+  function record(kind, name, position, dimension, at, perception) {
     if (!position || ![position.x, position.y, position.z].every(Number.isFinite)) return;
     const cell = [position.x, position.y, position.z].map(value => Math.floor(value / 16));
     const key = JSON.stringify([dimension, kind, name, ...cell]);
     const old = facts.get(key);
     facts.delete(key);
-    facts.set(key, { kind, name, dimension, position: { x: position.x, y: position.y, z: position.z }, firstSeen: old?.firstSeen ?? at, lastSeen: at });
+    facts.set(key, { kind, name, dimension, position: { x: position.x, y: position.y, z: position.z }, firstSeen: old?.firstSeen ?? at, lastSeen: at, ...(perception && { perception }) });
     dirty = true;
   }
 
   return {
     worldId,
-    observe({ position, dimension, at = new Date().toISOString(), biome, entities = [], blocks = [] }) {
+    observe({ position, dimension, at = new Date().toISOString(), biome, entities = [], blocks = [], perception }) {
       if (typeof dimension !== 'string') return;
       if (position) record('visited', 'visited', position, dimension, at);
       if (biome) record('biome', biome.name, biome.position ?? position, dimension, at);
-      for (const entity of entities) if (entity.name) record('entity', entity.name, entity.position, dimension, at);
-      for (const block of blocks) if (block && !['air', 'cave_air', 'void_air'].includes(block.name)) record('block', block.name, block.position, dimension, at);
+      for (const entity of entities) if (entity.name) record('entity', entity.name, entity.position, dimension, at, perception);
+      for (const block of blocks) if (block && !['air', 'cave_air', 'void_air'].includes(block.name)) record('block', block.name, block.position, dimension, at, perception);
     },
-    locations({ kind, names, dimension, limit } = {}) {
+    locations({ kind, names, dimension, limit, perception } = {}) {
       if (kind !== undefined && !KINDS.includes(kind)) throw new Error(`kind must be ${KINDS.join(', ')}`);
       namesValue(names);
       limit = limitValue(limit);
-      const matches = [...facts.values()].reverse().filter(fact => (!kind || fact.kind === kind) && (!names || names.includes(fact.name)) && (!dimension || fact.dimension === dimension));
+      // Legacy block/entity coordinates came from unrestricted chunk reads.
+      // Keep the archive intact, but don't expose those as legitimate sightings.
+      const matches = [...facts.values()].reverse().filter(fact =>
+        (!perception || !['block', 'entity'].includes(fact.kind) || fact.perception === perception) && (!kind || fact.kind === kind) && (!names || names.includes(fact.name)) && (!dimension || fact.dimension === dimension));
       return { worldId, historical: true, locations: matches.slice(0, limit).map(value => structuredClone(value)), truncated: matches.length > limit };
     },
     flush() {

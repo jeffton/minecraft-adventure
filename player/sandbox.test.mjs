@@ -7,6 +7,8 @@ import { execFile } from 'node:child_process';
 import { SkillSandbox } from './sandbox.mjs';
 import { createSandboxBroker } from './sandbox-broker.mjs';
 import { prepareSandboxRoot } from './sandbox-install.mjs';
+import { createMinecraftRpc } from './rpc.mjs';
+import { createRequire } from 'node:module';
 
 const canRun = process.getuid?.() === 0;
 let broker;
@@ -107,6 +109,43 @@ test('real worker composes RPC, returns an immediate handle, and records trusted
   assert.equal(result.value.inventory[0].count, 3);
   assert.ok(events.some(event => event.type === 'rpc-result'));
   assert.ok(rpc.cancels > 0);
+  await drained();
+});
+
+test('real isolated JavaScript cannot inspect or dig concealed materials through RPC', { skip: !canRun }, async () => {
+  const require = createRequire('/opt/minecraft-mindcraft/package.json');
+  const { Vec3 } = require('vec3');
+  const registry = require('minecraft-data')('1.21.4');
+  const bot = {
+    entity: { id: 1, position: new Vec3(0.5, 64, 0.5) }, entities: {}, registry,
+    inventory: { items: () => [] }, game: { dimension: 'overworld' },
+    blockAt(p) {
+      const name = p.x === 1 ? 'stone' : p.x === 2 && p.y === 64 && p.z === 0 ? 'iron_ore' : 'air';
+      return { name, type: registry.blocksByName[name].id, position: p.floored(),
+        shapes: name === 'air' ? [] : [[0, 0, 0, 1, 1, 1]] };
+    },
+    stopDigging() {}, clearControlStates() {}, deactivateItem() {}, pathfinder: { setGoal() {} },
+    dig() { throw new Error('Unseen dig reached Mineflayer'); },
+  };
+  const column = { minY: 64, sections: [{}], getBlockType: p => bot.blockAt(p).type };
+  bot.world = { getColumns: () => [{ chunkX: 0, chunkZ: 0, column }], getColumn: () => column };
+  const rpc = createMinecraftRpc(bot, { Vec3, goals: {} });
+  const sandbox = new SkillSandbox({ rpc, socketPath });
+  const id = sandbox.start(`
+    const p = {x:2,y:64,z:0};
+    const result = {block:await mc.call('blockAt', p), scan:await mc.call('findBlocks', {names:['iron_ore']})};
+    try { await mc.call('dig', p); } catch (e) { result.error = e.message; }
+    result.observation = await mc.observe();
+    return result;
+  `, { name: 'Inspect concealed ore visibility', worldId: 'visibility-test' });
+  const result = await sandbox.wait(id);
+  assert.equal(result.state, 'completed', JSON.stringify(result));
+  assert.equal(result.value.block, null);
+  assert.deepEqual(result.value.scan, []);
+  assert.match(result.value.error, /not visible/);
+  assert.ok(!JSON.stringify(result.value.observation).includes('iron_ore'));
+  assert.ok(!JSON.stringify(result.before).includes('iron_ore'));
+  assert.ok(!JSON.stringify(result.after).includes('iron_ore'));
   await drained();
 });
 
