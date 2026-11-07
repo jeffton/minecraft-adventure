@@ -41,7 +41,7 @@ curl -fsS http://127.0.0.1:8766/healthz
 cd player && npm test && npm run check
 ```
 
-`player/install.sh` installs reviewed code without starting services or changing a world. `player/fresh-world.py --world-id <identity> --activate` performs an explicit stopped-state transition: full backup, retained original world, fresh map/world identity, removal of obsolete offline bot whitelist entries, and root-only rollback instructions. It leaves services stopped for coordinated activation.
+`player/install.sh` installs reviewed code without starting services or changing a world. `player/fresh-world.py --world-id <identity> --activate` performs an explicit stopped-state transition: full backup, retained original world, fresh map/world identity, removal of obsolete offline bot whitelist entries, and root-only rollback instructions. It stops the player and sandbox before archiving and leaves services stopped for coordinated activation. Use a never-used identity: existing player, world or map data rejects the transition. Strategy and survival mechanics come from the installed code; home coordinates, notes, controllers, terrain knowledge and conversations start separately under the new identity. Existing world state stays retained. Do not replace Paper's world while retaining `PLAYER_WORLD_ID`: it is the explicit memory boundary, not an automatically detected server identity.
 
 Runtime state: `/var/lib/minecraft-player/`. Server and archives: `/var/lib/minecraft-adventure/`. Public diary: `/var/www/roybot.se/minecraft/`. Root-owned code: `/opt/minecraft-adventure/`. The retained `bots/` files supply protocol compatibility and read-only renderer patches; the retired four-player planner and its data are not the active gameplay controller.
 

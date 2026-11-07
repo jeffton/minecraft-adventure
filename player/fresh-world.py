@@ -13,6 +13,18 @@ import tarfile
 
 ROOT = Path('/var/lib/minecraft-adventure')
 SERVER = ROOT / 'server'
+PLAYER_STATE = Path('/var/lib/minecraft-player')
+
+
+def require_fresh_identity(world_id):
+    destinations = [
+        PLAYER_STATE / world_id,
+        ROOT / 'observations' / f'gameplay-{world_id}.jsonl',
+        SERVER / f'bluemap-{world_id}',
+        *(SERVER / f'world-{world_id}{suffix}' for suffix in ['', '_nether', '_the_end']),
+    ]
+    if any(destination.exists() for destination in destinations):
+        raise ValueError('World identity already has world, map or player data; use a new identity')
 
 
 def replace_property(text, key, value):
@@ -45,11 +57,11 @@ def main():
         raise ValueError('Root and a safe explicit world identity are required')
     world_name = 'world-' + args.world_id
     map_name = 'bluemap-' + args.world_id
-    if (SERVER / world_name).exists() or (SERVER / map_name).exists():
-        raise ValueError('Fresh world/map destination already exists; refusing another transition')
+    require_fresh_identity(args.world_id)
     if not Path('/opt/minecraft-adventure/player/runtime.mjs').is_file():
         raise ValueError('Install and review the player before changing the world')
-    run('systemctl', 'stop', 'minecraft-adventure-diary.timer', 'minecraft-adventure-diary.service')
+    run('systemctl', 'stop', 'minecraft-adventure-diary.timer', 'minecraft-adventure-diary.service',
+        'minecraft-player.service', 'minecraft-player-sandbox.socket', 'minecraft-player-sandbox.service')
     run('systemctl', 'disable', '--now', 'minecraft-adventure-bots.service', 'minecraft-planner.service')
     run('systemctl', 'stop', 'minecraft-building-camera.service', 'minecraft-adventure-server.service')
     stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
@@ -59,7 +71,7 @@ def main():
     with tarfile.open(archive / 'server.tar', 'w') as backup:
         backup.add(SERVER, arcname='server')
     with tarfile.open(archive / 'agent-data.tar', 'w') as backup:
-        for source in [ROOT / 'bots', Path('/var/lib/minecraft-planner'), Path('/var/www/roybot.se/minecraft')]:
+        for source in [PLAYER_STATE, ROOT / 'bots', Path('/var/lib/minecraft-planner'), Path('/var/www/roybot.se/minecraft')]:
             backup.add(source, arcname=str(source).lstrip('/'))
     manifest = {'worldId': args.world_id, 'oldWorldRetained': True, 'archives': {}}
     for file in ['server.tar', 'agent-data.tar']:
