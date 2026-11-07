@@ -17,6 +17,8 @@ Authored commands add a surveyed shared site, incremental survival lodge constru
 
 `bootstrap.mjs` supplies narrowly checked runtime integration hooks; upstream source stays unchanged. `compat-loader.mjs` matches vanilla Java float-backed player dimensions and closes Mineflayer's physics/teleport client ticks for Paper 26.3. Unexpected upstream integration points fail explicitly.
 
+The viewer's generated custom entity assets are built by `build-entity-assets.mjs` from checksum-pinned Mojang Bedrock Samples. Camel uses the adult bind pose without saddle, bridle or reins; generated game assets stay outside this repository.
+
 ## Files and services
 
 - Source dependency: `/opt/minecraft-mindcraft`, commit `e1c1fc3ffa481506c2445fc639e16dba504b5920`.

@@ -49,6 +49,25 @@ test('base skins and modern wooden boats resolve to real installed textures', ()
   }
 });
 
+test('Java atlases match legacy mob UV pixel dimensions and witch inherits her actual body', () => {
+  for (const name of ['zombie', 'husk', 'sheep', 'llama_spit']) {
+    const model = viewerEntityModel(models, name);
+    for (const [variant, geometry] of Object.entries(model.geometry)) {
+      const file = `${viewer}/public/${model.textures[variant].replace('textures', 'textures/1.16.4')}.png`;
+      const png = fs.readFileSync(file);
+      assert.equal(geometry.texturewidth ?? 64, png.readUInt32BE(16), `${name} width`);
+      assert.equal(geometry.textureheight, png.readUInt32BE(20), `${name} height`);
+    }
+  }
+  const before = JSON.stringify(models.witch);
+  const witch = viewerEntityModel(models, 'witch').geometry.default;
+  for (const name of ['body', 'head', 'arms', 'leg0', 'leg1', 'hat4']) {
+    assert.ok(witch.bones.find(bone => bone.name === name)?.cubes.length, `Witch needs ${name}`);
+  }
+  assert.equal(witch.bones.find(bone => bone.name === 'nose').cubes.length, 2, 'Keep inherited nose plus witch wart');
+  assert.equal(JSON.stringify(models.witch), before);
+});
+
 test('patched real bundle compiles and its injected selector instantiates a textured llama mesh', () => {
   const bundle = fs.readFileSync(`${viewer}/public/index.js`, 'utf8');
   const patched = patchViewerEntities(bundle, viewerEntityModel.toString());

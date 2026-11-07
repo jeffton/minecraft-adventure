@@ -32,7 +32,26 @@ export function viewerEntityModel(models, type) {
     }
     return { ...llama, identifier: `minecraft:${type}`, geometry, textures };
   }
-  const entity = models[type];
+  let entity = models[type];
+  // The bundled geometry is Bedrock-era; the installed artwork is Java's.
+  // UVs are pixel coordinates, so use the genuine PNG's atlas dimensions.
+  const textureHeights = { zombie: 64, husk: 64, sheep: 32, llama_spit: 32 };
+  if (textureHeights[type]) {
+    entity = { ...entity, geometry: Object.fromEntries(Object.entries(entity.geometry)
+      .map(([name, geometry]) => [name, { ...geometry, textureheight: textureHeights[type] }])) };
+  }
+  if (type === 'witch') {
+    // Mojang's witch geometry inherits geometry.villager.v1.8. The upstream
+    // registry kept only the overrides, losing the body and the original nose.
+    const overrides = entity.geometry.default;
+    const additions = new Map(overrides.bones.map(bone => [bone.name, bone]));
+    const bones = models.villager.geometry.default.bones.map(bone => {
+      const extra = additions.get(bone.name);
+      additions.delete(bone.name);
+      return extra ? { ...bone, ...extra, cubes: [...(bone.cubes || []), ...(extra.cubes || [])] } : bone;
+    });
+    return { ...entity, geometry: { default: { ...overrides, bones: [...bones, ...additions.values()] } } };
+  }
   if (type === 'horse') {
     // The legacy model includes donkey ears, chests and saddle parts in its base
     // geometry. The name-only stream carries no equipment: render the bare horse.

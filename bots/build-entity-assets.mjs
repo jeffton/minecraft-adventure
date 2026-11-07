@@ -17,6 +17,11 @@ export const entitySources = {
     geometry: 'd397aa6727e906e26dd5e75a6d3471d72fac9a3421d3e332ff5a69d98794ea08',
     texture: 'goat/goat.png', sha256: '76b85155267cc6e8dc8145248ec72dce1984e1d6c08818780854922b4e264c04'
   },
+  camel: {
+    geometry: '1640b3efc06f3af3249495dde70f40c13cac15d0d6ca8bcdea0c35d2d5a55524',
+    texture: 'camel/camel.png', sha256: '046dd9058209832d2cefe3f220a16785c676dc951bb8b6fe8b0fca1bcf54d494',
+    hiddenBones: ['saddle', 'bridle', 'reins']
+  },
   glow_squid: {
     geometry: '6d282b02c42a242c2b9026cc1e3e83d4c86fa9034f1e88a11e739e74c6e6510a',
     texture: 'glow_squid/glow_squid.tga', sha256: 'bd5bff0e85f51c2be98c3134b99a41aee89a02504bca1e8b5d88cd869cac8d29'
@@ -49,7 +54,7 @@ export async function buildEntityAssets(directory) {
     license: '(c) Mojang AB. All rights reserved. Subject to the Minecraft End User License Agreement.',
     licenseUrl: base + 'LICENSE.md',
     eulaUrl: 'https://www.minecraft.net/en-us/eula',
-    pose: 'Static adult bind pose; unrolled armadillo, goat with both horns. No age/state/horn metadata or animation.',
+    pose: 'Static adult bind pose; unrolled armadillo, goat with both horns, camel without saddle/bridle/reins. No age/state/horn metadata or animation.',
     sources: []
   };
   for (const [name, source] of Object.entries(entitySources)) {
