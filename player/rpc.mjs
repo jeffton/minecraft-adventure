@@ -5,8 +5,8 @@ import { createWorldKnowledge, loadedBiome, registryInfo } from './world-knowled
 
 export const RPC_DESCRIPTION = `Skills are async JavaScript function bodies with mc.call(method,...args), mc.observe(), input.
 Await every call. Returned values are observations, not proof that your whole objective succeeded.
-observe() → health, food, oxygen, position, dimension, inventory, nearby entities/blocks, time and weather. time includes world day, Minecraft HH:mm, Overworld sunrise/sunset intervals and seconds until their next occurrence/night at the normal 20 ticks/second; daylightCycleRunning reports a frozen clock and server lag stretches those estimates. weather includes isRaining, rainLevel and thunderLevel (0–1); rain alone does not mean thunder.
-blockAt({x,y,z}), findBlocks({names:[name],radius,count}) searches currently loaded columns, with optional caller-selected distance/count filters, itemInfo(name), blockInfo(name).
+observe() → health, food, oxygen, position, dimension, inventory, nearby entities/blocks, time and weather. time includes world day, Minecraft HH:mm, Overworld sunrise/sunset intervals and seconds until their next occurrence/night at the normal 20 ticks/second; daylightCycleRunning reports a frozen clock and server lag stretches those estimates. weather includes isRaining, rainLevel and thunderLevel (0–1); rain alone does not mean thunder. light samples the player's feet: {position,blockLight,skyLight}, raw received values (0–15 when available), not a spawn-safety verdict. skyLight is the raw sky channel, not adjusted for night/weather.
+blockAt({x,y,z}) returns the loaded block including blockLight and skyLight (query the air where a mob would stand, not just its floor). findBlocks({names:[name],radius,count}) searches currently loaded columns, with optional caller-selected distance/count filters, itemInfo(name), blockInfo(name).
 registryInfo(type,{names:[name],search,limit}) returns {type,items:[entries],truncated}; queries real items/blocks/biomes/entities registry (provide names or search; optional limit is caller-selected). Block entries include named drops and harvest tools; biome entries include category/temperature/dimension, NOT mob spawn guarantees.
 biomeAt({x,y,z}) returns biome only for a loaded block, or null if biome data is absent. observe() includes current biome.
 knownLocations({kind:'biome'|'block'|'entity'|'visited',names:[name],dimension,limit}) returns {worldId,historical:true,locations:[{kind,name,position,dimension,observedAt}],truncated}, NOT an array. These are world-scoped historical observations, not live guarantees. Query visited/biome samples to guide exploration beyond the current radius; unobserved coordinates are never supplied. Entities may move and resources may be gone; verify on arrival.
@@ -39,7 +39,7 @@ function packItem(item) {
   return item ? { name: item.name, count: item.count, slot: item.slot, type: item.type, metadata: item.metadata } : null;
 }
 function packBlock(block) {
-  return block ? { name: block.name, type: block.type, position: packPosition(block.position), properties: block.getProperties?.() ?? {} } : null;
+  return block ? { name: block.name, type: block.type, position: packPosition(block.position), blockLight: block.light, skyLight: block.skyLight, properties: block.getProperties?.() ?? {} } : null;
 }
 
 /** Explicit low-level Mineflayer boundary. No dynamic property traversal or executable host callbacks. */
@@ -102,9 +102,11 @@ export function createMinecraftRpc(bot, { Vec3, goals, onEvent = () => {}, knowl
       }
     }
     const biome = origin ? loadedBiome(bot, packPosition(origin), Vec3, false) : null;
+    const feetPosition = origin && new Vec3(Math.floor(origin.x), Math.floor(origin.y), Math.floor(origin.z));
+    const feet = feetPosition && bot.blockAt(feetPosition);
     const observation = {
       at: new Date().toISOString(), health: bot.health, food: bot.food, oxygen: bot.oxygenLevel,
-      biome,
+      biome, light: { position: packPosition(feetPosition), blockLight: feet?.light, skyLight: feet?.skyLight },
       position: packPosition(origin), dimension: bot.game?.dimension,
       time: worldClock(bot.time, bot.game?.dimension),
       weather: { isRaining: bot.isRaining, rainLevel: bot.rainState, thunderLevel: bot.thunderState },

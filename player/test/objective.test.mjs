@@ -41,6 +41,7 @@ test('actual strategist request receives the chosen objective above historical n
   const observation = planningObservation({
     objective: 'Obsolete dragon goal', notes: historicalNotes,
     inventory: [{ name: 'white_wool', count: 2 }],
+    light: { position: { x: 12, y: 64, z: 8 }, blockLight: 0, skyLight: 15 },
     time: { timeOfDay: 11800, sunrise: 0, sunset: 12000 }, weather: { thunder: true },
     controller: { active: { version: 'current' } },
   });
@@ -62,6 +63,10 @@ test('actual strategist request receives the chosen objective above historical n
     assert.match(JSON.stringify(system), /stronghold/);
     assert.match(JSON.stringify(system), /Beds explode in the Nether and End/);
     assert.match(JSON.stringify(system), /no web\/Google tool/);
+    assert.match(JSON.stringify(system), /home-lighting priority/);
+    assert.match(JSON.stringify(system), /measured light and available resources/);
+    assert.match(JSON.stringify(system), /most naturally spawning Overworld monsters require block light 0/);
+    assert.match(JSON.stringify(system), /raw skyLight is not persistent torch coverage/);
     assert.match(JSON.stringify(system), /prefer actually sleeping through the night/);
     assert.match(JSON.stringify(system), /Before a night trip, first secure the home respawn/);
     assert.match(JSON.stringify(system), /server-acknowledged sleep/);
@@ -74,6 +79,7 @@ test('actual strategist request receives the chosen objective above historical n
     assert.deepEqual(payload.time, observation.time);
     assert.deepEqual(payload.weather, observation.weather);
     assert.deepEqual(payload.inventory, observation.inventory);
+    assert.deepEqual(payload.light, observation.light);
   } finally {
     await agent.close();
   }
