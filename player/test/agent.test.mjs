@@ -345,6 +345,13 @@ test('completed episodes start fresh after reopen, and worlds remain isolated', 
     agent = await f.open('fresh-two');
     await agent.step({ health: 20 });
     assert.doesNotMatch(JSON.stringify(f.calls[2].context), /unique-oak-coordinate-marker|I remember the old oak tree/);
+    for (const { context } of f.calls) {
+      const instructions = JSON.stringify(context);
+      assert.match(instructions, /David's harvesting preference/);
+      assert.match(instructions, /David's mining preference/);
+      assert.match(instructions, /NOT an instruction to start mining or replace the current mission/);
+      assert.match(instructions, /Overworld ore guide for Java 26\.3/);
+    }
   } finally { await agent.close(); }
 });
 
