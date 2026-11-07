@@ -1,0 +1,8 @@
+{
+  "id": "roycraft-skin",
+  "name": "Roycraft Skin",
+  "version": "1.0.0",
+  "description": "Signed Roy Batty skin for the local offline Roy profile",
+  "authors": ["Roycraft"],
+  "main": "roycraft.skin.RoySkin"
+}
