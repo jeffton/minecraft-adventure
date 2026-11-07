@@ -64,6 +64,8 @@ test('actual strategist request receives the chosen objective above historical n
     assert.match(JSON.stringify(system), /Beds explode in the Nether and End/);
     assert.match(JSON.stringify(system), /no web\/Google tool/);
     assert.match(JSON.stringify(system), /home-lighting priority/);
+    assert.match(JSON.stringify(system), /Keep the selected home as the stable anchor/);
+    assert.match(JSON.stringify(system), /use select_home when choosing the first home or deliberately relocating/);
     assert.match(JSON.stringify(system), /measured light and available resources/);
     assert.match(JSON.stringify(system), /most naturally spawning Overworld monsters require block light 0/);
     assert.match(JSON.stringify(system), /raw skyLight is not persistent torch coverage/);
