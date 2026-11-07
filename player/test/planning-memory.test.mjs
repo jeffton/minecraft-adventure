@@ -39,10 +39,16 @@ test('real model tools select a home, retain it across fresh mission threads, re
     models: ['gpt-6.1-sol', 'gpt-6.1-terra'].map(id => ({ id, reasoning: true, input: ['text'], contextWindow: 131072 })),
   });
   const selected = { dimension: 'overworld', position: { x: 168, y: 70, z: -175 }, reason: 'Observed chest and shelter' };
+  const knowledge = { facilities: [
+    { name: 'crafting_table', position: { x: 167, y: 70, z: -175 } },
+    { name: 'furnace', position: { x: 164, y: 70, z: -172 }, fuel: 'unknown' },
+    { name: 'chest', position: { x: 168, y: 70, z: -175 }, items: [{ name: 'oak_planks', count: 12 }], observedAt: '2026-11-07T12:00:00Z' },
+  ] };
   const requests = [];
   const response = value => async context => { requests.push(structuredClone(context)); return value; };
   provider.setResponses([
     response(fauxAssistantMessage(fauxToolCall('select_home', selected), { stopReason: 'toolUse' })),
+    response(fauxAssistantMessage(fauxToolCall('remember_home', { knowledge }), { stopReason: 'toolUse' })),
     response(fauxAssistantMessage(fauxToolCall('remember', { notes: { lesson: 'Keep home intact' } }), { stopReason: 'toolUse' })),
     response(fauxAssistantMessage('Continue the base.')),
     response(fauxAssistantMessage('Return to the same home.')),
@@ -61,11 +67,14 @@ test('real model tools select a home, retain it across fresh mission threads, re
   memory = await openPlanningMemory(file);
   agent = await open();
   try { await agent.step(observation(1)); } finally { await agent.close(); }
-  for (const request of [requests[3], requests[4]]) {
+  for (const request of [requests[4], requests[5]]) {
     const payload = JSON.parse(request.messages.filter(message => message.role === 'user').at(-1).content);
     assert.deepEqual(payload.observation.home, selected);
     assert.deepEqual(payload.observation.notes.home, selected);
     assert.equal(payload.observation.notes.lesson, 'Keep home intact');
+    assert.deepEqual(payload.observation.homeState.knowledge, knowledge);
+    assert.deepEqual(payload.observation.homeState.home, selected);
+    assert.equal(payload.observation.homeState.provenance, 'Agent-maintained observations; not automatically synchronized with the world');
   }
-  assert.equal(JSON.parse(requests[4].messages.filter(message => message.role === 'user').at(-1).content).observation.life, 1);
+  assert.equal(JSON.parse(requests[5].messages.filter(message => message.role === 'user').at(-1).content).observation.life, 1);
 });

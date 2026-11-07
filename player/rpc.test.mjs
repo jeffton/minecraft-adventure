@@ -34,6 +34,15 @@ function fixture() {
   return { bot, inventory, counts, rpc: createMinecraftRpc(bot, { Vec3, goals: { GoalNear } }) };
 }
 
+test('skill observations read the current canonical home state on every call', () => {
+  const { bot } = fixture();
+  let state = null;
+  const rpc = createMinecraftRpc(bot, { Vec3, goals: { GoalNear }, homeState: () => state });
+  assert.equal(rpc.observe().homeState, null);
+  state = { knowledge: { furnace: 'Observed with coal' }, recordedAt: '2026-11-07T12:00:00Z' };
+  assert.deepEqual(rpc.observe().homeState, state);
+});
+
 test('entity interaction uses a concrete hit without fabricating shearing or pickup success', async () => {
   const { bot, rpc, inventory } = fixture();
   const sheep = { id: 7, name: 'sheep', height: 1.3, position: new Vec3(1, 64, 0) };

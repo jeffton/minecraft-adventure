@@ -32,7 +32,7 @@ export function playerState(bot, { worldId, session, events, action, thinking, e
     worldId, updatedAt: at, phase: 'survival', serverVersion: bot.version,
     objective: PLAYER_OBJECTIVE,
     longTerm: PLAYER_OBJECTIVE,
-    home: notes.home ?? null, bots: [actor], milestones: [], events,
+    home: notes.home ?? null, homeState: notes.homeState ?? null, bots: [actor], milestones: [], events,
   };
 }
 

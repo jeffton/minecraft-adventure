@@ -160,7 +160,7 @@ export async function runPlayer(env = process.env) {
     movements.scafoldingBlocks = [];
     bot.pathfinder.setMovements(movements);
     const knowledge = await createWorldKnowledge({ directory: stateDir, worldId });
-    const rpc = createMinecraftRpc(bot, { Vec3, goals, knowledge, onEvent: event => {
+    const rpc = createMinecraftRpc(bot, { Vec3, goals, knowledge, homeState: () => memory.homeState, onEvent: event => {
       emit('minecraft_rpc', event.method ?? event.type, { method: event.method });
       if (event.type === 'block-mined') {
         emit('gather', `Mined ${event.block.name} at ${JSON.stringify(event.block.position)}.`, { material: event.block.name, position: event.block.position, verified: true });

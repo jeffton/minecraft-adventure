@@ -44,7 +44,7 @@ function packBlock(block) {
 }
 
 /** Explicit low-level Mineflayer boundary. No dynamic property traversal or executable host callbacks. */
-export function createMinecraftRpc(bot, { Vec3, goals, onEvent = () => {}, knowledge = createWorldKnowledge() }) {
+export function createMinecraftRpc(bot, { Vec3, goals, onEvent = () => {}, homeState = () => null, knowledge = createWorldKnowledge() }) {
   let busy = false;
   const idleWaiters = new Set();
   let epoch = 0;
@@ -127,7 +127,7 @@ export function createMinecraftRpc(bot, { Vec3, goals, onEvent = () => {}, knowl
     const observation = {
       at: new Date().toISOString(), health: bot.health, food: bot.food, oxygen: bot.oxygenLevel,
       biome, light: { position: packPosition(feetPosition), blockLight: feet?.light, skyLight: feet?.skyLight },
-      position: packPosition(origin), dimension: bot.game?.dimension,
+      position: packPosition(origin), dimension: bot.game?.dimension, homeState: homeState(),
       time: worldClock(bot.time, bot.game?.dimension),
       weather: { isRaining: bot.isRaining, rainLevel: bot.rainState, thunderLevel: bot.thunderState },
       inventory: bot.inventory.items().map(packItem), heldItem: packItem(bot.heldItem), entities, blocks
