@@ -1,4 +1,5 @@
 import { trackViewerLightColumns } from './viewer.mjs';
+import { withDoorPassage } from './door-navigation.mjs';
 import { startPlayerLifecycle } from './lifecycle.mjs';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { appendFile, mkdir } from 'node:fs/promises';
@@ -29,6 +30,7 @@ import { missionController, planningObservation } from './mission.mjs';
 const require = createRequire('/opt/minecraft-mindcraft/package.json');
 const mineflayer = require('mineflayer');
 const { pathfinder, Movements, goals } = require('mineflayer-pathfinder');
+const DoorMovements = withDoorPassage(Movements);
 const { Vec3 } = require('vec3');
 const viewer = require('prismarine-viewer');
 
@@ -139,7 +141,7 @@ export async function runPlayer(env = process.env) {
     });
     signal.throwIfAborted();
     if (bot.game.gameMode !== 'survival') throw new Error('Player requires survival mode');
-    const movements = new Movements(bot);
+    const movements = new DoorMovements(bot);
     movements.allow1by1towers = false;
     movements.canDig = false;
     movements.allowSprinting = false;
