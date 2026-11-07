@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { createRequire } from 'node:module';
-import { withDoorPassage } from '../door-navigation.mjs';
+import { installDoorWaypoints, withDoorPassage } from '../door-navigation.mjs';
 import { createMinecraftRpc } from '../rpc.mjs';
 
 const require = createRequire('/opt/minecraft-mindcraft/package.json');
@@ -94,6 +94,63 @@ test('diagonal door entry respects the hinge-side panel instead of cutting throu
     const neighbors = movements.getNeighbors(new Move(-1, 1, -1, 0, 0));
     const entersDoor = neighbors.some(node => node.x === 0 && node.y === 1 && node.z === 0);
     assert.equal(entersDoor, hinge === 'right');
+  }
+});
+
+function followDoorPath(repair, reverse, hinge) {
+  const f = fixture('acacia_door', 'east', hinge);
+  const { bot } = f;
+  f.setOpen(true);
+  Object.assign(bot.entity, {
+    position: new Vec3(reverse ? 2.5 : -1.56023241057093, 1, 0.5),
+    velocity: new Vec3(0, 0, 0), onGround: true,
+    yaw: 0, pitch: 0, attributes: {},
+  });
+  bot.inventory.slots = [];
+  const controls = () => Object.fromEntries(['forward', 'back', 'left', 'right', 'jump', 'sprint', 'sneak'].map(name => [name, false]));
+  bot.controlState = controls();
+  bot.jumpTicks = 0;
+  bot.jumpQueued = false;
+  bot.fireworkRocketDuration = 0;
+  bot.version = '1.21.4';
+  bot.physics = require('prismarine-physics').Physics(registry, bot.world);
+  bot.setControlState = (name, value) => { bot.controlState[name] = value; };
+  bot.clearControlStates = () => { bot.controlState = controls(); };
+  bot.look = (yaw, pitch) => { Object.assign(bot.entity, { yaw, pitch }); };
+  require('mineflayer-pathfinder').pathfinder(bot);
+  const movements = new (withDoorPassage(Movements))(bot);
+  movements.canDig = false;
+  movements.allowParkour = false;
+  movements.allowSprinting = false;
+  movements.allow1by1towers = false;
+  movements.scafoldingBlocks = [];
+  bot.pathfinder.setMovements(movements);
+  const paths = [];
+  bot.on('path_update', result => {
+    paths.push(result.path.map(node => ({ x: node.x, y: node.y, z: node.z })));
+  });
+  const remove = repair ? installDoorWaypoints(bot) : () => {};
+  const goal = new goals.GoalNear(reverse ? -2 : 2, 1, 0, 0);
+  bot.pathfinder.setGoal(goal);
+  for (let tick = 0; tick < 100 && bot.pathfinder.goal; tick++) {
+    bot.emit('physicsTick');
+    const state = new (require('prismarine-physics').PlayerState)(bot, bot.controlState);
+    bot.physics.simulatePlayer(state, bot.world).apply(bot);
+  }
+  remove();
+  return { bot, paths, goal };
+}
+
+test('real Pathfinder postprocessing and physics follower cross an open door without climbing its panel', () => {
+  const broken = followDoorPath(false, false, 'left');
+  assert.ok(broken.paths[0].some(node => node.x === 0.5 && node.y === 2), 'upstream lifts the passage node onto the door panel');
+  assert.notEqual(broken.bot.pathfinder.goal, null, `reproduce physically stalled navigation at ${broken.bot.entity.position}`);
+  for (const reverse of [false, true]) for (const hinge of ['left', 'right']) {
+    const fixed = followDoorPath(true, reverse, hinge);
+    assert.ok(fixed.paths.length > 0, 'exercise real optimized path emission');
+    assert.equal(fixed.bot.pathfinder.goal, null, `follower reaches goal: reverse=${reverse}, hinge=${hinge}, position=${fixed.bot.entity.position}, paths=${JSON.stringify(fixed.paths)}`);
+    assert.ok(fixed.goal.isEnd(fixed.bot.entity.position.floored()));
+    assert.equal(fixed.bot.listenerCount('path_update'), 1, 'repair listener can be removed');
   }
 });
 

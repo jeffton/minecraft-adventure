@@ -23,6 +23,28 @@ function intersectsPanel(from, to, block) {
   });
 }
 
+/** Repair upstream's postprocessed door waypoint before the movement follower uses it. */
+export function installDoorWaypoints(bot) {
+  const repair = ({ path }) => {
+    for (const node of path) {
+      if (node.toBreak.length || node.toPlace.length) continue;
+      const block = bot.blockAt(node);
+      if (!block?.name.endsWith('_door')) continue;
+      const properties = block.getProperties();
+      // postProcessPath lifts the lower door's passage node onto its panel:
+      // its feet land in the upper half. Actual door-top routes are above it.
+      if (!properties.open || properties.half !== 'upper') continue;
+      node.x = block.position.x + 0.5;
+      node.y = block.position.y - 1;
+      node.z = block.position.z + 0.5;
+    }
+  };
+  // Both initial searches and incremental A* continuations emit the mutable
+  // path synchronously before the follower consumes it.
+  bot.on('path_update', repair);
+  return () => bot.removeListener('path_update', repair);
+}
+
 /** Pathfinder treats every door as a solid cube, including its open state. */
 export function withDoorPassage(Movements) {
   return class DoorMovements extends Movements {
