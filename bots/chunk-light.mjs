@@ -13,6 +13,13 @@ export function patchChunkLightSource(source) {
               bitArray.data[word] = sectionReader.readUInt32LE(word * 4)
             }`, 1, 'decoder');
   for (const channel of ['skyLight', 'blockLight']) {
+    const emptyMask = `empty${channel[0].toUpperCase()}${channel.slice(1)}Mask`;
+    // loadParsedLight allocates zero arrays for sections marked empty. A local
+    // edit can fill that existing array, so allocation is not the publication
+    // boundary: every write must make the section present and clear its empty bit.
+    source = replaceExactly(source,
+      `this.${channel}Sections[sectionIndex] = section\n      }\n\n      section.set(getSectionBlockIndex(pos, this.minY), light)`,
+      `this.${channel}Sections[sectionIndex] = section\n      }\n\n      this.${channel}Mask.set(sectionIndex, 1)\n      this.${emptyMask}.set(sectionIndex, 0)\n      section.set(getSectionBlockIndex(pos, this.minY), light)`, 1, `${channel} local-write masks`);
     source = replaceExactly(source,
       `const smartBuffer = new SmartBuffer()
           section.writeBuffer(smartBuffer)

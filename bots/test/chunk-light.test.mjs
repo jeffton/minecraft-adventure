@@ -97,6 +97,42 @@ test('dumpLight emits independent protocol bytes and JSON retains distinct empty
   for (const pos of entries) assert.equal(receiver.getBlockLight(pos), pos.value);
 });
 
+test('local writes publish formerly empty preallocated sections and clear empty masks on both channels', () => {
+  for (const y of [-64, -1, 15, 16, 44, 70, 319]) {
+    const chunk = new Chunk();
+    const pos = { x: 10, y, z: 12 };
+    const index = sectionIndex(y);
+    const other = { x: 1, y: 82, z: 7, value: 7 };
+    receive(chunk, {
+      block: [wireSection([other])], blockMask: [sectionIndex(other.y)],
+      emptyBlock: [index], emptySky: [index]
+    });
+    assert.ok(chunk.blockLightSections[index], 'Server empty packets preallocate zero arrays');
+    assert.equal(chunk.blockLightMask.get(index), 0);
+    chunk.setBlockLight(pos, 14);
+    chunk.setSkyLight(pos, 11);
+    assert.equal(chunk.blockLightMask.get(index), 1);
+    assert.equal(chunk.skyLightMask.get(index), 1);
+    assert.equal(chunk.emptyBlockLightMask.get(index), 0);
+    assert.equal(chunk.emptySkyLightMask.get(index), 0);
+    const receiver = new Chunk();
+    const apply = () => {
+      const light = chunk.dumpLight();
+      receiver.loadParsedLight(light.skyLight, light.blockLight, light.skyLightMask,
+        light.blockLightMask, light.emptySkyLightMask, light.emptyBlockLightMask);
+    };
+    apply();
+    assert.equal(receiver.getBlockLight(pos), 14, `Torch survives wire publication at Y ${y}`);
+    assert.equal(receiver.getSkyLight(pos), 11);
+    assert.equal(receiver.getBlockLight(other), 7, 'Mask order retains unrelated section payloads');
+    chunk.setBlockLight(pos, 0);
+    chunk.setSkyLight(pos, 0);
+    apply();
+    assert.equal(receiver.getBlockLight(pos), 0, 'Removal publishes darkness, not stale torch light');
+    assert.equal(receiver.getSkyLight(pos), 0);
+  }
+});
+
 test('worker patch corrects both bundled decoders with explicit LE words', () => {
   const patched = patchChunkLightWorker(worker);
   const decoder = 'for(let w=0;w<u.data.length;w++)u.data[w]=e.readUInt32LE(w*4)';

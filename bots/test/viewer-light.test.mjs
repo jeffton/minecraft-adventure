@@ -205,6 +205,33 @@ test('real bundled mesher attaches finite water lighting and applies light-only 
   const dark = mesh();
   assert.deepEqual([...dark.positions], [...lit.positions]);
   assert.ok([...dark.light].every(value => value === 0));
+
+  // Socket.IO delivers binary light sections as ArrayBuffers. Re-light an
+  // existing empty server section without reloading its block/JSON column.
+  const changed = new Chunk();
+  loadLight(changed, {
+    skyLight: [], blockLight: [], skyLightMask: [[0, 0]], blockLightMask: [[0, 0]],
+    emptySkyLightMask: [[0, 2]], emptyBlockLightMask: [[0, 2]]
+  });
+  for (let x = 7; x <= 9; x++) {
+    for (let y = -57; y <= -55; y++) {
+      for (let z = 7; z <= 9; z++) changed.setBlockLight(new Vec3(x, y, z), 13);
+    }
+  }
+  const light = changed.dumpLight();
+  context.messageJson = JSON.stringify({
+    type: 'lightColumn', x: -16, z: 0,
+    light: { ...light, skyLight: light.skyLight.map(bytes => [...bytes]), blockLight: light.blockLight.map(bytes => [...bytes]) }
+  });
+  vm.runInContext(`{
+    const data = JSON.parse(messageJson);
+    for (const channel of ['skyLight', 'blockLight']) data.light[channel] = data.light[channel].map(bytes => Uint8Array.from(bytes).buffer);
+    self.onmessage({ data });
+  }`, context);
+  const relit = mesh();
+  assert.deepEqual([...relit.positions], [...lit.positions]);
+  assert.ok([...relit.light].filter((_, i) => i % 2 === 0).every(value => value === 13),
+    'Binary incremental updates must restore visible light without a chunk reload');
 });
 
 test('nearby block edits relight once for all viewers and stream actual torch light without a server packet', async t => {
