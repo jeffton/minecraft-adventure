@@ -105,5 +105,5 @@ export function patchViewerEntities(source, modelSource) {
   }
   // The Socket.IO client is constructed only after its render assets are ready,
   // so initial entity packets cannot race the model/artwork downloads.
-  return `(async()=>{const [models,items]=await Promise.all([fetch('entity-assets/models.json'),fetch('item-assets/manifest.json')]);if(!models.ok||!items.ok)throw new Error('Camera entity assets could not load');window.roycraftEntityAssets=await models.json();window.roycraftItemAssets=await items.json();${source}\n})().catch(error=>{document.body.textContent='Camera entity assets could not load';throw error});`;
+  return `(async()=>{const load=async path=>{const response=await fetch(path);if(!response.ok)throw new Error(\`Camera asset \${path}: HTTP \${response.status}\`);return response.json()};const [models,items]=await Promise.all([load('entity-assets/models.json'),load('item-assets/manifest.json')]);window.roycraftEntityAssets=models;window.roycraftItemAssets=items;${source}\n})().catch(error=>{document.body.textContent='Camera could not start: '+error.message;throw error});`;
 }

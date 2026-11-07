@@ -68,6 +68,34 @@ test('Java atlases match legacy mob UV pixel dimensions and witch inherits her a
   assert.equal(JSON.stringify(models.witch), before);
 });
 
+test('camera startup exposes WebGL failures rather than blaming successful asset requests', async () => {
+  const upstream = fs.readFileSync(`${viewer}/public/index.js`, 'utf8');
+  const patched = patchViewerEntities(upstream, viewerEntityModel.toString())
+    .replace('window.roycraftItemAssets=items;', 'window.roycraftItemAssets=items;throw new Error("Error creating WebGL context.");');
+  const document = { body: { textContent: '' } };
+  const window = {};
+  await assert.rejects(vm.runInNewContext(patched, {
+    document, window, fetch: async () => ({ ok: true, json: async () => ({}) })
+  }), /Error creating WebGL context/);
+  assert.equal(document.body.textContent, 'Camera could not start: Error creating WebGL context.');
+  assert.ok(window.roycraftEntityAssets);
+  assert.ok(window.roycraftItemAssets);
+});
+
+test('camera asset failures identify the failed HTTP resource and retain the exception', async () => {
+  const upstream = fs.readFileSync(`${viewer}/public/index.js`, 'utf8');
+  const patched = patchViewerEntities(upstream, viewerEntityModel.toString());
+  for (const path of ['entity-assets/models.json', 'item-assets/manifest.json']) {
+    const document = { body: { textContent: '' } };
+    await assert.rejects(vm.runInNewContext(patched, {
+      document, window: {}, fetch: async url => url === path
+        ? { ok: false, status: 503 }
+        : { ok: true, json: async () => ({}) }
+    }), new RegExp(`Camera asset ${path}: HTTP 503`));
+    assert.equal(document.body.textContent, `Camera could not start: Camera asset ${path}: HTTP 503`);
+  }
+});
+
 test('patched real bundle compiles and its injected selector instantiates a textured llama mesh', () => {
   const bundle = fs.readFileSync(`${viewer}/public/index.js`, 'utf8');
   const patched = patchViewerEntities(bundle, viewerEntityModel.toString());
