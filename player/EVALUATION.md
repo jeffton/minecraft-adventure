@@ -1,6 +1,6 @@
 # Roycraft: observed play and improvement
 
-Run this workflow when the Minecraft evaluation job fires. The mission is competent survival and real progression in the existing world, not more controller code.
+Run this workflow when the Minecraft evaluation job fires. Read the canonical `PLAYER_OBJECTIVE` in `player/mission.mjs`; evaluate progression toward that selected user objective in the existing world, not more controller code.
 
 ## Authority and state
 
@@ -12,7 +12,7 @@ Run this workflow when the Minecraft evaluation job fires. The mission is compet
 ## Evaluate actual outcomes
 
 1. Verify Node 26 and player health (`http://127.0.0.1:8766/healthz`). Inspect actual observation, `progress.json`, controller state, recent events and action records since the last evaluation. Filter large files locally; do not paste whole histories or credential files into context. Use real POV/viewer if terrain or building quality matters.
-2. Quantify inventory gains/losses, food/health/deaths, tools/bed/storage/building effects and navigation: net vs gross travel, explored new locations and repeated destinations. Separate historical totals from this evaluation interval. Action completion, service health and changing coordinates alone are not successful play.
+2. Measure the chosen base site and actual cover, acquired/retained wool and wood, crafted/placed usable bed and actual sleep, and construction growth from cave shelter into a house. Verify blocks and inventory rather than treating returned claims as success. Track retained resources, food/health, deaths, lost equipment or base damage, and navigation: net vs gross travel, new locations and repeated destinations. Separate historical totals from this interval; relocation, scans and action completion alone are not progress. Let the model choose site, work order, materials and design. Clock, sunrise/sunset and thunder are planning facts, not grounds for a host-enforced curfew or prescribed shelter geometry.
 3. Inspect the active mission, its expected outcome, actual result and remembered lessons. Check that the next strategy incorporates failures rather than replaying the same movement. Inspect model/tool errors, latency and token usage; do not repeatedly trigger expensive full-history analyses. The strategist must choose concrete achievable missions, with local skills and survival reflexes handling execution.
 4. Observe enough new actual decisions/outcomes to distinguish a transient obstacle from a loop. Do not sleep or busy-poll subagents; use bounded fresh evidence collection or schedule an appropriate next evaluation. Never claim progression without observed evidence.
 

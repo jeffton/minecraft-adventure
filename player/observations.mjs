@@ -1,5 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { PLAYER_OBJECTIVE } from './mission.mjs';
 
 export async function atomicJson(file, value) {
   await mkdir(path.dirname(file), { recursive: true });
@@ -29,8 +30,8 @@ export function playerState(bot, { worldId, session, events, action, thinking, e
   };
   return {
     worldId, updatedAt: at, phase: 'survival', serverVersion: bot.version,
-    objective: notes.goal ?? 'Survive, establish a beautiful home with a bed and storage, and prepare to defeat the Ender Dragon.',
-    longTerm: 'Defeat the Ender Dragon through ordinary survival play.',
+    objective: PLAYER_OBJECTIVE,
+    longTerm: PLAYER_OBJECTIVE,
     home: notes.home ?? null, bots: [actor], milestones: [], events,
   };
 }

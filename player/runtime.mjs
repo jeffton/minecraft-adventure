@@ -351,7 +351,7 @@ export async function runPlayer(env = process.env) {
       modelEventSequence = sequence;
       return delta;
     };
-    const modelObservation = visual => ({
+    const modelObservation = visual => planningObservation({
       worldId, session, life, reflexOwner, ...observationFeedback(rpc.observe()), notes,
       progress: progress.observation({ session, since: controller.current()?.activatedAt }),
       controller: controllerFeedback(), scheduler: controllerLoop.inspect(),
@@ -474,8 +474,8 @@ export async function runPlayer(env = process.env) {
               activeAnalysis.reasons = pending.reasons;
               engineering.delivered(pending.key);
             }
-            const observed = planningObservation({ ...modelObservation(visual), controllerAudit,
-              engineering: { ...batch, key: deliveredFeedbackKey, reasons: activeAnalysis.reasons } });
+            const observed = { ...modelObservation(visual), controllerAudit,
+              engineering: { ...batch, key: deliveredFeedbackKey, reasons: activeAnalysis.reasons } };
             return { observed, images: visual ? [visual.frame.image] : [] };
           });
         if (!payload) return;
