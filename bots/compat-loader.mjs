@@ -64,6 +64,14 @@ export function patchPathfinderGoals(source) {
   return source.replace(before, 'if (node.offset(0.5, this.entityHeight, 0.5).distanceTo(this.pos.offset(0.5, 0.5, 0.5)) > this.reach + Math.sqrt(3) / 2) return false');
 }
 
+// Mineflayer's named-metadata path handles every nearby entity. Only the
+// player's air supply may update the player's oxygen or emit its breath event.
+export function patchEntityBreathing(source) {
+  const before = '      if (metas.air_supply != null) {';
+  if (source.split(before).length !== 2) throw new Error('Mineflayer breathing integration point changed');
+  return source.replace(before, '      if (entity.id === bot.entity?.id && metas.air_supply != null) {');
+}
+
 registerHooks({
   load(url, context, nextLoad) {
     const result = nextLoad(url, context);
@@ -73,9 +81,10 @@ registerHooks({
     const inventory = url.endsWith('/node_modules/mineflayer/lib/plugins/inventory.js');
     const craft = url.endsWith('/node_modules/mineflayer/lib/plugins/craft.js');
     const goals = url.endsWith('/node_modules/mineflayer-pathfinder/lib/goals.js');
-    if (!chunkLight && !physics && !bot && !inventory && !craft && !goals) return result;
+    const entities = url.endsWith('/node_modules/mineflayer/lib/plugins/entities.js');
+    if (!chunkLight && !physics && !bot && !inventory && !craft && !goals && !entities) return result;
     if (result.source == null) throw new Error('Minecraft compatibility source unavailable');
     const source = String(result.source);
-    return { ...result, source: chunkLight ? patchChunkLightSource(source) : physics ? patchPhysics(source) : bot ? patchBotSource(source) : inventory ? patchInventorySource(source) : craft ? patchCraftSource(source) : patchPathfinderGoals(source) };
+    return { ...result, source: chunkLight ? patchChunkLightSource(source) : physics ? patchPhysics(source) : bot ? patchBotSource(source) : inventory ? patchInventorySource(source) : craft ? patchCraftSource(source) : entities ? patchEntityBreathing(source) : patchPathfinderGoals(source) };
   }
 });
