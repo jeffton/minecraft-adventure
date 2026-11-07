@@ -26,6 +26,7 @@ import { actionFeedback, observationFeedback } from './feedback.mjs';
 import { VisionLoop } from './vision-loop.mjs';
 import { ProgressHistory } from './progress.mjs';
 import { openPlanningMemory, planningMemoryTools } from './planning-memory.mjs';
+import { survivalGuideTool } from './survival-guide.mjs';
 import { missionController, planningObservation } from './mission.mjs';
 
 const require = createRequire('/opt/minecraft-mindcraft/package.json');
@@ -323,6 +324,7 @@ export async function runPlayer(env = process.env) {
       tool('action_inspect', 'Read a complete retained action record including all original RPC calls/results, errors and before/after observations. Useful for investigating any outcome projection.', { actionId: STRING }, ['actionId'], async ({ actionId }) => sandbox.inspect(actionId)),
       tool('read_events', 'Read complete persisted event records, including original errors and RPC/model events. Defaults to this player session; supply another session to inspect its history. afterSequence and types select evidence without byte/line truncation.', { session: STRING, afterSequence: { type: 'integer', minimum: 0 }, types: { type: 'array', items: STRING } }, [], async args => readPlayerEvents(path.join(stateDir, 'events.jsonl'), { ...args, session: args.session ?? session })),
       ...planningMemoryTools(memory),
+      survivalGuideTool,
       ...gameChatTools(chat),
       tool('skills', 'List reusable JavaScript skills, fetch one by name, save source, or verify it against a completed action and explicit expected postconditions. Source is reusable; evidence is world-scoped, not current inventory. expected supports inventory minimum counts, inventoryDelta minimum increases, position {x,y,z,within}, health {min}, blocks [{x,y,z,name}]. Verification requires host-observed change, not returned claims.', { name: STRING, description: STRING, code: STRING, actionId: STRING, expected: { type: 'object' } }, [], async args => {
         if (!args.name) return skills.list();
