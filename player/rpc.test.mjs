@@ -133,6 +133,74 @@ test('cancelled late container open closes host window and cannot leak stale han
   await assert.rejects(rpc.call('containerItems', ['made-up-handle']), /invalid/);
 });
 
+test('home chest RPCs expose crafting, placement and verified storage/retrieval without losing carried gear', async () => {
+  const { bot, rpc, inventory } = fixture();
+  const items = { oak_planks: 2, chest: 3, beef: 4, stone_pickaxe: 5 };
+  for (const [name, id] of Object.entries(items)) {
+    bot.registry.itemsByName[name] = { id };
+    bot.registry.items[id] = { name, stackSize: name === 'stone_pickaxe' ? 1 : 64 };
+  }
+  inventory.push(
+    { name: 'oak_planks', type: 2, count: 24, slot: 9 },
+    { name: 'beef', type: 4, count: 2, slot: 10 },
+    { name: 'stone_pickaxe', type: 5, count: 1, slot: 11 },
+  );
+  const block = (name, p) => ({ name, type: name === 'air' ? 0 : 1, position: p, getProperties: () => ({}) });
+  let placed = false;
+  bot.blockAt = p => block(p.x === 0 ? 'crafting_table' : placed ? 'chest' : 'air', p);
+  const recipe = { result: { id: 3, count: 1 }, delta: [{ id: 2, count: -8 }, { id: 3, count: 1 }] };
+  bot.recipesFor = (id, metadata, count, table) => id === 3 && table.name === 'crafting_table' ? [recipe] : [];
+  bot.craft = async (selected, count) => {
+    assert.equal(selected, recipe);
+    inventory[0].count -= 8 * count;
+    inventory.push({ name: 'chest', type: 3, count, slot: 12 });
+  };
+  bot.placeBlock = async (reference, face) => {
+    assert.equal(reference.name, 'crafting_table');
+    assert.deepEqual(face, new Vec3(1, 0, 0));
+    inventory.splice(inventory.findIndex(item => item.name === 'chest'), 1);
+    placed = true;
+  };
+  const stored = [];
+  const move = (from, to, id, count) => {
+    const source = from.find(item => item.type === id);
+    assert.ok(source && source.count >= count);
+    source.count -= count;
+    const target = to.find(item => item.type === id);
+    if (target) target.count += count;
+    else to.push({ ...source, count });
+  };
+  let closed = 0;
+  bot.openContainer = async at => {
+    assert.equal(at.name, 'chest');
+    return {
+      containerItems: () => stored,
+      deposit: async (id, metadata, count) => move(inventory, stored, id, count),
+      withdraw: async (id, metadata, count) => move(stored, inventory, id, count),
+      close: () => { closed++; },
+    };
+  };
+  await rpc.call('craft', ['chest', 1, { x: 0, y: 64, z: 0 }]);
+  const chest = await rpc.call('placeBlock', [{ x: 0, y: 64, z: 0 }, { x: 1, y: 0, z: 0 }]);
+  assert.equal(chest.name, 'chest');
+  const opened = await rpc.call('openContainer', [{ x: 1, y: 64, z: 0 }]);
+  assert.deepEqual(opened.items, []);
+  const deposit = await rpc.call('deposit', [opened.handle, 'oak_planks', 12]);
+  assert.equal(deposit.items[0].count, 12);
+  assert.equal(deposit.inventory.find(item => item.name === 'oak_planks').count, 4);
+  assert.equal(deposit.inventory.find(item => item.name === 'beef').count, 2);
+  assert.equal(deposit.inventory.find(item => item.name === 'stone_pickaxe').count, 1);
+  await rpc.call('closeContainer', [opened.handle]);
+  await assert.rejects(rpc.call('withdraw', [opened.handle, 'oak_planks', 1]), /closed or invalid/);
+  const reopened = await rpc.call('openContainer', [{ x: 1, y: 64, z: 0 }]);
+  assert.equal((await rpc.call('containerItems', [reopened.handle]))[0].count, 12);
+  const retrieved = await rpc.call('withdraw', [reopened.handle, 'oak_planks', 4]);
+  assert.equal(retrieved.items[0].count, 8);
+  assert.equal(retrieved.inventory.find(item => item.name === 'oak_planks').count, 8);
+  await rpc.call('closeContainer', [reopened.handle]);
+  assert.equal(closed, 2);
+});
+
 test('abort stops Minecraft host work, not only the isolated JavaScript process', async () => {
   const { bot, rpc, counts } = fixture();
   let rejectGoto;

@@ -53,6 +53,15 @@ test('actual strategist request receives the chosen objective above historical n
     const system = request.messages.filter(message => message.role === 'system');
     assert.ok(JSON.stringify(system).includes(PLAYER_OBJECTIVE));
     assert.match(JSON.stringify(system), /takes precedence over older goals/);
+    assert.match(JSON.stringify(system), /Store valuables and surplus on natural returns/);
+    assert.match(JSON.stringify(system), /do not return home for every log/);
+    assert.match(JSON.stringify(system), /Keep necessary equipment, food and materials/);
+    assert.match(JSON.stringify(system), /withdraw\(handle,itemName,count\)/);
+    assert.match(JSON.stringify(system), /defeat the Ender Dragon/);
+    assert.match(JSON.stringify(system), /blaze rods/);
+    assert.match(JSON.stringify(system), /stronghold/);
+    assert.match(JSON.stringify(system), /Beds explode in the Nether and End/);
+    assert.match(JSON.stringify(system), /no web\/Google tool/);
     const injected = request.messages.filter(message => message.role === 'user').at(-1);
     const payload = JSON.parse(injected.content).observation;
     assert.equal(payload.objective, PLAYER_OBJECTIVE);
