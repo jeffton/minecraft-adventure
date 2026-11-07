@@ -309,3 +309,26 @@ test('failed or overlapping interruption cleanup releases only its own drain lea
   await pending;
   assert.equal(drain.active, false);
 });
+
+
+test('mission arriving during escape preserves movement and activates after safety releases', async () => {
+  const f = fixture();
+  f.context.reflexOwner = 'escaping immediate danger';
+  let escapeGoal = { fleeing: 'skeleton' };
+  const originalGoal = escapeGoal;
+  let interruptions = 0;
+  const result = await f.loop.hotReload({ version: 'next-mission' }, async () => {
+    interruptions++;
+    escapeGoal = null;
+    f.loop.invalidate('Controller hot reload');
+  });
+  assert.equal(escapeGoal, originalGoal, 'new model output must not stop an active escape');
+  assert.equal(interruptions, 0);
+  assert.equal(result.status, 'admitted');
+  assert.deepEqual(f.loop.inspect().pending, ['next-mission']);
+  assert.equal(f.calls.some(call => call[0] === 'activate'), false);
+  f.context.reflexOwner = null;
+  await f.loop.tick();
+  assert.deepEqual(f.calls.find(call => call[0] === 'activate'), ['activate', 'next-mission']);
+  assert.equal(f.calls.filter(call => call[0] === 'start').length, 1);
+});

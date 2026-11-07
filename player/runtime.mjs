@@ -193,14 +193,19 @@ export async function runPlayer(env = process.env) {
     const state = () => ({ ...playerState(bot, { worldId, session, events, action: label(), thinking, error: error ?? visionError, life, notes }), gameplayLedger: true, actionId: pipeline.latestId, nextSkill: pipeline.next?.name ?? null });
     let controllerLoop;
     const interrupt = reason => controlDrain.run(async () => {
+      if (reason === 'Controller hot reload' && reflexOwner) return;
       controllerLoop?.invalidate(reason);
       pipeline.clear();
       if (pipeline.latestId) {
         sandbox.cancel(pipeline.latestId, reason);
         await sandbox.wait(pipeline.latestId, { details: false });
       }
+      // Safety can acquire ownership while sandbox/RPC cancellation is awaiting.
+      // A late mission handoff must not clear the survival action's new goal.
+      if (reason === 'Controller hot reload' && reflexOwner) return;
       rpc.cancel();
       await rpc.waitForIdle();
+      if (reason === 'Controller hot reload' && reflexOwner) return;
       bot.pathfinder.setGoal(null);
       bot.clearControlStates();
       emit('interrupted', reason);

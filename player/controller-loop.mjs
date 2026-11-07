@@ -19,7 +19,9 @@ export class ControllerLoop {
   /** Swap admitted source at the first fully drained boundary, not an action deadline. */
   async hotReload(record, interrupt) {
     this.stage(record);
-    await interrupt('Controller hot reload');
+    // A mission may arrive while survival owns movement. Stage it without
+    // cancelling that escape; tick activates it when survival releases control.
+    if (!this.context().reflexOwner) await interrupt('Controller hot reload');
     await this.tick();
     const { status, error } = this.controller.inspect(record.version);
     return { version: record.version, status, ...(error ? { error } : {}) };
