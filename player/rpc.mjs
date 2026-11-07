@@ -5,7 +5,7 @@ import { createWorldKnowledge, loadedBiome, registryInfo } from './world-knowled
 
 export const RPC_DESCRIPTION = `Skills are async JavaScript function bodies with mc.call(method,...args), mc.observe(), input.
 Await every call. Returned values are observations, not proof that your whole objective succeeded.
-observe() → health, food, oxygen, position, dimension, inventory, nearby entities/blocks, time and weather. time includes world day, Minecraft HH:mm, Overworld sunrise/sunset intervals and seconds until their next occurrence/night at the normal 20 ticks/second; daylightCycleRunning reports a frozen clock and server lag stretches those estimates. weather includes isRaining, rainLevel and thunderLevel (0–1); rain alone does not mean thunder. light samples the player's feet: {position,blockLight,skyLight}, raw received values (0–15 when available), not a spawn-safety verdict. skyLight is the raw sky channel, not adjusted for night/weather.
+observe() → health, food, oxygen, position, dimension, inventory, nearby entities/blocks, time and weather. Sheep include woolColor, sheared and baby when their metadata has arrived; dropped item entities include item stacks once received. Shearing is entity activation with shears equipped, not attack. Activation only sends an interaction: verify changed sheep state, actual dropped wool and inventory pickup separately. Sheared sheep regrow wool by eating grass. Time includes world day, Minecraft HH:mm, Overworld sunrise/sunset intervals and seconds until their next occurrence/night at the normal 20 ticks/second; daylightCycleRunning reports a frozen clock and server lag stretches those estimates. weather includes isRaining, rainLevel and thunderLevel (0–1); rain alone does not mean thunder. light samples the player's feet: {position,blockLight,skyLight}, raw received values (0–15 when available), not a spawn-safety verdict. skyLight is the raw sky channel, not adjusted for night/weather.
 blockAt({x,y,z}) returns the loaded block including blockLight and skyLight (query the air where a mob would stand, not just its floor). findBlocks({names:[name],radius,count}) searches currently loaded columns, with optional caller-selected distance/count filters, itemInfo(name), blockInfo(name).
 registryInfo(type,{names:[name],search,limit}) returns {type,items:[entries],truncated}; queries real items/blocks/biomes/entities registry (provide names or search; optional limit is caller-selected). Block entries include named drops and harvest tools; biome entries include category/temperature/dimension, NOT mob spawn guarantees.
 biomeAt({x,y,z}) returns biome only for a loaded block, or null if biome data is absent. observe() includes current biome.
@@ -14,6 +14,7 @@ recipesAll(itemName,table=true) shows named ingredients including unmet requirem
 goto({x,y,z},range=1,{canDig:false,allow1by1towers:false,allowSprinting:false}), follow(entityId,range=2), lookAt({x,y,z}), control(state,boolean), clearControls(), waitTicks(ticks) (interruptible; the action watchdog still applies).
 Navigation walks without digging, placing or sprinting by default: a failed path is NOT permission to excavate a shelter. goto options explicitly enable digging/towering/sprinting for that call only. Clear a deliberate exit with dig/place rather than asking navigation to tunnel blindly.
 harvest(position) approaches one observed resource block, selects the best available tool, breaks it, and collects nearby item drops using nondestructive movement. Returns actual inventoryDelta and remainingDrops: breaking a block is not collecting its drops. Compose harvest in bounded loops and stop/replan on missing resources or inaccessible drops.
+Doors: inspect blockAt(position).properties.open; activateBlock(position) toggles a wooden door and waits for the server's changed open state. Navigate through an opened door, verify arrival on the other side, then close it when appropriate. Do not dismantle or relocate a usable door to pass it.
 dig({x,y,z}), placeBlock(referencePosition,{x,y,z} unit face), activateBlock(position), activateEntity(id), attack(id), equip(itemName,destination='hand'), unequip(destination), consume(), activateItem(offhand=false), deactivateItem(), toss(itemName,count).
 openContainer(position) → {handle,items}; containerItems(handle), deposit(handle,itemName,count), withdraw(handle,itemName,count), closeContainer(handle).
 openFurnace(position) → {handle,input,fuel,output}; furnaceItems(handle), furnacePutInput(handle,itemName,count), furnacePutFuel(handle,itemName,count), furnaceTakeInput(handle), furnaceTakeFuel(handle), furnaceTakeOutput(handle).
@@ -85,10 +86,29 @@ export function createMinecraftRpc(bot, { Vec3, goals, onEvent = () => {}, knowl
   const containerItems = value => value.containerItems().map(packItem);
   const furnaceItems = value => ({ input: packItem(value.inputItem()), fuel: packItem(value.fuelItem()), output: packItem(value.outputItem()) });
 
+  function packEntity(value, origin) {
+    const packed = { id: value.id, name: value.name, type: value.type, position: packPosition(value.position), distance: value.position.distanceTo(origin) };
+    if (value.name === 'sheep' && value.metadata) {
+      const keys = bot.registry.entitiesByName.sheep.metadataKeys;
+      const wool = value.metadata[keys.indexOf('wool')];
+      const baby = value.metadata[keys.indexOf('baby')];
+      if (wool !== undefined) {
+        packed.woolColor = ['white', 'orange', 'magenta', 'light_blue', 'yellow', 'lime', 'pink', 'gray', 'light_gray', 'cyan', 'purple', 'blue', 'brown', 'green', 'red', 'black'][wool & 15];
+        packed.sheared = (wool & 16) !== 0;
+      }
+      if (baby !== undefined) packed.baby = baby;
+    }
+    if (value.name === 'item' && value.metadata) {
+      const index = bot.registry.supportFeature('metadataIxOfItem');
+      if (value.metadata[index] !== undefined) packed.item = packItem(value.getDroppedItem());
+    }
+    return packed;
+  }
+
   function observe() {
     const origin = bot.entity?.position;
     const entities = origin ? Object.values(bot.entities).filter(value => value.position && value.id !== bot.entity.id)
-      .map(value => ({ id: value.id, name: value.name, type: value.type, position: packPosition(value.position), distance: value.position.distanceTo(origin) }))
+      .map(value => packEntity(value, origin))
       .sort((a, b) => a.distance - b.distance) : [];
     const blocks = [];
     if (origin) {
@@ -304,8 +324,45 @@ export function createMinecraftRpc(bot, { Vec3, goals, onEvent = () => {}, knowl
       await bot.placeBlock(reference, vector(direction));
       return packBlock(bot.blockAt(reference.position.plus(vector(direction))));
     },
-    async activateBlock(p) { await bot.activateBlock(block(p)); return observe(); },
-    async activateEntity(id) { await bot.activateEntity(entity(id)); return observe(); },
+    async activateBlock(p) {
+      const target = block(p);
+      if (!target.name.endsWith('_door')) {
+        await bot.activateBlock(target);
+        return observe();
+      }
+      const wasOpen = target.getProperties().open;
+      let update;
+      let fail;
+      const changed = new Promise((resolve, reject) => {
+        fail = reject;
+        update = (_before, after) => {
+          if (!after?.position.equals(target.position)) return;
+          if (after.name !== target.name) reject(new Error('Door changed while activating'));
+          else if (after.getProperties().open !== wasOpen) resolve();
+        };
+        cancelWait = () => reject(new Error('Door activation was cancelled'));
+        bot.on('blockUpdate', update);
+      });
+      try {
+        // Mineflayer may still be aiming before sending the interaction. Drain
+        // that send even after cancellation so it cannot leak into the next RPC.
+        const activation = bot.activateBlock(target).catch(error => { fail(error); throw error; });
+        const results = await Promise.allSettled([changed, activation]);
+        for (const result of results) if (result.status === 'rejected') throw result.reason;
+        return observe();
+      } finally {
+        bot.removeListener('blockUpdate', update);
+        cancelWait = undefined;
+      }
+    },
+    async activateEntity(id) {
+      const target = entity(id);
+      const hit = new Vec3(target.position.x, target.position.y + target.height / 2, target.position.z);
+      // ViaBackwards drops legacy interact (action 0) for Paper 26.1+.
+      // A real interact-at hit survives translation to the unified interaction.
+      await bot.activateEntityAt(target, hit);
+      return observe();
+    },
     attack(id) { bot.attack(entity(id)); return { target: id }; },
     async equip(name, destination = 'hand') {
       if (!['hand', 'off-hand', 'head', 'torso', 'legs', 'feet'].includes(destination)) throw new Error('Invalid equipment destination');

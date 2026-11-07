@@ -34,6 +34,53 @@ function fixture() {
   return { bot, inventory, counts, rpc: createMinecraftRpc(bot, { Vec3, goals: { GoalNear } }) };
 }
 
+test('entity interaction uses a concrete hit without fabricating shearing or pickup success', async () => {
+  const { bot, rpc, inventory } = fixture();
+  const sheep = { id: 7, name: 'sheep', height: 1.3, position: new Vec3(1, 64, 0) };
+  bot.entities[7] = sheep;
+  let resolveInteraction;
+  let selected;
+  bot.activateEntity = () => { throw new Error('Legacy action 0 is discarded by ViaBackwards'); };
+  bot.activateEntityAt = (target, hit) => {
+    selected = { target, hit };
+    return new Promise(resolve => { resolveInteraction = resolve; });
+  };
+  const pending = rpc.call('activateEntity', [7]);
+  assert.equal(selected.target, sheep);
+  assert.deepEqual(selected.hit, new Vec3(1, 64.65, 0));
+  resolveInteraction();
+  const result = await pending;
+  assert.deepEqual(result.inventory, []);
+  assert.deepEqual(inventory, [], 'sending a packet is not a wool receipt');
+  await assert.rejects(rpc.call('activateEntity', [8]), /no longer visible/);
+});
+
+test('fresh sheep metadata and identified drops reach the planner independently of inventory pickup', () => {
+  const { bot, rpc } = fixture();
+  bot.registry.entitiesByName = { sheep: { metadataKeys: ['baby', 'wool'] } };
+  bot.registry.supportFeature = name => { assert.equal(name, 'metadataIxOfItem'); return 8; };
+  const sheep = { id: 7, name: 'sheep', position: new Vec3(1, 64, 0), metadata: [] };
+  const drop = { id: 8, name: 'item', position: new Vec3(2, 64, 0), metadata: [], getDroppedItem: () => ({ name: 'brown_wool', count: 2, type: 221 }) };
+  bot.entities = { 7: sheep, 8: drop };
+  let payload = planningObservation(observationFeedback(rpc.observe()));
+  assert.equal(payload.entities[0].sheared, undefined, 'spawn precedes metadata, so absence is not unshorn');
+  assert.equal(payload.entities[1].item, undefined);
+  sheep.metadata = [false, 12];
+  payload = planningObservation(observationFeedback(rpc.observe()));
+  assert.equal(payload.entities[0].woolColor, 'brown');
+  assert.equal(payload.entities[0].sheared, false);
+  assert.equal(payload.entities[0].baby, false);
+  sheep.metadata[1] = 12 | 16;
+  drop.metadata[8] = {};
+  payload = planningObservation(observationFeedback(rpc.observe()));
+  assert.equal(payload.entities[0].sheared, true);
+  assert.equal(payload.entities[1].item.name, 'brown_wool');
+  assert.equal(payload.entities[1].item.count, 2);
+  assert.deepEqual(payload.inventory, [], 'visible wool is not yet collected');
+  sheep.metadata[1] = 12;
+  assert.equal(rpc.observe().entities[0].sheared, false, 'grass regrowth must replace the old sheared state');
+});
+
 test('fresh RPC and strategic observations expose game clock and distinguish rain from thunder', () => {
   const { bot, rpc } = fixture();
   bot.time = { day: 8, timeOfDay: 11600, isDay: true, doDaylightCycle: true };
