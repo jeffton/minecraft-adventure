@@ -60,7 +60,7 @@ export function validateControllerResult(value, worldId) {
     if (typeof value.reason !== 'string' || !value.reason.trim()) throw new Error('Idle decision requires a nonempty reason');
     const wakeAfterMs = value.wakeAfterMs ?? 1000;
     if (!Number.isSafeInteger(wakeAfterMs) || wakeAfterMs < 0) throw new Error('Idle wakeAfterMs must be a nonnegative safe integer');
-    return { state, action: null, reason: value.reason, wakeAfterMs };
+    return { state, action: null, reason: value.reason, wakeAfterMs, replan: value.replan === true };
   }
   const action = value.action;
   if (!action || typeof action !== 'object') throw new Error('Controller must return action or explicit null idle');

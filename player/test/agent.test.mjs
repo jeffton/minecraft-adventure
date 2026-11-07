@@ -11,7 +11,7 @@ import { fauxProvider, fauxAssistantMessage, fauxToolCall } from '@earendil-work
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { Harness, createRegistry, defineDoc, defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
-import { openPlayerAgent, playerModels, PLAYER_INSTRUCTIONS } from '../agent.mjs';
+import { openPlayerAgent, playerModels } from '../agent.mjs';
 
 const answer = text => fauxAssistantMessage(text);
 const call = (name, args) => fauxAssistantMessage(fauxToolCall(name, args), { stopReason: 'toolUse' });
@@ -113,38 +113,40 @@ test('saving controller candidates finishes native turns without narration and r
   } finally { await agent.close(); }
 });
 
-test('mixed remember and candidate rounds skip narration in either order, but failed admission permits correction', async () => {
-  const mixed = order => fauxAssistantMessage(order.map(name => fauxToolCall(name, { code: name })), { stopReason: 'toolUse' });
-  const executed = [];
-  let failAdmission = false;
-  const f = await fixture([
-    mixed(['remember', 'controller_candidate']), mixed(['controller_candidate', 'remember']),
-    mixed(['remember', 'controller_candidate']), answer('Correct the failed candidate.'),
-    mixed(['controller_candidate', 'remember']), answer('Correct the failed candidate again.'),
-  ], ['remember', 'controller_candidate'].map(name => ({
-    name, description: 'A controller engineering tool.', parameters: schema,
-    execute: async () => {
-      executed.push(name);
-      if (name === 'controller_candidate' && failAdmission) throw new Error('Controller state changed');
-      return { accepted: true };
-    },
-  })));
-  const agent = await f.open();
-  try {
-    for (let round = 0; round < 2; round++) {
-      const result = await agent.step({});
-      assert.equal(result.modelCalls, 1);
-      assert.equal(result.toolCalls, 2);
-    }
-    assert.deepEqual(executed, ['remember', 'controller_candidate', 'controller_candidate', 'remember']);
-    failAdmission = true;
-    assert.equal((await agent.step({})).modelCalls, 2);
-    assert.match(JSON.stringify(f.calls[3].context), /Controller state changed/);
-    assert.equal((await agent.step({})).modelCalls, 2);
-    assert.match(JSON.stringify(f.calls[5].context), /Controller state changed/);
-    assert.deepEqual(executed.slice(4), ['remember', 'controller_candidate', 'controller_candidate', 'remember']);
-  } finally { await agent.close(); }
-});
+for (const completionTool of ['mission', 'controller_candidate', 'controller_edit']) {
+  test(`mixed remember and ${completionTool} rounds skip narration in either order, but failed admission permits correction`, async () => {
+    const mixed = order => fauxAssistantMessage(order.map(name => fauxToolCall(name, { code: name })), { stopReason: 'toolUse' });
+    const executed = [];
+    let failAdmission = false;
+    const f = await fixture([
+      mixed(['remember', completionTool]), mixed([completionTool, 'remember']),
+      mixed(['remember', completionTool]), answer('Correct the failed candidate.'),
+      mixed([completionTool, 'remember']), answer('Correct the failed candidate again.'),
+    ], ['remember', completionTool].map(name => ({
+      name, description: 'A controller engineering tool.', parameters: schema,
+      execute: async () => {
+        executed.push(name);
+        if (name === completionTool && failAdmission) throw new Error('Controller state changed');
+        return { accepted: true };
+      },
+    })));
+    const agent = await f.open();
+    try {
+      for (let round = 0; round < 2; round++) {
+        const result = await agent.step({});
+        assert.equal(result.modelCalls, 1);
+        assert.equal(result.toolCalls, 2);
+      }
+      assert.deepEqual(executed, ['remember', completionTool, completionTool, 'remember']);
+      failAdmission = true;
+      assert.equal((await agent.step({})).modelCalls, 2);
+      assert.match(JSON.stringify(f.calls[3].context), /Controller state changed/);
+      assert.equal((await agent.step({})).modelCalls, 2);
+      assert.match(JSON.stringify(f.calls[5].context), /Controller state changed/);
+      assert.deepEqual(executed.slice(4), ['remember', completionTool, completionTool, 'remember']);
+    } finally { await agent.close(); }
+  });
+}
 
 for (const failure of ['throw', 'error result']) {
   test(`failed candidate admission (${failure}) reaches the model for correction rather than terminating`, async () => {
@@ -208,7 +210,7 @@ async function seedCheckpointedTurn(f, controllerMode) {
   const registry = createRegistry();
   const candidate = defineTool({
     name: 'controller_candidate', description: 'Stage controller code.',
-    parameters: Type.Unsafe(controllerMode === 'hot-reload-v3' ? versionedCandidateSchema : schema),
+    parameters: Type.Unsafe(['hot-reload-v3', 'mission-v1'].includes(controllerMode) ? versionedCandidateSchema : schema),
     execute: async () => ({ output: [{ type: 'text', text: 'Staged.' }] }),
   });
   const extension = defineExtension({ name: 'minecraft.player', tools: [candidate] });
@@ -217,7 +219,7 @@ async function seedCheckpointedTurn(f, controllerMode) {
   const root = await harness.root(context);
   await root.configure({
     model: { provider: 'openai-codex', modelId: 'gpt-6.1-sol' },
-    instructions: controllerMode ? PLAYER_INSTRUCTIONS : 'Old turn-based player instructions.',
+    instructions: 'Archived controller engineer instructions.',
     extensions: [extension], tools: [candidate],
   }, context);
   const diary = await harness.createConversation({ ownership: { kind: 'ownerless' }, agent: { tools: [] } }, context);
@@ -230,13 +232,20 @@ async function seedCheckpointedTurn(f, controllerMode) {
   await history.wait(context);
   const diaryHistory = await diary.submit({ type: 'input', content: 'preserved-diary-facts-marker' }, context);
   await diaryHistory.wait(context);
-  await root.submit({ type: 'input', content: 'checkpointed-controller-turn-marker' }, context);
-  return { harness, root, diary, documents, knowledge, database };
+  const strategy = controllerMode === 'mission-v1'
+    ? await harness.createConversation({ ownership: { kind: 'ownerless' }, agent: { tools: [candidate], extensions: [extension] } }, context)
+    : null;
+  if (strategy) {
+    await strategy.configure({ model: { provider: 'openai-codex', modelId: 'gpt-6.1-sol' } }, context);
+    await root.commit(async tx => { (await tx.doc(documents)).strategy = strategy.id; }, context);
+  }
+  await (strategy ?? root).submit({ type: 'input', content: 'checkpointed-controller-turn-marker' }, context);
+  return { harness, root, strategy, diary, documents, knowledge, database };
 }
 
-for (const controllerMode of [undefined, 'persistent-v1', 'reactive-v2', 'hot-reload-v3']) {
-  const currentMode = controllerMode === 'hot-reload-v3';
-  test(`${currentMode ? 'current controller restart resumes' : `${controllerMode ?? 'legacy'} schema migration retires`} a checkpointed generation without losing history or documents`, async () => {
+for (const controllerMode of [undefined, 'persistent-v1', 'reactive-v2', 'hot-reload-v3', 'mission-v1']) {
+  const currentMode = controllerMode === 'mission-v1';
+  test(`${currentMode ? 'mission restart resumes' : `${controllerMode ?? 'legacy'} migration retires`} a checkpointed generation without losing archived history or documents`, async () => {
     const entered = deferred();
     const f = await fixture([
       answer('Preserved root survival lesson.'),
@@ -261,7 +270,7 @@ for (const controllerMode of [undefined, 'persistent-v1', 'reactive-v2', 'hot-re
     const checkpointSchema = f.calls.at(-1).context.messages
       .filter(message => message.role === 'system').flatMap(message => message.toolsAdded ?? [])
       .findLast(tool => tool.name === 'controller_candidate').parameters;
-    assert.equal(checkpointSchema.required.includes('baseVersion'), currentMode, 'the checkpoint actually uses the old or current tool schema');
+    assert.equal(checkpointSchema.required.includes('baseVersion'), ['hot-reload-v3', 'mission-v1'].includes(controllerMode), 'the checkpoint actually uses its original tool schema');
     await seeded.harness.close(BACKGROUND_CONTEXT);
     const inspectHarness = await Harness.open(await openNodeSqliteStorage(seeded.database), { models: f.models, registry: createRegistry() }, BACKGROUND_CONTEXT);
     const checkpoint = await inspectHarness.inspect(BACKGROUND_CONTEXT);
@@ -272,15 +281,17 @@ for (const controllerMode of [undefined, 'persistent-v1', 'reactive-v2', 'hot-re
     try {
       const expectedMigrations = currentMode ? [] : ['migration_started', 'migration_completed'];
       assert.deepEqual(f.events.filter(event => event.type.startsWith('migration_')).map(event => event.type), expectedMigrations);
+      assert.equal(f.calls.length, currentMode ? 4 : 3, 'legacy generations must not dispatch before retirement; missions resume');
       const image = { type: 'image', mimeType: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6S8sAAAAASUVORK5CYII=' };
       await agent.step({ controller: 'fresh-controller-observation-marker' }, { images: [image] });
       const fresh = f.calls.at(-1).context;
       const freshSchema = fresh.messages.filter(message => message.role === 'system')
         .flatMap(message => message.toolsAdded ?? []).findLast(tool => tool.name === 'controller_candidate').parameters;
       assert.ok(freshSchema.required.includes('baseVersion'), 'the fresh native turn exposes the required versioned candidate interface');
-      assert.match(JSON.stringify(fresh), /controller_edit/);
-      assert.match(JSON.stringify(fresh), /preserved-root-landmark-marker/);
-      assert.match(JSON.stringify(fresh), /Preserved root survival lesson/);
+      assert.match(JSON.stringify(fresh), /Minecraft strategist and skill author/);
+      assert.doesNotMatch(JSON.stringify(fresh), /preserved-root-landmark-marker|Preserved root survival lesson/);
+      if (currentMode) assert.match(JSON.stringify(fresh), /checkpointed-controller-turn-marker/);
+      else assert.doesNotMatch(JSON.stringify(fresh), /checkpointed-controller-turn-marker/);
       const input = fresh.messages.filter(message => message.role === 'user').at(-1);
       assert.deepEqual(input.content.find(block => block.type === 'image'), image);
       assert.match(JSON.stringify(input), /fresh-controller-observation-marker/);
@@ -298,9 +309,14 @@ for (const controllerMode of [undefined, 'persistent-v1', 'reactive-v2', 'hot-re
     const verified = await Harness.open(verifiedStorage, { models: f.models, registry: createRegistry() }, BACKGROUND_CONTEXT);
     try {
       assert.equal((await verified.root(BACKGROUND_CONTEXT)).id, seeded.root.id);
-      assert.deepEqual(await verified.snapshot(seeded.documents, BACKGROUND_CONTEXT), {
-        diary: seeded.diary.id, controllerMode: 'hot-reload-v3',
-      });
+      const saved = await verified.snapshot(seeded.documents, BACKGROUND_CONTEXT);
+      assert.equal(saved.diary, seeded.diary.id);
+      assert.equal(saved.controllerMode, 'mission-v1');
+      assert.notEqual(saved.strategy, seeded.root.id);
+      if (seeded.strategy) assert.equal(saved.strategy, seeded.strategy.id);
+      const archive = await verified.root(BACKGROUND_CONTEXT);
+      assert.match(JSON.stringify(await archive.context(BACKGROUND_CONTEXT)), /preserved-root-landmark-marker/);
+      assert.match(JSON.stringify(await archive.context(BACKGROUND_CONTEXT)), /Preserved root survival lesson/);
       assert.deepEqual(await verified.snapshot(seeded.knowledge, BACKGROUND_CONTEXT), {
         skills: ['preserved-shelter-skill'], home: { x: 12, y: 64, z: 34 },
       });
@@ -740,7 +756,7 @@ test('large-window history is preserved beyond the former 64k tactical cap', asy
     }
     await agent.step({ health: 20, inventory: ['pickaxe'] });
     const requests = f.calls.map(call => JSON.stringify(call.context));
-    assert.equal(requests.some(request => /summari|compact/i.test(request)), false);
+    assert.equal(requests.some(request => /context summarization assistant|history before this point was compacted/i.test(request)), false);
     assert.match(requests.at(-1), /historical-block-data/);
     assert.match(requests.at(-1), /known home/);
   } finally { await agent.close(); }
@@ -749,7 +765,7 @@ test('large-window history is preserved beyond the former 64k tactical cap', asy
 test('automatic compaction passes through the same bounded and sanitized model boundary', async () => {
   const secret = 'SYNTHETIC_COMPACTION_SECRET_MARKER';
   const f = await fixture(Array.from({ length: 20 }, () => context => (
-    /summari|compact/i.test(JSON.stringify(context))
+    /context summarization assistant/i.test(JSON.stringify(context))
       ? fauxAssistantMessage('', { stopReason: 'error', errorMessage: secret })
       : answer('I will remember the useful surroundings.')
   )), [], 50000);
@@ -766,7 +782,7 @@ test('automatic compaction passes through the same bounded and sanitized model b
   assert.ok(f.calls.length > 1);
   assert.equal(f.events.filter(event => event.type === 'model_start').length, f.calls.length);
   assert.equal(f.events.filter(event => event.type === 'model_error' && event.category === 'provider_request_failed').length, 1);
-  assert.match(JSON.stringify(f.calls.at(-1).context), /summari|compact/i);
+  assert.match(JSON.stringify(f.calls.at(-1).context), /context summarization assistant/i);
   const database = await readFile(path.join(f.stateDir, 'worlds/fresh-one/agent.sqlite'));
   assert.equal(database.includes(Buffer.from(secret)), false);
 });

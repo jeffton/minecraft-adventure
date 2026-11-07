@@ -23,6 +23,7 @@ import { createWorldKnowledge } from './world-knowledge.mjs';
 import { actionFeedback, observationFeedback } from './feedback.mjs';
 import { VisionLoop } from './vision-loop.mjs';
 import { ProgressHistory } from './progress.mjs';
+import { missionController, planningObservation } from './mission.mjs';
 
 const require = createRequire('/opt/minecraft-mindcraft/package.json');
 const mineflayer = require('mineflayer');
@@ -159,7 +160,7 @@ export async function runPlayer(env = process.env) {
       if (event.type === 'action-end') {
         const result = event.action;
         const effects = result.before && result.after ? skillEvidence(result.before, result.after) : null;
-        progress.completed(result);
+        progress.completed({ ...result, session });
         void saveProgress();
         emit('action', `${result.name}: ${result.state}${result.error ? ': ' + result.error.split('\n')[0] : ''}. Observed changes: ${JSON.stringify(effects)}`, { actionId: result.id, skillName: result.name, state: result.state, verified: Boolean(effects && (Object.keys(effects.inventoryDelta).length || effects.foodDelta)), effects });
         engineering?.actionOutcome(result, { version: controller?.current()?.version ?? null, life, sequence, placedBlocks: progress.state.placedBlocks });
@@ -231,12 +232,16 @@ export async function runPlayer(env = process.env) {
     await controller.open();
     engineering = new EngineeringSignals({ onEvent: emit });
     engineering.notify({ kind: 'startup', key: controller.current() ? 'evaluate_current_controller' : 'missing_controller',
-      version: controller.current()?.version ?? null, life, sequence, details: { progress: progress.observation() } });
+      version: controller.current()?.version ?? null, life, sequence, details: { progress: progress.observation({ session }) } });
     controllerLoop = new ControllerLoop({
       controller, pipeline, observe: () => rpc.observe(),
       context: () => ({ worldId, session, life, reflexOwner, stopping, draining: controlDrain.active, health: bot.health }),
       onEvent: (type, message, data) => {
         if (type === 'controller_action') { error = null; idleEvidence = null; }
+        if (type === 'controller_replan') {
+          engineering.notify({ kind: 'mission_outcome', key: data.version, version: data.version, life, sequence,
+            details: { reason: message, action: actionFeedback(action()) } });
+        }
         if (type === 'controller_idle') {
           if (idleEvidence?.reason !== message) idleEvidence = { reason: message, since: Date.now() };
           if (Date.now() - idleEvidence.since >= 120000) {
@@ -260,7 +265,9 @@ export async function runPlayer(env = process.env) {
       return {
         worldId, active: active && { version: active.version, baseVersion: active.baseVersion, name: active.name, code: active.code },
         state: view.state, error: view.error, lastDecision: view.lastDecision, feedbackFailure: view.feedbackFailure,
-        versions: view.versions.map(({ version, baseVersion, name, status, error, validation, analysis }) => ({ version, baseVersion, name, status, error, validation, analysis })),
+        versionCount: view.versions.length,
+        versions: view.versions.filter(record => record.status === 'admitted').map(({ version, baseVersion, name, status, error }) => ({ version, baseVersion, name, status, error })),
+        history: 'Prior versions remain on disk; controller_inspect({version}) retrieves original source and evidence.',
       };
     };
     const tool = (name, description, properties, required, execute) => ({ name, description, parameters: { ...OBJECT(properties), required }, execute });
@@ -280,6 +287,9 @@ export async function runPlayer(env = process.env) {
       return controllerLoop.hotReload(record, interrupt);
     };
     const tools = [
+      tool('mission', 'Choose the next finite gameplay episode. Code is a skill body with mc.call/mc.observe and input, runs once within the 120-second action deadline, then returns to strategic planning with actual outcomes. Include an observable success criterion. Use a coherent route and related productive operations, not tiny waypoint polling. The world, inventory, controller history and notes persist.', { objective: STRING, expectedOutcome: STRING, code: STRING, input: { type: 'object' }, baseVersion: { type: ['string', 'null'] } }, ['objective', 'expectedOutcome', 'code', 'baseVersion'], async args => submitControllerCandidate({
+        name: args.objective, baseVersion: args.baseVersion, code: missionController(args),
+      })),
       tool('observe', 'Read fresh server state immediately, plus a valid recent POV when available. Capture runs independently; imagePending means no image is attached. Includes current baseVersion and engineering evidence. Never infer unseen terrain.', {}, [], async () => {
         const visual = perceptionImage();
         const observed = { ...modelObservation(visual), baseVersion: controller.current()?.version ?? null, engineering: engineering.feedback() };
@@ -298,11 +308,7 @@ export async function runPlayer(env = process.env) {
         return skills.get(args.name);
       }),
     ];
-    const instructions = `You maintain Roy's persistent Minecraft player controller. You are NOT the realtime player. The controller continues observing, choosing and executing locally while you improve it in the background. Preserve Roy's goals: survive, food/tools, attractive practical home with storage and bed, exploration and eventual dragon.
-Supply the inspected baseVersion with controller_candidate or controller_edit; re-inspect source/state on any mismatch. React to supplied failure, death, stagnation and material evidence; there is no fixed engineering cooldown. Capture and deterministic evidence analysis run alongside local gameplay; you are the sole patch writer. Submit useful version-aware repairs, not cosmetic revisions. Prefer controller_edit for precise repairs: each {oldText,newText} must match uniquely and without overlap in the original inspected source. All edits share that original version, not sequentially transformed text. This avoids rewriting unchanged code and uses identical fixtures/admission/activation. Use controller_candidate for bootstrap or a substantial redesign to submit a complete ES module exporting async function decide(observation,state,lastResult). It receives fresh authoritative observations, durable world-scoped state and the last host action outcome. Return {state,action:{name,code,input}} for one useful bounded skill, or {state,action:null,reason,wakeAfterMs}. Code bodies get mc.call, mc.observe, input; controller decisions have no mc or external I/O. Retain actionable goals, exploration frontiers, resource dependencies and failure lessons in state. Select actions by consulting those goals/dependencies/sites; writing goal strings that never affect control flow is not planning. Never reset persistent goals, learned routes or frontiers when life changes; invalidate only transient equipment/action/entity assumptions and reobserve inventory. Do not put large immutable code strings in state. Use local feedback and bounded loops, not a fixed list exhausted after a few turns. Admitted code hot-reloads after safe action cancellation and RPC drain; gameplay correctness is learned live, not approved offline. A candidate admission is not activation or gameplay success; inspect feedback.
-Ship the smallest useful controller_edit as soon as a concrete defect is clear. Do not delay a local fix to reconstruct a general fixture suite or explain the plan. Admission checks syntax, imports and the async decide entrypoint only; there are no offline gameplay fixtures, performance approval or automatic rollback. Activation cancels ongoing generated work safely and drains host RPC rather than waiting for its full action deadline. Learn correctness from actual next action outcomes and iterate. No manual test/deploy/acceptance ritual. Never use waits or repeated scans as fabricated progress. Useful idle requires an explicit reason; missing resources require purposeful exploration or a different achievable subgoal. Keep recipe, resource, terrain and route reasoning in the live controller.
-Controller action results include value (your structured query/result), verified effects and errors. Controller source, durable state, observations and action results share the sandbox's 1 MiB JSON transport boundary; there are no separate miniature source/state/sensor budgets. Preserve facts needed for planning and use targeted queries rather than duplicating immutable source in state. Query registryInfo, recipesAll, biomeAt and knownLocations inside bounded skill actions to obtain semantic/observed world knowledge, then incorporate it in the next local decision. Use skills for reusable source; embed fetched source as the returned action code, with parameters in input. No host gameplay policy or model approval is needed per decision.
-Controller audit reports are version-scoped evidence; compare them with current source and repair demonstrated defects rather than treating a report as proof that an action succeeded. Use actual POV images for terrain/build quality and host observations for exact inventory. Do not change the world through model tools: your only gameplay authority is the versioned controller. Improve existing controller rather than replacing successful behavior for novelty. Syntax/admission and actual runtime errors are visible.\n\nMinecraft RPC:\n${RPC_DESCRIPTION}`;
+    const instructions = `All gameplay runs through the versioned isolated controller. mission creates a one-shot controller automatically; controller_candidate/edit remain available for reusable local behavior. For an explicit planning boundary a controller returns {state,action:null,replan:true,reason}. Supply the active inspected baseVersion. State and skills remain world-scoped. Do not replay obsolete routes from legacy controller state. Full source/outcomes remain available through inspect tools.\n\nMinecraft RPC:\n${RPC_DESCRIPTION}`;
     const capture = async () => {
       const generation = life;
       const observed = state();
@@ -338,7 +344,8 @@ Controller audit reports are version-scoped evidence; compare them with current 
       return delta;
     };
     const modelObservation = visual => ({
-      worldId, session, life, reflexOwner, ...observationFeedback(rpc.observe()), notes, progress: progress.observation(),
+      worldId, session, life, reflexOwner, ...observationFeedback(rpc.observe()), notes,
+      progress: progress.observation({ session, since: controller.current()?.activatedAt }),
       controller: controllerFeedback(), scheduler: controllerLoop.inspect(),
       action: actionFeedback(action()),
       events: modelEventDelta(), eventLog: { session, throughSequence: sequence, tool: 'read_events' },
@@ -348,7 +355,7 @@ Controller audit reports are version-scoped evidence; compare them with current 
     });
     const freshFeedback = async ({ phase } = {}) => {
       const feedback = engineering.feedback();
-      if (stopping || bot.health <= 0) return null;
+      if (stopping || bot.health <= 0 || (phase === 'onYield' && action()?.settled === false)) return null;
       if (phase !== 'beforeRequest' && (!feedback || feedback.key === deliveredFeedbackKey)) return null;
       if (!feedback && !activeAnalysis) return null;
       return readEngineeringPerception(
@@ -459,10 +466,8 @@ Controller audit reports are version-scoped evidence; compare them with current 
               activeAnalysis.reasons = pending.reasons;
               engineering.delivered(pending.key);
             }
-            const observed = { ...modelObservation(visual), controllerAudit, engineering: { ...batch, key: deliveredFeedbackKey, reasons: activeAnalysis.reasons },
-              decision: controller.current()
-                ? 'Reactive engineering request: inspect the supplied new evidence, use current source/state, and repair a demonstrated weakness. Local play continues. Submit one version-aware candidate when useful; otherwise finish without cosmetic changes. Further relevant feedback/images arrive at model round boundaries.'
-                : 'No controller is active. Write a persistent controller now; it runs immediately after syntax/import/entrypoint admission. It must keep choosing useful actions locally without further model requests.' };
+            const observed = planningObservation({ ...modelObservation(visual), controllerAudit,
+              engineering: { ...batch, key: deliveredFeedbackKey, reasons: activeAnalysis.reasons } });
             return { observed, images: visual ? [visual.frame.image] : [] };
           });
         if (!payload) return;
@@ -497,7 +502,8 @@ Controller audit reports are version-scoped evidence; compare them with current 
         if (!engineer.agent) void engineer.retry();
         else engineering.notify({ kind: 'engineering_retry', key: String(engineerFailures), version: controller.current()?.version ?? null, life, sequence });
       }
-      if (engineer.agent && !thinking && !retryAt && bot.health > 0 && controllerLoop.inspect().pending.length === 0) {
+      if (engineer.agent && !thinking && !retryAt && bot.health > 0 &&
+          action()?.settled !== false && controllerLoop.inspect().pending.length === 0) {
         const batch = engineering.start();
         if (batch) background = improve(batch);
       }

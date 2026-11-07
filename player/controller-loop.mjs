@@ -82,8 +82,12 @@ export class ControllerLoop {
         this.pipeline.start({ ...decision.action, life: current.life, session: current.session });
         this.onEvent('controller_action', decision.action.name, { version: this.controller.current().version });
       } else {
-        this.nextAt = Date.now() + decision.wakeAfterMs;
-        this.onEvent('controller_idle', decision.reason, { wakeAfterMs: decision.wakeAfterMs });
+        // A finished strategic episode parks until a new mission is staged. Safety
+        // reflexes stay independent; do not replay the same script while planning.
+        this.nextAt = decision.replan ? Infinity : Date.now() + decision.wakeAfterMs;
+        this.onEvent(decision.replan ? 'controller_replan' : 'controller_idle', decision.reason, {
+          wakeAfterMs: decision.wakeAfterMs, version: this.controller.current().version,
+        });
       }
     } finally {
       this.busy = false;

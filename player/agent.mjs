@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { MISSION_INSTRUCTIONS } from './mission.mjs';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { BACKGROUND_CONTEXT, withAbortSignal } from '@earendil-works/chord/context';
@@ -15,12 +16,11 @@ const DIARY_MODEL = 'gpt-6.1-terra';
 const context = BACKGROUND_CONTEXT;
 const Conversations = defineDoc({
   kind: 'minecraft.player-conversations', version: 1, scope: 'session',
-  initial: () => ({ diary: null, controllerMode: 'hot-reload-v3' }),
+  initial: () => ({ diary: null, strategy: null, controllerMode: 'mission-v1' }),
   checkpointWhen: () => true,
 });
 
-export const PLAYER_INSTRUCTIONS = `You are Roy's background realtime Minecraft controller engineer. A persistent OS-isolated JavaScript controller owns observe→decide→act locally without model approval. Inspect source, actual outcomes and real POV images, then hot-edit it through controller_edit. Ship the smallest useful exact edit immediately when a concrete defect is clear; do not regenerate unchanged source, explain a plan, build an offline fixture suite or perform a manual test/deploy ritual. Admission checks syntax, imports and the async decide entrypoint only. The harness safely cancels generated work, drains host RPC and hot-reloads the version. Real gameplay errors feed the next iteration; there is no gameplay approval or automatic rollback.
-Preserve survival, food/tools, home/storage/bed, exploration and eventual dragon progression. Controller state carries resource dependencies, observed sites, exploration frontiers and failure lessons; death invalidates transient assumptions, not long-term goals. Base patches on the inspected active baseVersion; stale patches cannot replace newer source. One owner controls the player, while you improve its code in the background. Missing resources require spatial reasoning and legitimate exploration, not invented coordinates. Images show real observed terrain; host outcomes establish actual effects. Submit the change rather than narrating intentions. You have no host shell/files/network/credentials; tools define the API.`;
+
 
 const DIARY_INSTRUCTIONS = `Write Roy's Minecraft adventure diary from the supplied factual events. Return one short subjective paragraph in English, in Roy's first-person voice: concrete, warm, occasionally dryly funny. Describe how the real experience felt, not telemetry or a list. Never invent actions, emotions of other players, achievements, encounters or completed construction. Distinguish failed attempts from success. Do not mention tools, model names or the harness. No heading, bullets, preamble or markdown fences.`;
 
@@ -118,10 +118,10 @@ export async function openPlayerAgent({
       try {
         const result = nativeResult(await tool.execute(args, api, callContext));
         // Pi terminates only when every call in a round requests it. Read the
-        // persisted round so remember+candidate/edit works after replay too.
+        // persisted round so remember+mission/candidate/edit works after replay too.
         // Any failed admission/tool leaves its control unset and permits repair.
         const round = await api.snapshot(LiveDoc, api.conversationId, callContext);
-        if (!result.isError && round?.tools?.some(call => ['controller_candidate', 'controller_edit'].includes(call.name))) {
+        if (!result.isError && round?.tools?.some(call => ['mission', 'controller_candidate', 'controller_edit'].includes(call.name))) {
           result.control = { ...result.control, terminate: true };
         }
         emit({ type: 'tool_end', name: tool.name, callId: api.callId, isError: result.isError === true });
@@ -256,11 +256,34 @@ export async function openPlayerAgent({
   signal?.addEventListener('abort', onAbort, { once: true });
   try {
     signal?.throwIfAborted();
-    const root = await harness.root(context);
+    const archive = await harness.root(context);
+    const conversations = await harness.snapshot(Conversations, context);
+    if (conversations && conversations.controllerMode !== 'mission-v1') {
+      emit({ type: 'migration_started', controllerMode: 'mission-v1' });
+      const inspection = await harness.inspect(context);
+      // Conversation.abort() itself resumes the entire scheduler. Mark the
+      // archived root's tasks first so no checkpointed engineering tool can run.
+      for (const { record } of inspection.tasks) {
+        if (record.conversationId === archive.id) await harness.abortTask(record.id, context);
+      }
+      await archive.abort(context);
+    }
+    const strategyId = conversations?.strategy;
+    const root = strategyId
+      ? await harness.conversation(strategyId, context)
+      : await harness.createConversation({ ownership: { kind: 'ownerless' }, agent: { extensions: [player], tools: registeredTools } }, context);
+    await archive.commit(async tx => {
+      const saved = await tx.doc(Conversations);
+      saved.strategy = root.id;
+      saved.controllerMode = 'mission-v1';
+    }, context);
+    if (conversations && conversations.controllerMode !== 'mission-v1') {
+      emit({ type: 'migration_completed', controllerMode: 'mission-v1' });
+    }
     await root.configure({
       model: { provider: 'openai-codex', modelId: PLAYER_MODEL }, thinkingLevel: 'medium',
       extensions: [player], tools: registeredTools,
-      instructions: `${PLAYER_INSTRUCTIONS}\n\nWorld identity: ${worldId}\n\n${instructions}`,
+      instructions: `${MISSION_INSTRUCTIONS}\n\nWorld identity: ${worldId}\n\n${instructions}`,
     }, context);
     let diaryId = (await harness.snapshot(Conversations, context))?.diary;
     const diary = diaryId
@@ -274,19 +297,7 @@ export async function openPlayerAgent({
     const inspection = await harness.inspect(context);
     const tasks = inspection.tasks.map(({ record, state }) => ({ id: record.id, taskKind: record.kind, ...state }));
     onStatus({ phase: tasks.some(task => task.kind === 'blocked') ? 'blocked' : 'recovering', tasks });
-    const controllerMode = (await harness.snapshot(Conversations, context))?.controllerMode;
     harness.resume();
-    if (controllerMode !== 'hot-reload-v3') {
-      emit({ type: 'migration_started', controllerMode: 'hot-reload-v3' });
-      // Existing generations retain their old tool schema: configure only changes
-      // future turns. Retire obsolete turns before requiring candidate baseVersion.
-      // Abort preserves the root, its history and all controller/world documents.
-      await root.abort(context);
-      await root.commit(async tx => {
-        (await tx.doc(Conversations)).controllerMode = 'hot-reload-v3';
-      }, context);
-      emit({ type: 'migration_completed', controllerMode: 'hot-reload-v3' });
-    }
     await root.waitForIdle(context);
     await diary.waitForIdle(context);
     signal?.throwIfAborted();
