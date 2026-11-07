@@ -101,7 +101,7 @@ export async function runPlayer(env = process.env) {
       void appendFile(path.join(stateDir, 'events.jsonl'), JSON.stringify(event) + '\n').catch(fail);
       if (GAMEPLAY.has(type)) void appendFile(gameplayLedger, JSON.stringify(event) + '\n').catch(fail);
       if (type === 'gather' || type === 'build') lastWorldEffect = sequence;
-      if (engineering && ['death', 'error', 'controller_error', 'reflex'].includes(type)) {
+      if (engineering && ['death', 'error', 'controller_error', 'reflex', 'reflex_blocked'].includes(type)) {
         engineering.notify({ kind: type, key: message, details: data, version: controller.current()?.version ?? null, life, sequence, at: event.at });
       }
       if (engineering && type === 'controller' && data.type === 'controller-error') {

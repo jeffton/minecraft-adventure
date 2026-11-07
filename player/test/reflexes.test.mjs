@@ -39,7 +39,8 @@ function fixture({ name = 'zombie', position = new Vec3(2, 0, 0), barriers = [] 
     entity: { id: 1, position: new Vec3(0, 0, 0), height: 1.8 },
     entities: { 2: { id: 2, name, position, height: 1.8 } },
     world: { raycast }, health: 20, food: 20, oxygenLevel: 20, _client: { ended: false },
-    pathfinder: { movements, setGoal: goal => calls.goals.push(goal) },
+    pathfinder: { movements, goal: null, setGoal(goal) { this.goal = goal; calls.goals.push(goal); } },
+    blockAt: position => ({ name: 'air', position, shapes: [] }),
     setControlState: (...args) => calls.controls.push(args), inventory: { items: () => [] },
     lookAt: async () => {}, attack: entity => calls.attacks.push(entity.id),
   });
@@ -117,7 +118,7 @@ test('escape navigation emits target, route and displacement evidence and unregi
 
   f.bot.emit('path_update', { status: 'success', path: [new Vec3(1, 0, 0), new Vec3(2, 0, 0)], visitedNodes: 7, time: 2 });
   f.bot.entity.position = new Vec3(-1, 0, 0);
-  f.bot.emit('goal_reached');
+  f.bot.emit('goal_reached', f.bot.pathfinder.goal);
   f.bot.entities = {};
   await f.controller.tick();
 
@@ -132,7 +133,7 @@ test('escape navigation emits target, route and displacement evidence and unregi
   assert.deepEqual(reached.targetPosition, { x: 2, y: 0, z: 0 });
   assert.equal(reached.distance, 3);
   const ended = records.find(record => record.phase === 'ended');
-  assert.equal(ended.reason, 'threat_no_longer_exposed');
+  assert.equal(ended.reason, 'escape_goal_reached');
   assert.equal(ended.goalReached, true);
   assert.deepEqual(ended.position, { x: -1, y: 0, z: 0 });
   assert.equal(ended.targetPosition, null);
@@ -157,6 +158,146 @@ test('navigation listeners ignore non-escape paths and do not leak across contro
     assert.equal(f.bot.listenerCount('path_update'), 0);
     assert.equal(f.bot.listenerCount('goal_reached'), 0);
   }
+});
+
+test('ordinary melee does not cancel a pending or moving exit route, but severe danger still preempts', async () => {
+  for (const health of [20, 8]) {
+    const f = fixture();
+    const exit = { destination: 'dry shore' };
+    f.bot.pathfinder.setGoal(exit);
+    f.bot.health = health;
+    await f.controller.tick();
+    if (health === 20) {
+      assert.equal(f.bot.pathfinder.goal, exit);
+      assert.deepEqual(f.calls.acquired, []);
+    } else {
+      assert.deepEqual(f.calls.acquired, ['escaping immediate danger']);
+      assert.notEqual(f.bot.pathfinder.goal, exit);
+    }
+    f.controller.close();
+  }
+});
+
+test('terminal empty escape releases once without retrying unchanged geometry or clearing a later mission', async () => {
+  const f = fixture({ name: 'skeleton', position: new Vec3(8, 0, 0) });
+  await f.controller.tick();
+  const failedGoal = f.bot.pathfinder.goal;
+  f.bot.emit('path_update', { status: 'noPath', path: [], visitedNodes: 1, time: 0.2 });
+  assert.equal(f.calls.released, 0, 'path callback cannot mutate pathfinder re-entrantly');
+  await f.controller.tick();
+  assert.equal(f.calls.released, 1);
+  assert.equal(f.bot.pathfinder.goal, null);
+  assert.equal(f.calls.events.filter(([type]) => type === 'reflex_blocked').length, 1);
+  const missionGoal = { destination: 'unblock or find cover' };
+  f.bot.pathfinder.setGoal(missionGoal);
+  f.bot.emit('goal_reached', failedGoal);
+  f.bot.emit('path_update', { status: 'noPath', path: [] });
+  for (let tick = 0; tick < 5; tick++) {
+    f.bot.entities[2].position.x += 0.1;
+    await f.controller.tick();
+  }
+  assert.equal(f.bot.pathfinder.goal, missionGoal);
+  assert.equal(f.calls.acquired.length, 1);
+  assert.equal(f.calls.events.filter(([type]) => type === 'reflex_blocked').length, 1);
+  f.bot.entity.position.x += 1;
+  await f.controller.tick();
+  assert.equal(f.calls.acquired.length, 2, 'changing cell makes route feasibility worth reevaluating');
+  f.controller.close();
+});
+
+test('door opening or displacement between noPath and the next tick cannot cache an obsolete failure', async () => {
+  for (const change of ['door', 'position']) {
+    const f = fixture({ name: 'creeper' });
+    await f.controller.tick();
+    f.bot.emit('path_update', { status: 'noPath', path: [] });
+    if (change === 'door') {
+      f.bot.emit('blockUpdate', { shapes: [[0, 0, 0, 1, 1, 1]] }, { position: new Vec3(1, 0, 0), shapes: [] });
+    } else {
+      f.bot.entity.position.z += 1;
+    }
+    await f.controller.tick();
+    assert.equal(f.calls.released, 1);
+    assert.equal(f.calls.events.find(([type]) => type === 'reflex_blocked')[2].circumstancesChanged, true);
+    await f.controller.tick();
+    assert.equal(f.calls.acquired.length, 2);
+    f.controller.close();
+  }
+});
+
+test('partial search is not a failed escape; a nearby collision change allows a blocked escape to retry', async () => {
+  const f = fixture({ name: 'creeper' });
+  await f.controller.tick();
+  f.bot.emit('path_update', { status: 'partial', path: [] });
+  await f.controller.tick();
+  assert.equal(f.calls.released, 0);
+  f.bot.emit('path_update', { status: 'noPath', path: [] });
+  await f.controller.tick();
+  await f.controller.tick();
+  assert.equal(f.calls.acquired.length, 1);
+  f.bot.emit('blockUpdate', { shapes: [[0, 0, 0, 1, 1, 1]] }, { position: new Vec3(1, 0, 0), shapes: [] });
+  await f.controller.tick();
+  assert.equal(f.calls.acquired.length, 2);
+  f.controller.close();
+  assert.equal(f.bot.listenerCount('blockUpdate'), 0);
+});
+
+test('real Pathfinder rejects a cramped refuge, then can escape after its exit geometry changes', async () => {
+  const registry = require('prismarine-registry')('1.21.4');
+  const Chunk = require('prismarine-chunk')(registry);
+  const World = require('prismarine-world')(registry);
+  const { Movements, goals } = require('mineflayer-pathfinder');
+  const AStar = require('mineflayer-pathfinder/lib/astar');
+  const Move = require('mineflayer-pathfinder/lib/move');
+  const world = new World().sync;
+  for (let x = -1; x <= 1; x++) for (let z = -1; z <= 1; z++) {
+    world.setColumn(x, z, new Chunk({ minY: -64, worldHeight: 384 }));
+  }
+  const put = (x, y, z, name) => world.setBlockStateId(new Vec3(x, y, z), registry.blocksByName[name].minStateId);
+  for (let x = -16; x <= 16; x++) for (let z = -16; z <= 16; z++) put(x, 0, z, 'stone');
+  for (let x = -1; x <= 1; x++) for (let z = -1; z <= 1; z++) {
+    if (x || z) put(x, 1, z, 'stone');
+    put(x, 3, z, 'stone');
+  }
+  const f = fixture({ name: 'skeleton', position: new Vec3(4.5, 1, 0.5) });
+  Object.assign(f.bot, { registry, world, blockAt: position => world.getBlock(position),
+    game: { minY: -64, gameMode: 'survival', dimension: 'overworld' } });
+  Object.assign(f.bot.entity, { position: new Vec3(0.5, 1, 0.5), effects: {} });
+  f.bot.pathfinder.bestHarvestTool = () => null;
+  f.bot.pathfinder.movements = new Movements(f.bot);
+  f.controller.close();
+  const controller = createReflexController(f.bot, { ...f.options, goals });
+  const search = () => {
+    const astar = new AStar(new Move(0, 1, 0, 0, 0), f.bot.pathfinder.movements, f.bot.pathfinder.goal, 600, 30, -1);
+    let result;
+    do { result = astar.compute(); } while (result.status === 'partial');
+    return result;
+  };
+  await controller.tick();
+  const trapped = search();
+  assert.equal(trapped.status, 'noPath');
+  assert.equal(trapped.path.length, 0);
+  f.bot.emit('path_update', trapped);
+  await controller.tick();
+  assert.equal(f.calls.released, 1);
+  await controller.tick();
+  assert.equal(f.calls.acquired.length, 1);
+  const before = world.getBlock(new Vec3(1, 1, 0));
+  put(1, 1, 0, 'air');
+  f.bot.emit('blockUpdate', before, world.getBlock(new Vec3(1, 1, 0)));
+  await controller.tick();
+  const open = search();
+  assert.equal(open.status, 'success');
+  assert.ok(open.path.length > 0);
+  controller.close();
+});
+
+test('an escape with a reached goal yields immediately instead of standing until its deadline', async () => {
+  const f = fixture({ name: 'creeper' });
+  await f.controller.tick();
+  f.bot.emit('goal_reached', f.bot.pathfinder.goal);
+  await f.controller.tick();
+  assert.equal(f.calls.released, 1);
+  f.controller.close();
 });
 
 test('ordinary drowned at range do not interrupt work or trigger recurring escapes', async () => {
@@ -211,7 +352,7 @@ test('death, shutdown and navigation error restore the original movement profile
   for (const outcome of ['death', 'shutdown', 'error']) {
     const f = fixture({ name: 'creeper' });
     if (outcome === 'error') {
-      const original = f.bot.pathfinder.setGoal;
+      const original = f.bot.pathfinder.setGoal.bind(f.bot.pathfinder);
       f.bot.pathfinder.setGoal = goal => {
         if (goal !== null) throw new Error('No escape path');
         original(goal);
