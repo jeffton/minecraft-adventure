@@ -71,6 +71,7 @@ export async function runPlayer(env = process.env) {
     };
     let life = 0;
     let reflexOwner = null;
+    let reflexes;
     let thinking = false;
     let error = null;
     let stopping = false;
@@ -92,6 +93,7 @@ export async function runPlayer(env = process.env) {
     let idleSince = Date.now();
     let modelEventSequence = 0;
     const emit = (type, message, data = {}) => {
+      if (type === 'skill_started') reflexes?.releaseIdle();
       const event = { session, sequence: ++sequence, worldId, at: new Date().toISOString(), bot: 'Roy', type, message: String(message), data };
       // High-volume RPC/model events remain in the complete on-disk event log.
       if (!['rpc', 'minecraft_rpc', 'model', 'latency', 'vision'].includes(type)) events.push(event);
@@ -220,12 +222,13 @@ export async function runPlayer(env = process.env) {
     cleanup.push(async () => { bot.viewer.close(); });
     bot.on('death', () => { life++; progress.died(); void saveProgress(); emit('death', 'Died; inventory and location must be observed again.'); void interrupt('death').catch(fail); });
     bot.on('respawn', () => { emit('respawn', 'Respawned in the current world.'); });
-    const stopReflexes = installReflexes(bot, {
+    reflexes = installReflexes(bot, {
       acquire: async reason => { reflexOwner = reason; await interrupt(reason); },
       release: () => { reflexOwner = null; },
+      canFloat: () => !stopping && !controlDrain.active && action()?.settled !== false,
       goals, emit, onError: fail,
     });
-    cleanup.push(async () => { stopReflexes(); });
+    cleanup.push(async () => { reflexes.close(); });
     const skillsDir = env.PLAYER_SKILL_DIR ?? '/var/lib/minecraft-player/skills';
     await mkdir(skillsDir, { recursive: true });
     const skills = new SkillLibrary({ directory: skillsDir });

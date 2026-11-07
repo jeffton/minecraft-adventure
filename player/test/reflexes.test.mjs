@@ -7,7 +7,7 @@ const require = createRequire('/opt/minecraft-mindcraft/package.json');
 const { Vec3 } = require('vec3');
 
 function fixture({ name = 'zombie', position = new Vec3(2, 0, 0), barriers = [] } = {}) {
-  const calls = { acquired: [], released: 0, goals: [], attacks: [], errors: [] };
+  const calls = { acquired: [], released: 0, goals: [], attacks: [], errors: [], controls: [] };
   // Geometric test world: ray/axis-aligned-box intersection, with solid walls
   // independent of the reflex's exposure sampling implementation.
   const raycast = (origin, direction, distance) => {
@@ -39,7 +39,7 @@ function fixture({ name = 'zombie', position = new Vec3(2, 0, 0), barriers = [] 
     entities: { 2: { id: 2, name, position, height: 1.8 } },
     world: { raycast }, health: 20, food: 20, oxygenLevel: 20, _client: { ended: false },
     pathfinder: { movements, setGoal: goal => calls.goals.push(goal) },
-    setControlState() {}, inventory: { items: () => [] },
+    setControlState: (...args) => calls.controls.push(args), inventory: { items: () => [] },
     lookAt: async () => {}, attack: entity => calls.attacks.push(entity.id),
   };
   const options = {
@@ -179,4 +179,103 @@ test('shutdown during ownership acquisition cannot start a late escape', async (
   await pending;
   assert.deepEqual(f.bot.pathfinder.movements, f.initial);
   assert.equal(f.calls.goals.filter(goal => goal !== null).length, 0);
+});
+
+test('emergency ascent retains ownership until air fully recovers', async () => {
+  const f = fixture();
+  f.bot.entities = {};
+  f.bot.entity.isInWater = true;
+  for (const oxygen of [7, 8, 19]) {
+    f.bot.oxygenLevel = oxygen;
+    await f.controller.tick();
+    assert.equal(f.calls.released, 0);
+    assert.deepEqual(f.calls.controls.at(-1), ['jump', true]);
+  }
+  assert.deepEqual(f.calls.acquired, ['surfacing for air']);
+  f.bot.oxygenLevel = 20;
+  await f.controller.tick();
+  assert.equal(f.calls.released, 1);
+  f.controller.close();
+});
+
+test('idle flotation yields synchronously and never clears a later action control', async () => {
+  const f = fixture();
+  f.bot.entities = {};
+  f.bot.entity.isInWater = true;
+  let idle = true;
+  const controller = createReflexController(f.bot, { ...f.options, canFloat: () => idle });
+  await controller.tick();
+  assert.deepEqual(f.calls.controls.at(-1), ['jump', true]);
+  assert.deepEqual(f.calls.acquired, []);
+  controller.releaseIdle();
+  idle = false;
+  f.bot.setControlState('jump', true); // New action owns this control.
+  const count = f.calls.controls.length;
+  await controller.tick();
+  assert.equal(f.calls.controls.length, count);
+  controller.close();
+  assert.equal(f.calls.controls.length, count);
+});
+
+test('death and shutdown release idle flotation', async () => {
+  for (const outcome of ['death', 'shutdown']) {
+    const f = fixture();
+    f.bot.entities = {};
+    f.bot.entity.isInWater = true;
+    const controller = createReflexController(f.bot, { ...f.options, canFloat: () => true });
+    await controller.tick();
+    if (outcome === 'death') { f.bot.health = 0; await controller.tick(); }
+    else controller.close();
+    assert.deepEqual(f.calls.controls.at(-1), ['jump', false]);
+    controller.close();
+  }
+});
+
+test('idle flotation rises to breathable surface in real Minecraft water physics', async () => {
+  const { Physics, PlayerState } = require('prismarine-physics');
+  const data = require('minecraft-data')('1.21.4');
+  const Block = require('prismarine-block')('1.21.4');
+  const world = {
+    getBlock(position) {
+      const name = position.y < 60 ? 'stone' : position.y < 64 ? 'water' : 'air';
+      const block = Block.fromStateId(data.blocksByName[name].defaultState, 0);
+      block.position = position;
+      return block;
+    },
+  };
+  const heights = [];
+  for (const idle of [false, true]) {
+    const f = fixture();
+    f.bot.entities = {};
+    Object.assign(f.bot.entity, {
+      position: new Vec3(0.5, 61, 0.5), velocity: new Vec3(0, 0, 0),
+      isInWater: true, onGround: false, yaw: 0, pitch: 0, effects: {},
+    });
+    Object.assign(f.bot, { version: '1.21.4', jumpTicks: 0, jumpQueued: false, inventory: { slots: [], items: () => [] } });
+    const controls = { forward: false, back: false, left: false, right: false, jump: false, sprint: false, sneak: false };
+    f.bot.setControlState = (name, value) => { controls[name] = value; };
+    const controller = createReflexController(f.bot, { ...f.options, canFloat: () => idle });
+    const physics = Physics(data, world);
+    for (let tick = 0; tick < 120; tick++) {
+      if (tick % 10 === 0) await controller.tick();
+      physics.simulatePlayer(new PlayerState(f.bot, controls), world).apply(f.bot);
+    }
+    heights.push(f.bot.entity.position.y + 1.62);
+    assert.deepEqual(f.calls.acquired, []);
+    controller.close();
+  }
+  assert.ok(heights[0] < 64, `Without flotation the eyes remain submerged: ${heights[0]}`);
+  assert.ok(heights[1] >= 64, `Flotation must reach breathable air: ${heights[1]}`);
+});
+
+test('swimming past ordinary drowned does not cancel a shore route, but severe danger does', async () => {
+  for (const health of [20, 8]) {
+    const f = fixture({ name: 'drowned' });
+    f.bot.entity.isInWater = true;
+    f.bot.health = health;
+    await f.controller.tick();
+    assert.deepEqual(f.calls.acquired, health === 20 ? [] : ['escaping immediate danger']);
+    assert.deepEqual(f.calls.attacks, []);
+    f.controller.close();
+  }
 });

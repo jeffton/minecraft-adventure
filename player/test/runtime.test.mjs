@@ -26,7 +26,7 @@ test('local eating interrupts a program and reports only observed hunger increas
   const stop = installReflexes(bot, { acquire: async reason => events.push(['interrupt', reason]), release: () => events.push(['release']), goals: {}, emit: (...args) => events.push(args), onError: error => { throw error; } });
   t.mock.timers.tick(500);
   await setImmediate();
-  stop();
+  stop.close();
   assert.equal(bot.food, 20);
   assert.deepEqual(events[0], ['interrupt', 'eating']);
   assert.deepEqual(events.find(event => event[0] === 'equip'), ['equip', 'cooked_beef']);
@@ -41,7 +41,7 @@ test('drowning interrupts before upward swimming, without starting inventory wor
   const stop = installReflexes(bot, { acquire: async reason => events.push(['interrupt', reason]), release: () => events.push(['release']), goals: {}, emit: (...args) => events.push(args), onError: error => { throw error; } });
   t.mock.timers.tick(500);
   await setImmediate();
-  stop();
+  stop.close();
   assert.deepEqual(events[0], ['interrupt', 'surfacing for air']);
   assert.ok(events.some(event => event[0] === 'control' && event[1] === 'jump' && event[2]));
   assert.equal(events.some(event => event[0] === 'equip'), false);
@@ -62,7 +62,7 @@ test('safety retains exclusive ownership throughout asynchronous consumption', a
   finishMeal();
   await setImmediate();
   assert.equal(events.filter(event => event[0] === 'release').length, 1);
-  stop();
+  stop.close();
 });
 
 test('neutral animals are not threats and one current-world Roy is projected', () => {

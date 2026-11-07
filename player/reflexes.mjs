@@ -22,7 +22,7 @@ export function nearbyThreats(bot, radius = 12) {
 
 // acquire/release transfer exclusive movement/inventory ownership from generated
 // programs to a bounded local safety action, including gaps between timer ticks.
-export function createReflexController(bot, { acquire, release, goals, emit, onError, now = Date.now }) {
+export function createReflexController(bot, { acquire, release, goals, emit, onError, canFloat = () => false, now = Date.now }) {
   let busy = false;
   let closed = false;
   let mode = null;
@@ -30,7 +30,14 @@ export function createReflexController(bot, { acquire, release, goals, emit, onE
   let lastMeal = 0;
   let lastAttack = 0;
   let restoreMovement = null;
+  let floating = false;
+  const releaseIdle = () => {
+    if (!floating) return;
+    floating = false;
+    bot.setControlState('jump', false);
+  };
   const take = async next => {
+    releaseIdle();
     if (mode === next) return;
     mode = next;
     await acquire(next);
@@ -57,10 +64,16 @@ export function createReflexController(bot, { acquire, release, goals, emit, onE
   };
   const tick = async () => {
     if (closed || busy || !bot.entity || bot._client.ended) return;
-    if (bot.health <= 0) { relinquish(); return; }
+    if (bot.health <= 0) { releaseIdle(); relinquish(); return; }
     busy = true;
     try {
-      if (bot.entity.isInWater && bot.oxygenLevel < 8) {
+      if (!mode && bot.entity.isInWater && canFloat()) {
+        floating = true;
+        bot.setControlState('jump', true);
+      } else {
+        releaseIdle();
+      }
+      if (bot.entity.isInWater && (bot.oxygenLevel < 8 || (mode === 'surfacing for air' && bot.oxygenLevel < 20))) {
         if (mode && mode !== 'surfacing for air') relinquish();
         await take('surfacing for air');
         if (closed) { relinquish(); return; }
@@ -91,7 +104,9 @@ export function createReflexController(bot, { acquire, release, goals, emit, onE
         emit('reflex', `Escaping ${danger.name} at ${Math.round(danger.position.distanceTo(bot.entity.position))} blocks.`);
         return;
       }
-      if (nearest && distance < 3 && bot.health > 8) {
+      // Swimming to shore is safer than cancelling that route to fistfight a
+      // drowned. Severe threats still trigger the exclusive escape above.
+      if (nearest && distance < 3 && bot.health > 8 && !bot.entity.isInWater) {
         await take('defending against nearby enemy');
         if (closed) { relinquish(); return; }
         if (now() - lastAttack > 700) {
@@ -123,11 +138,14 @@ export function createReflexController(bot, { acquire, release, goals, emit, onE
     } catch (error) { relinquish(); onError(error); }
     finally { busy = false; }
   };
-  return { tick, close() { closed = true; relinquish(); } };
+  return { tick, releaseIdle, close() { closed = true; releaseIdle(); relinquish(); } };
 }
 
 export function installReflexes(bot, options) {
   const controller = createReflexController(bot, options);
   const timer = setInterval(() => void controller.tick(), 500);
-  return () => { clearInterval(timer); controller.close(); };
+  return {
+    releaseIdle: controller.releaseIdle,
+    close() { clearInterval(timer); controller.close(); },
+  };
 }
