@@ -347,6 +347,10 @@ test('completed episodes start fresh after reopen, and worlds remain isolated', 
     assert.doesNotMatch(JSON.stringify(f.calls[2].context), /unique-oak-coordinate-marker|I remember the old oak tree/);
     for (const { context } of f.calls) {
       const instructions = JSON.stringify(context);
+      assert.match(instructions, /David's architectural ambition, in every world/);
+      assert.match(instructions, /multiple storeys, generous ceiling heights, large well-composed windows and a balcony/);
+      assert.match(instructions, /Either omit a basement or give it a proper, usable stairway/);
+      assert.match(instructions, /complete house need not be built on the first night/);
       assert.match(instructions, /David's harvesting preference/);
       assert.match(instructions, /David's mining preference/);
       assert.match(instructions, /NOT an instruction to start mining or replace the current mission/);
