@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { createRequire } from 'node:module';
 import { createReflexController, nearbyThreats } from '../reflexes.mjs';
 
@@ -7,7 +8,7 @@ const require = createRequire('/opt/minecraft-mindcraft/package.json');
 const { Vec3 } = require('vec3');
 
 function fixture({ name = 'zombie', position = new Vec3(2, 0, 0), barriers = [] } = {}) {
-  const calls = { acquired: [], released: 0, goals: [], attacks: [], errors: [], controls: [] };
+  const calls = { acquired: [], released: 0, goals: [], attacks: [], errors: [], controls: [], events: [] };
   // Geometric test world: ray/axis-aligned-box intersection, with solid walls
   // independent of the reflex's exposure sampling implementation.
   const raycast = (origin, direction, distance) => {
@@ -34,18 +35,18 @@ function fixture({ name = 'zombie', position = new Vec3(2, 0, 0), barriers = [] 
   };
   const initial = { ...movements };
   let time = 10000;
-  const bot = {
+  const bot = Object.assign(new EventEmitter(), {
     entity: { id: 1, position: new Vec3(0, 0, 0), height: 1.8 },
     entities: { 2: { id: 2, name, position, height: 1.8 } },
     world: { raycast }, health: 20, food: 20, oxygenLevel: 20, _client: { ended: false },
     pathfinder: { movements, setGoal: goal => calls.goals.push(goal) },
     setControlState: (...args) => calls.controls.push(args), inventory: { items: () => [] },
     lookAt: async () => {}, attack: entity => calls.attacks.push(entity.id),
-  };
+  });
   const options = {
     acquire: async reason => calls.acquired.push(reason), release: () => calls.released++,
     goals: { GoalNear: class { constructor(...args) { this.args = args; } }, GoalInvert: class { constructor(goal) { this.goal = goal; } } },
-    emit() {}, onError: error => calls.errors.push(error), now: () => time,
+    emit: (...event) => calls.events.push(event), onError: error => calls.errors.push(error), now: () => time,
   };
   const controller = createReflexController(bot, options);
   return { bot, calls, controller, initial, advance: amount => { time += amount; }, options };
@@ -98,6 +99,63 @@ test('exposed creeper and ranged skeleton trigger non-destructive bounded escape
     assert.equal(f.calls.released, 1);
     assert.equal(f.calls.goals.at(-1), null);
     f.controller.close();
+  }
+});
+
+test('escape navigation emits target, route and displacement evidence and unregisters listeners', async () => {
+  const f = fixture({ name: 'creeper' });
+  assert.equal(f.bot.listenerCount('path_update'), 1);
+  assert.equal(f.bot.listenerCount('goal_reached'), 1);
+  await f.controller.tick();
+
+  const navigation = () => f.calls.events.filter(([type]) => type === 'reflex_navigation').map(([, , data]) => data);
+  const started = navigation()[0];
+  assert.equal(started.phase, 'started');
+  assert.deepEqual(started.from, { x: 0, y: 0, z: 0 });
+  assert.deepEqual(started.target, { entityId: 2, name: 'creeper', origin: { x: 2, y: 0, z: 0 } });
+  assert.equal(started.distance, 2);
+
+  f.bot.emit('path_update', { status: 'success', path: [new Vec3(1, 0, 0), new Vec3(2, 0, 0)], visitedNodes: 7, time: 2 });
+  f.bot.entity.position = new Vec3(-1, 0, 0);
+  f.bot.emit('goal_reached');
+  f.bot.entities = {};
+  await f.controller.tick();
+
+  const records = navigation();
+  const pathUpdate = records.find(record => record.phase === 'path_update');
+  assert.deepEqual(pathUpdate.route, [{ x: 1, y: 0, z: 0 }, { x: 2, y: 0, z: 0 }]);
+  assert.deepEqual(pathUpdate.position, { x: 0, y: 0, z: 0 });
+  assert.deepEqual(pathUpdate.targetPosition, { x: 2, y: 0, z: 0 });
+  assert.equal(pathUpdate.distance, 2);
+  const reached = records.find(record => record.phase === 'goal_reached');
+  assert.equal(reached.position.x, -1);
+  assert.deepEqual(reached.targetPosition, { x: 2, y: 0, z: 0 });
+  assert.equal(reached.distance, 3);
+  const ended = records.find(record => record.phase === 'ended');
+  assert.equal(ended.reason, 'threat_no_longer_exposed');
+  assert.equal(ended.goalReached, true);
+  assert.deepEqual(ended.position, { x: -1, y: 0, z: 0 });
+  assert.equal(ended.targetPosition, null);
+  assert.equal(ended.distance, null);
+  assert.deepEqual(ended.displacement, { x: -1, y: 0, z: 0 });
+
+  f.controller.close();
+  assert.equal(f.bot.listenerCount('path_update'), 0);
+  assert.equal(f.bot.listenerCount('goal_reached'), 0);
+});
+
+test('navigation listeners ignore non-escape paths and do not leak across controllers', () => {
+  const f = fixture();
+  f.bot.emit('path_update', { status: 'success', path: [] });
+  assert.equal(f.calls.events.some(([type]) => type === 'reflex_navigation'), false);
+  f.controller.close();
+  for (let count = 0; count < 3; count++) {
+    const controller = createReflexController(f.bot, f.options);
+    assert.equal(f.bot.listenerCount('path_update'), 1);
+    assert.equal(f.bot.listenerCount('goal_reached'), 1);
+    controller.close();
+    assert.equal(f.bot.listenerCount('path_update'), 0);
+    assert.equal(f.bot.listenerCount('goal_reached'), 0);
   }
 });
 

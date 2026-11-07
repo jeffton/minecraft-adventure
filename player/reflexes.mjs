@@ -31,6 +31,39 @@ export function createReflexController(bot, { acquire, release, goals, emit, onE
   let lastAttack = 0;
   let restoreMovement = null;
   let floating = false;
+  let escapeNavigation = null;
+  const positionOf = position => ({ x: position.x, y: position.y, z: position.z });
+  const emitNavigation = (phase, data) => emit('reflex_navigation', `Escape ${phase}.`, { phase, ...data });
+  const currentNavigationState = () => {
+    const position = bot.entity.position;
+    const targetPosition = bot.entities[escapeNavigation.target.entityId]?.position;
+    return {
+      position: positionOf(position),
+      targetPosition: targetPosition ? positionOf(targetPosition) : null,
+      distance: targetPosition ? position.distanceTo(targetPosition) : null,
+    };
+  };
+  const onPathUpdate = result => {
+    if (!escapeNavigation) return;
+    emitNavigation('path_update', {
+      target: escapeNavigation.target,
+      ...currentNavigationState(),
+      status: result.status,
+      route: result.path.map(positionOf),
+      visitedNodes: result.visitedNodes,
+      computationMs: result.time,
+    });
+  };
+  const onGoalReached = () => {
+    if (!escapeNavigation) return;
+    escapeNavigation.goalReached = true;
+    emitNavigation('goal_reached', {
+      target: escapeNavigation.target,
+      ...currentNavigationState(),
+    });
+  };
+  bot.on('path_update', onPathUpdate);
+  bot.on('goal_reached', onGoalReached);
   const releaseIdle = () => {
     if (!floating) return;
     floating = false;
@@ -42,8 +75,26 @@ export function createReflexController(bot, { acquire, release, goals, emit, onE
     mode = next;
     await acquire(next);
   };
-  const relinquish = () => {
+  const relinquish = (reason = 'released') => {
     if (!mode) return;
+    if (mode === 'escaping immediate danger' && escapeNavigation) {
+      const navigationState = currentNavigationState();
+      const position = navigationState.position;
+      const displacement = {
+        x: position.x - escapeNavigation.start.x,
+        y: position.y - escapeNavigation.start.y,
+        z: position.z - escapeNavigation.start.z,
+      };
+      emitNavigation('ended', {
+        reason,
+        target: escapeNavigation.target,
+        goalReached: escapeNavigation.goalReached,
+        ...navigationState,
+        displacement,
+        displacementBlocks: Math.hypot(displacement.x, displacement.y, displacement.z),
+      });
+      escapeNavigation = null;
+    }
     bot.setControlState('jump', false);
     bot.pathfinder.setGoal(null);
     restoreMovement?.();
@@ -64,7 +115,7 @@ export function createReflexController(bot, { acquire, release, goals, emit, onE
   };
   const tick = async () => {
     if (closed || busy || !bot.entity || bot._client.ended) return;
-    if (bot.health <= 0) { releaseIdle(); relinquish(); return; }
+    if (bot.health <= 0) { releaseIdle(); relinquish('death'); return; }
     busy = true;
     try {
       if (!mode && bot.entity.isInWater && canFloat()) {
@@ -74,7 +125,7 @@ export function createReflexController(bot, { acquire, release, goals, emit, onE
         releaseIdle();
       }
       if (bot.entity.isInWater && (bot.oxygenLevel < 8 || (mode === 'surfacing for air' && bot.oxygenLevel < 20))) {
-        if (mode && mode !== 'surfacing for air') relinquish();
+        if (mode && mode !== 'surfacing for air') relinquish('superseded_by_surfacing_for_air');
         await take('surfacing for air');
         if (closed) { relinquish(); return; }
         bot.setControlState('jump', true);
@@ -86,7 +137,7 @@ export function createReflexController(bot, { acquire, release, goals, emit, onE
       const distance = nearest?.position.distanceTo(bot.entity.position) ?? Infinity;
       if (mode === 'escaping immediate danger') {
         if (nearest && now() < escapeUntil) return;
-        relinquish();
+        relinquish(nearest ? 'escape_deadline' : 'threat_no_longer_exposed');
         return;
       }
       const danger = threats.find(entity => {
@@ -95,11 +146,23 @@ export function createReflexController(bot, { acquire, release, goals, emit, onE
           ((RANGED.has(entity.name) || (entity.name === 'drowned' && entity.heldItem?.name === 'trident')) && range >= 3);
       });
       if (danger) {
-        if (mode) relinquish();
+        if (mode) relinquish('superseded_by_immediate_danger');
         await take('escaping immediate danger');
-        if (closed) { relinquish(); return; }
+        if (closed) { relinquish('shutdown'); return; }
         escapeMovement();
         escapeUntil = now() + 6000;
+        const start = positionOf(bot.entity.position);
+        const target = {
+          entityId: danger.id,
+          name: danger.name,
+          origin: positionOf(danger.position),
+        };
+        escapeNavigation = { start, target, goalReached: false };
+        emitNavigation('started', {
+          from: start,
+          target,
+          distance: danger.position.distanceTo(bot.entity.position),
+        });
         bot.pathfinder.setGoal(new goals.GoalInvert(new goals.GoalNear(danger.position.x, danger.position.y, danger.position.z, 12)));
         emit('reflex', `Escaping ${danger.name} at ${Math.round(danger.position.distanceTo(bot.entity.position))} blocks.`);
         return;
@@ -135,10 +198,20 @@ export function createReflexController(bot, { acquire, release, goals, emit, onE
           } finally { relinquish(); }
         }
       }
-    } catch (error) { relinquish(); onError(error); }
+    } catch (error) { relinquish('error'); onError(error); }
     finally { busy = false; }
   };
-  return { tick, releaseIdle, close() { closed = true; releaseIdle(); relinquish(); } };
+  return {
+    tick,
+    releaseIdle,
+    close() {
+      closed = true;
+      releaseIdle();
+      relinquish('shutdown');
+      bot.removeListener('path_update', onPathUpdate);
+      bot.removeListener('goal_reached', onGoalReached);
+    },
+  };
 }
 
 export function installReflexes(bot, options) {

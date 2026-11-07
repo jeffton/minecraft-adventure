@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { setImmediate } from 'node:timers/promises';
 import { installReflexes, nearbyThreats } from '../reflexes.mjs';
 import { playerState, skillEvidence } from '../observations.mjs';
@@ -7,7 +8,7 @@ import { playerState, skillEvidence } from '../observations.mjs';
 function fixture() {
   const events = [];
   const position = { x: 1, y: 64, z: 2, distanceTo: target => Math.hypot(target.x - 1, target.y - 64, target.z - 2) };
-  const bot = {
+  const bot = Object.assign(new EventEmitter(), {
     entity: { position, isInWater: false }, entities: {}, health: 20, food: 12, oxygenLevel: 20,
     _client: { ended: false }, game: { dimension: 'overworld' }, version: '1.21.4',
     registry: { foodsByName: { cooked_beef: { foodPoints: 8 } } },
@@ -16,7 +17,7 @@ function fixture() {
     setControlState: (...args) => events.push(['control', ...args]),
     equip: async item => events.push(['equip', item.name]),
     consume: async () => { bot.food = 20; }, attack: enemy => events.push(['attack', enemy.name]),
-  };
+  });
   return { bot, events };
 }
 
