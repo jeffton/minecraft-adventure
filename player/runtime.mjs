@@ -23,6 +23,7 @@ import { createWorldKnowledge } from './world-knowledge.mjs';
 import { actionFeedback, observationFeedback } from './feedback.mjs';
 import { VisionLoop } from './vision-loop.mjs';
 import { ProgressHistory } from './progress.mjs';
+import { openPlanningMemory, planningMemoryTools } from './planning-memory.mjs';
 import { missionController, planningObservation } from './mission.mjs';
 
 const require = createRequire('/opt/minecraft-mindcraft/package.json');
@@ -58,8 +59,9 @@ export async function runPlayer(env = process.env) {
     const session = randomUUID();
     let sequence = 0;
     const events = [];
-    const notesFile = path.join(stateDir, 'notes.json');
-    let notes = await optionalJson(notesFile, {});
+    const memory = await openPlanningMemory(path.join(stateDir, 'notes.json'), data => {
+      emit('home_selected', 'Explicitly selected the permanent home.', data);
+    });
     const progressFile = path.join(stateDir, 'progress.json');
     const progress = new ProgressHistory(await optionalJson(progressFile, undefined));
     let progressWrite = Promise.resolve();
@@ -192,7 +194,7 @@ export async function runPlayer(env = process.env) {
       const current = action();
       return current?.state === 'running' ? current.name : null;
     };
-    const state = () => ({ ...playerState(bot, { worldId, session, events, action: label(), thinking, error: error ?? visionError, life, notes }), gameplayLedger: true, actionId: pipeline.latestId, nextSkill: pipeline.next?.name ?? null });
+    const state = () => ({ ...playerState(bot, { worldId, session, events, action: label(), thinking, error: error ?? visionError, life, notes: memory.notes }), gameplayLedger: true, actionId: pipeline.latestId, nextSkill: pipeline.next?.name ?? null });
     let controllerLoop;
     const interrupt = reason => controlDrain.run(async () => {
       if (reason === 'Controller hot reload' && reflexOwner) return;
@@ -308,7 +310,7 @@ export async function runPlayer(env = process.env) {
       tool('controller_edit', 'Hot-reload a small exact edit against inspected active baseVersion. Every oldText matches uniquely in original source; edits must not overlap. Only syntax/import/entrypoint checks precede safe cancellation, RPC drain and activation. No offline fixtures or gameplay approval. Observe actual outcomes and iterate.', { name: STRING, baseVersion: STRING, edits: { type: 'array', minItems: 1, items: { ...OBJECT({ oldText: { type: 'string', minLength: 1 }, newText: STRING }), required: ['oldText', 'newText'] } } }, ['name', 'baseVersion', 'edits'], submitControllerCandidate),
       tool('action_inspect', 'Read a complete retained action record including all original RPC calls/results, errors and before/after observations. Useful for investigating any outcome projection.', { actionId: STRING }, ['actionId'], async ({ actionId }) => sandbox.inspect(actionId)),
       tool('read_events', 'Read complete persisted event records, including original errors and RPC/model events. Defaults to this player session; supply another session to inspect its history. afterSequence and types select evidence without byte/line truncation.', { session: STRING, afterSequence: { type: 'integer', minimum: 0 }, types: { type: 'array', items: STRING } }, [], async args => readPlayerEvents(path.join(stateDir, 'events.jsonl'), { ...args, session: args.session ?? session })),
-      tool('remember', 'Store current-world planning notes, including goal, home coordinates/dimension, discoveries and failure lessons. Not proof of completion.', { notes: { type: 'object' } }, ['notes'], async ({ notes: next }) => { notes = next; await atomicJson(notesFile, notes); return notes; }),
+      ...planningMemoryTools(memory),
       tool('skills', 'List reusable JavaScript skills, fetch one by name, save source, or verify it against a completed action and explicit expected postconditions. Source is reusable; evidence is world-scoped, not current inventory. expected supports inventory minimum counts, inventoryDelta minimum increases, position {x,y,z,within}, health {min}, blocks [{x,y,z,name}]. Verification requires host-observed change, not returned claims.', { name: STRING, description: STRING, code: STRING, actionId: STRING, expected: { type: 'object' } }, [], async args => {
         if (!args.name) return skills.list();
         if (args.code) await skills.save({ name: args.name, description: args.description ?? '', code: args.code });
@@ -352,7 +354,8 @@ export async function runPlayer(env = process.env) {
       return delta;
     };
     const modelObservation = visual => planningObservation({
-      worldId, session, life, reflexOwner, ...observationFeedback(rpc.observe()), notes,
+      worldId, session, life, reflexOwner, ...observationFeedback(rpc.observe()),
+      notes: memory.notes, home: memory.home,
       progress: progress.observation({ session, since: controller.current()?.activatedAt }),
       controller: controllerFeedback(), scheduler: controllerLoop.inspect(),
       action: actionFeedback(action()),
