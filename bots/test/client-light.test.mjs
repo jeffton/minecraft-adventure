@@ -148,6 +148,39 @@ test('state-specific furnace/lamp emission works despite registry default emissi
   assert.equal(f.block(p.offset(1, 0, 0)), 0);
 });
 
+test('both redstone ores emit only while lit and remove propagated light when extinguished', () => {
+  for (const name of ['redstone_ore', 'deepslate_redstone_ore']) {
+    const f = fixture();
+    const p = new Vec3(8, 64, 8);
+    f.edit(p, stateId(name, { lit: false }));
+    assert.equal(f.block(p.offset(1, 0, 0)), 0, name);
+    f.edit(p, stateId(name, { lit: true }));
+    assert.equal(f.block(p), 9, name);
+    assert.equal(f.block(p.offset(1, 0, 0)), 8, name);
+    assert.equal(f.block(p.offset(3, 0, 0)), 6, name);
+    f.edit(p, stateId(name, { lit: false }));
+    assert.equal(f.block(p), 0, name);
+    assert.equal(f.block(p.offset(3, 0, 0)), 0, name);
+    f.edit(p, stateId(name, { lit: true }));
+    f.edit(p, air);
+    assert.equal(f.block(p.offset(1, 0, 0)), 0, name);
+  }
+});
+
+test('glow lichen emits seven across attachment states and removes its light when mined', () => {
+  const f = fixture();
+  const p = new Vec3(8, 64, 8);
+  f.edit(p, stateId('glow_lichen', { north: true, south: false, waterlogged: false }));
+  assert.equal(f.block(p), 7);
+  assert.equal(f.block(p.offset(1, 0, 0)), 6);
+  f.edit(p, stateId('glow_lichen', { north: false, south: true, waterlogged: false }));
+  assert.equal(f.block(p), 7);
+  assert.equal(f.block(p.offset(1, 0, 0)), 6);
+  f.edit(p, air);
+  assert.equal(f.block(p), 0);
+  assert.equal(f.block(p.offset(1, 0, 0)), 0);
+});
+
 test('missing columns/sections invent no sky and untouched authoritative light is retained', () => {
   const f = fixture();
   const p = new Vec3(0, 80, 0);

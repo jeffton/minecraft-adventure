@@ -75,6 +75,7 @@ export function createClientRelighter(bot, { hasSkylight }) {
     if (['furnace', 'smoker', 'blast_furnace'].includes(block.name)) emission = props.lit ? 13 : 0;
     else if (block.name === 'redstone_lamp') emission = props.lit ? 15 : 0;
     else if (block.name === 'redstone_ore' || block.name === 'deepslate_redstone_ore') emission = props.lit ? 9 : 0;
+    else if (block.name === 'glow_lichen') emission = 7;
     else if (block.name.endsWith('copper_bulb')) {
       emission = props.lit ? (block.name.includes('oxidized') ? 4 : block.name.includes('weathered') ? 8 : block.name.includes('exposed') ? 12 : 15) : 0;
     } else if (block.name === 'candle' || block.name.endsWith('_candle')) emission = props.lit ? 3 * Number(props.candles) : 0;
