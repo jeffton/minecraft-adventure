@@ -8,7 +8,7 @@ Type=simple
 User=root
 Group=minecraft-planner
 WorkingDirectory=/opt/minecraft-adventure/planner
-Environment=BATTY_PROVIDER_AUTH_PATH=/root/github/.batty/auth.json
+Environment=BATTY_PROVIDER_AUTH_PATH=/home/roy/github/.batty/auth.json
 Environment=PLANNER_AUTH_SOCKET=/run/minecraft-planner-auth/auth.sock
 Environment=BATTY_MODELS_STORE_PATH=/run/minecraft-planner-auth/models-store.json
 BindReadOnlyPaths=/var/lib/batty2/.batty/models-store.json:/run/minecraft-planner-auth/models-store.json
@@ -31,8 +31,8 @@ ProtectControlGroups=true
 RestrictSUIDSGID=true
 RestrictRealtime=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
-ReadWritePaths=/root/github/.batty
-InaccessiblePaths=/root/github/.batty/environment.json /var/lib/batty2
+ReadWritePaths=/home/roy/github/.batty
+InaccessiblePaths=/home/roy/github/.batty/environment.json /var/lib/batty2
 UMask=0007
 MemoryMax=256M
 CPUQuota=25%

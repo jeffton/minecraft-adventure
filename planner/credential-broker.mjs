@@ -48,7 +48,7 @@ export async function startBroker({ socketPath, authPath, modelsStorePath, runti
 if (import.meta.url === 'file://' + process.argv[1]) {
   const server = await startBroker({
     socketPath: process.env.PLANNER_AUTH_SOCKET ?? '/run/minecraft-planner-auth/auth.sock',
-    authPath: process.env.BATTY_PROVIDER_AUTH_PATH ?? '/root/github/.batty/auth.json',
+    authPath: process.env.BATTY_PROVIDER_AUTH_PATH ?? '/home/roy/github/.batty/auth.json',
     modelsStorePath: process.env.BATTY_MODELS_STORE_PATH,
   });
   const close = () => server.close();
