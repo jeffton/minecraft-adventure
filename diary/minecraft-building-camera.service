@@ -12,7 +12,6 @@ Restart=on-failure
 RestartSec=10
 TimeoutStopSec=15
 KillMode=control-group
-MemoryMax=768M
 TasksMax=256
 Slice=minecraft-adventure.slice
 CPUWeight=10
