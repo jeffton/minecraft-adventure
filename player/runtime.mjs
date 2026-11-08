@@ -2,7 +2,8 @@ import { trackViewerLightColumns } from './viewer.mjs';
 import { installDoorWaypoints, withDoorPassage } from './door-navigation.mjs';
 import { startPlayerLifecycle } from './lifecycle.mjs';
 import { attachGameChat, openGameChat, sendGameChat, gameChatTools, chatBlocksController, GAME_CHAT_INSTRUCTIONS } from './game-chat.mjs';
-import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
+import { playerRequestHandler } from './player-http.mjs';
 import { appendFile, mkdir } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
@@ -456,22 +457,13 @@ export async function runPlayer(env = process.env) {
     }, 2000);
     cleanup.push(async () => { clearInterval(heartbeat); await progressWrite; });
     await atomicJson(observationFile, state());
-    lifecycle.handler(async (request, response) => {
-      response.setHeader('Content-Type', 'application/json');
-      const supplied = Buffer.from(request.headers.authorization ?? '');
-      const expected = Buffer.from('Bearer ' + token);
-      if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) return response.writeHead(401).end('{}');
-      if (request.method !== 'POST' || request.url !== '/diary') return response.writeHead(404).end('{}');
-      try {
-        let body = '';
-        for await (const chunk of request) body += chunk;
-        const facts = JSON.parse(body);
-        if (facts.worldId !== worldId) throw new Error('Diary world mismatch');
+    lifecycle.handler(playerRequestHandler({
+      token, worldId, chat, onError: fail,
+      narrate: async facts => {
         if (!engineer.agent) throw new Error(`Background engineer unavailable: ${engineer.error?.message ?? 'recovering'}`);
-        const result = await engineer.agent.narrate(facts);
-        response.end(JSON.stringify({ ...result, worldId }));
-      } catch (failure) { fail(failure); response.writeHead(500).end(JSON.stringify({ error: failure.message })); }
-    });
+        return engineer.agent.narrate(facts);
+      },
+    }));
     lifecycle.update({ phase: 'ready', ready: true });
     emit('spawn', 'Roy connected to the current survival world.', { worldId });
     let background;

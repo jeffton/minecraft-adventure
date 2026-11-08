@@ -16,6 +16,28 @@ systemctl start minecraft-player.service minecraft-adventure-diary.timer
 
 The timer may publish one catch-up diary entry on resume. World/inventory, agent history, notes and saved skills persist; in-memory programs and their queued continuations do not.
 
+## Send a live operator task
+
+The running player accepts `POST /operator/task` on its existing loopback-only
+HTTP listener (`127.0.0.1:8766`). The request uses the server relay credential
+from root-owned `/etc/minecraft-adventure/planner.env`; it is not a public API.
+Sandbox programs receive neither this credential nor host network access.
+
+```sh
+sudo -n node --env-file=/etc/minecraft-adventure/planner.env \
+  /opt/minecraft-adventure/player/operator-task.mjs <<'JSON'
+{"worldId":"player-20261107-plains","id":"unique-user-request-id","text":"The user's gameplay instruction"}
+JSON
+```
+
+Keep the same `id` when retrying a request; `queued` confirms persistence,
+`already_received` confirms a duplicate. Neither means the work is completed.
+The player handles the request at the next safe planning boundary without
+interrupting the current action or disconnecting. The message is explicitly
+an operator-relayed user request, not an in-game player or world observation;
+acknowledgments remain local. Real player chat keeps its original channels.
+Do not edit the inbox file while the player is running.
+
 ## Publish code
 
 Existing installation, Node 24+, root access and `trash` are required. Run from a reviewed checkout; the scripts do not pull or commit code.
