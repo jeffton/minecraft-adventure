@@ -5,7 +5,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=root
+User=roy
 Group=minecraft-planner
 WorkingDirectory=/opt/minecraft-adventure/planner
 Environment=BATTY_PROVIDER_AUTH_PATH=/home/roy/github/.batty/auth.json
