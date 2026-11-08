@@ -19,7 +19,8 @@ test('broker loads canonical cached model metadata read-only and serves it to th
     ...base, id: role.model, name: 'Canonical cached ' + role.model,
     cost: { input: 1, output: 5, cacheRead: 0.05, cacheWrite: 1.25 },
   }));
-  const contents = JSON.stringify({ 'openai-codex': { models: catalog, checkedAt: Date.now(), lastModified: Date.now() } });
+  // A valid Batty catalog can predate the SDK's bundled catalog timestamp.
+  const contents = JSON.stringify({ 'openai-codex': { models: catalog, checkedAt: Date.now(), lastModified: 0 } });
   await writeFile(modelsStorePath, contents);
   const broker = await startBroker({ socketPath, modelsStorePath, authPath: path.join(stateDir, 'auth.json') });
   try {
@@ -38,10 +39,9 @@ test('broker loads canonical cached model metadata read-only and serves it to th
 test('missing canonical model is an explicit startup error, not a static-model alias', async () => {
   const stateDir = await mkdtemp(path.join(tmpdir(), 'minecraft-missing-model-'));
   const socketPath = path.join(stateDir, 'broker.sock');
-  const broker = await startBroker({ socketPath, runtime: { getModels: provider => {
-    assert.equal(provider, 'openai-codex');
-    return [];
-  } } });
+  const modelsStorePath = path.join(stateDir, 'models-store.json');
+  await writeFile(modelsStorePath, JSON.stringify({ 'openai-codex': { models: [] } }));
+  const broker = await startBroker({ socketPath, modelsStorePath, runtime: {} });
   try {
     await assert.rejects(brokerModels(socketPath), /absent from the canonical catalog/);
   } finally { await new Promise(resolve => broker.close(resolve)); }

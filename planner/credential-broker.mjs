@@ -7,12 +7,6 @@ export async function startBroker({ socketPath, authPath, modelsStorePath, runti
   const models = runtime ?? await ModelRuntime.create({
     authPath,
     modelsPath: null,
-    // Read Batty's canonical cached catalog without taking ownership of its file.
-    modelsStore: {
-      read: async provider => JSON.parse(await readFile(modelsStorePath, 'utf8'))[provider],
-      write: async () => { throw new Error('Canonical model catalog is read-only'); },
-      delete: async () => { throw new Error('Canonical model catalog is read-only'); },
-    },
     allowModelNetwork: false,
   });
   const server = http.createServer(async (request, response) => {
@@ -24,7 +18,10 @@ export async function startBroker({ socketPath, authPath, modelsStorePath, runti
     }
     try {
       if (request.url === '/models') {
-        response.end(JSON.stringify(models.getModels('openai-codex')));
+        // Batty owns this catalog, including models absent from the SDK's bundled
+        // catalog. SDK catalog freshness rules must not replace that authority.
+        const catalog = JSON.parse(await readFile(modelsStorePath, 'utf8'))['openai-codex'];
+        response.end(JSON.stringify(catalog.models));
         return;
       }
       const resolved = await models.getAuth('openai-codex');
