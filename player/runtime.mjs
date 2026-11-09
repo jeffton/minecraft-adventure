@@ -1,5 +1,6 @@
 import { trackViewerLightColumns } from './viewer.mjs';
 import { installDoorWaypoints, withDoorPassage } from './door-navigation.mjs';
+import { installLadderWaypoints } from './ladder-navigation.mjs';
 import { startPlayerLifecycle } from './lifecycle.mjs';
 import { attachGameChat, openGameChat, sendGameChat, gameChatTools, chatBlocksController, GAME_CHAT_INSTRUCTIONS } from './game-chat.mjs';
 import { randomUUID } from 'node:crypto';
@@ -151,7 +152,7 @@ export async function runPlayer(env = process.env) {
     });
     signal.throwIfAborted();
     if (bot.game.gameMode !== 'survival') throw new Error('Player requires survival mode');
-    cleanup.push(installDoorWaypoints(bot));
+    cleanup.push(installDoorWaypoints(bot), installLadderWaypoints(bot));
     const movements = new DoorMovements(bot);
     movements.allow1by1towers = false;
     movements.canDig = false;
