@@ -1,10 +1,11 @@
+import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { PLAYER_OBJECTIVE } from './mission.mjs';
 
 export async function atomicJson(file, value) {
   await mkdir(path.dirname(file), { recursive: true });
-  const temp = `${file}.${process.pid}.tmp`;
+  const temp = `${file}.${process.pid}.${randomUUID()}.tmp`;
   await writeFile(temp, JSON.stringify(value, null, 2) + '\n', { mode: 0o640 });
   await rename(temp, file);
 }
