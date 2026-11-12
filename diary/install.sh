@@ -18,7 +18,7 @@ python3 "$source_dir/build-item-assets.py" \
 for file in index.html style.css app.js map.css map.js inventory.css inventory.js world-clock.js; do
     install -m 0644 "$source_dir/$file" /var/www/roybot.se/minecraft/
 done
-test -r /etc/letsencrypt/live/minecraft.roybot.se/fullchain.pem
+test -r /etc/letsencrypt/live/roybot.se-wildcard/fullchain.pem
 install -m 0644 "$source_dir/minecraft.roybot.se.conf" /etc/nginx/sites-available/minecraft.roybot.se
 if [[ ! -e /etc/nginx/sites-enabled/minecraft.roybot.se ]]; then
     ln -s /etc/nginx/sites-available/minecraft.roybot.se /etc/nginx/sites-enabled/minecraft.roybot.se
